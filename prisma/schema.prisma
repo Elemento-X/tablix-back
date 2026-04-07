@@ -1,0 +1,106 @@
+// ===========================================
+// TABLIX BACKEND - PRISMA SCHEMA
+// ===========================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+// ===========================================
+// TOKENS - Tokens de acesso Pro
+// ===========================================
+// Armazena tokens gerados apos pagamento no Stripe
+// Token vinculado ao fingerprint no primeiro uso
+
+model Token {
+  id                    String    @id @default(uuid())
+  token                 String    @unique @db.VarChar(64)
+  fingerprint           String?   @db.VarChar(64) // NULL ate primeiro uso
+  stripeCustomerId      String    @map("stripe_customer_id") @db.VarChar(255)
+  stripeSubscriptionId  String?   @map("stripe_subscription_id") @db.VarChar(255)
+  plan                  Plan      @default(PRO)
+  status                TokenStatus @default(ACTIVE)
+  email                 String    @db.VarChar(255)
+  createdAt             DateTime  @default(now()) @map("created_at")
+  activatedAt           DateTime? @map("activated_at") // Quando vinculou ao fingerprint
+  expiresAt             DateTime? @map("expires_at") // NULL se assinatura ativa
+
+  // Relacionamentos
+  usages                Usage[]
+  jobs                  Job[]
+
+  @@index([token])
+  @@index([fingerprint])
+  @@index([stripeCustomerId], map: "idx_tokens_stripe_customer")
+  @@map("tokens")
+}
+
+// ===========================================
+// USAGE - Uso mensal (para limites do Pro)
+// ===========================================
+// Controla quantas unificacoes o usuario Pro fez no mes
+
+model Usage {
+  id                String   @id @default(uuid())
+  tokenId           String   @map("token_id")
+  period            String   @db.VarChar(7) // Formato: 'YYYY-MM'
+  unificationsCount Int      @default(0) @map("unifications_count")
+  createdAt         DateTime @default(now()) @map("created_at")
+
+  // Relacionamento
+  token             Token    @relation(fields: [tokenId], references: [id], onDelete: Cascade)
+
+  @@unique([tokenId, period])
+  @@index([tokenId, period], map: "idx_usage_token_period")
+  @@map("usage")
+}
+
+// ===========================================
+// JOBS - Jobs de processamento assincrono
+// ===========================================
+// Para arquivos >10MB que precisam de processamento em fila
+
+model Job {
+  id              String    @id @default(uuid())
+  tokenId         String    @map("token_id")
+  status          JobStatus @default(PENDING)
+  inputFiles      Json      @map("input_files") // Metadados dos arquivos
+  outputFileUrl   String?   @map("output_file_url") @db.VarChar(500)
+  errorMessage    String?   @map("error_message")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  startedAt       DateTime? @map("started_at")
+  completedAt     DateTime? @map("completed_at")
+
+  // Relacionamento
+  token           Token     @relation(fields: [tokenId], references: [id], onDelete: Cascade)
+
+  @@index([status], map: "idx_jobs_status")
+  @@map("jobs")
+}
+
+// ===========================================
+// ENUMS
+// ===========================================
+
+enum Plan {
+  PRO
+}
+
+enum TokenStatus {
+  ACTIVE
+  CANCELLED
+  EXPIRED
+}
+
+enum JobStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+}
