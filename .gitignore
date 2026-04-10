@@ -2,7 +2,7 @@ node_modules
 dist
 *-lock.json
 coverage/
-.claude/
+.claude/settings.local.json
 /generated/prisma
 
 # Environment variables
