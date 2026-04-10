@@ -355,5 +355,26 @@
     "design-reduced-motion-missing": { "description": "Animação sem fallback para prefers-reduced-motion — acessibilidade comprometida", "default_severity": "medium" },
     "design-animation-refinement": { "description": "Micro-otimização de animação (duração, easing) — refinamento, não problema", "default_severity": "low" },
     "design-style-variation": { "description": "Variação estilística menor sem impacto funcional — questão de gosto", "default_severity": "low" }
+  },
+
+  "design-qa": {
+    "dqa-layout-divergent": { "description": "Layout completamente diferente do spec do @designer — estrutura, grid ou proporções não correspondem", "default_severity": "critical" },
+    "dqa-flow-inaccessible-mobile": { "description": "Fluxo principal inacessível em mobile na implementação — spec previa funcionamento", "default_severity": "critical" },
+    "dqa-destructive-no-visual-confirm": { "description": "Ação destrutiva implementada sem confirmação visual prevista no spec", "default_severity": "critical" },
+    "dqa-contrast-below-threshold": { "description": "Contraste implementado abaixo de WCAG AA (4.5:1 texto, 3:1 UI) — spec previa acessibilidade", "default_severity": "critical" },
+    "dqa-state-missing-critical": { "description": "Estado faltando em ação irreversível ou CTA primário (loading, error, disabled)", "default_severity": "high" },
+    "dqa-token-hardcoded-core": { "description": "Token hardcoded em componente core — deveria usar variável do design system", "default_severity": "high" },
+    "dqa-empty-state-missing": { "description": "Empty state não implementado — spec do @designer previa orientação visual", "default_severity": "high" },
+    "dqa-touch-target-undersized": { "description": "Touch target < 44x44px em ação primária — spec previa target acessível", "default_severity": "high" },
+    "dqa-breakpoint-not-implemented": { "description": "Breakpoint especificado no spec não implementado — viewport não coberto", "default_severity": "high" },
+    "dqa-focus-state-missing": { "description": "Focus state ausente em elemento interativo — keyboard navigation comprometida", "default_severity": "high" },
+    "dqa-spacing-off-scale": { "description": "Spacing implementado fora da escala do design system — valor arbitrário", "default_severity": "medium" },
+    "dqa-shadow-divergent": { "description": "Shadow level diferente do especificado — elevação visual não corresponde ao spec", "default_severity": "medium" },
+    "dqa-animation-duration-off": { "description": "Duração de animação fora do range especificado (150-300ms padrão)", "default_severity": "medium" },
+    "dqa-icon-wrong-size": { "description": "Ícone com tamanho diferente do spec — quebra alinhamento ou hierarquia", "default_severity": "medium" },
+    "dqa-dark-mode-not-validated": { "description": "Dark mode implementado sem validação de contraste ou tokens dedicados", "default_severity": "medium" },
+    "dqa-reduced-motion-no-fallback": { "description": "Animação implementada sem fallback para prefers-reduced-motion", "default_severity": "medium" },
+    "dqa-easing-minor": { "description": "Micro-diferença de easing ou timing em animação secundária", "default_severity": "low" },
+    "dqa-radius-minor": { "description": "Border-radius 1 nível acima/abaixo do spec em componente secundário", "default_severity": "low" }
   }
 }
