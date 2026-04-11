@@ -17,6 +17,8 @@ export default defineConfig({
         'src/errors/app-error.ts',
         'src/http/controllers/webhook.controller.ts',
         'src/modules/billing/webhook.handler.ts',
+        'src/lib/spreadsheet/sanitizer.ts',
+        'src/lib/spreadsheet/merger.ts',
       ],
       thresholds: {
         lines: 90,

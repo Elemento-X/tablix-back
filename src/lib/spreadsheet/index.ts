@@ -5,3 +5,4 @@
 export * from './types'
 export * from './parser'
 export * from './merger'
+export * from './sanitizer'
