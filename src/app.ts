@@ -16,7 +16,12 @@ import { AppError } from './errors/app-error'
 
 export async function buildApp() {
   const app = fastify({
-    logger: env.NODE_ENV === 'development',
+    logger: {
+      level: env.NODE_ENV === 'production' ? 'info' : 'debug',
+      ...(env.NODE_ENV === 'development' && {
+        transport: { target: 'pino-pretty' },
+      }),
+    },
   }).withTypeProvider<ZodTypeProvider>()
 
   // Configura Zod como validador/serializador
@@ -106,16 +111,14 @@ export async function buildApp() {
       // Log de erros não tratados
       request.log.error(error)
 
-      // Erro genérico em produção
-      const message =
-        error instanceof Error ? error.message : 'Erro desconhecido'
+      // Só vaza mensagem real em development
       return reply.status(500).send({
         error: {
           code: 'INTERNAL_ERROR',
           message:
-            env.NODE_ENV === 'production'
-              ? 'Erro interno do servidor'
-              : message,
+            env.NODE_ENV === 'development' && error instanceof Error
+              ? error.message
+              : 'Erro interno do servidor',
         },
       })
     },

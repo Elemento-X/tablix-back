@@ -21,7 +21,7 @@ export async function processSync(
     throw Errors.unauthorized('Usuário não autenticado')
   }
 
-  const tokenId = request.user.sub
+  const userId = request.user.userId
   const files: FileData[] = []
   let selectedColumns: string[] = []
   let outputFormat = 'xlsx'
@@ -35,7 +35,9 @@ export async function processSync(
       if (!isValidExtension(part.filename)) {
         throw Errors.validationError(
           `Formato de arquivo não suportado: ${part.filename}`,
-          { validFormats: ['.csv', '.xlsx', '.xls'] },
+          {
+            validFormats: ['.csv', '.xlsx', '.xls'],
+          },
         )
       }
 
@@ -94,7 +96,7 @@ export async function processSync(
   }
 
   // Processa as planilhas
-  const result = await processSpreadsheets(tokenId, files, validation.data)
+  const result = await processSpreadsheets(userId, files, validation.data)
 
   return reply.send(result)
 }

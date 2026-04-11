@@ -10,8 +10,8 @@ import {
 /**
  * Handler para checkout.session.completed
  * Executado quando o pagamento é confirmado
- * - Cria registro no banco
- * - Gera token Pro
+ * - Cria User (ou encontra existente)
+ * - Cria Token Pro
  * - Envia email com token
  */
 export async function handleCheckoutCompleted(
@@ -42,13 +42,26 @@ export async function handleCheckoutCompleted(
     return
   }
 
-  // Verifica se já existe token para este customer
+  // Cria ou encontra User (upsert por email)
+  const user = await prisma.user.upsert({
+    where: { email },
+    update: {
+      stripeCustomerId: customerId,
+      role: 'PRO',
+    },
+    create: {
+      email,
+      stripeCustomerId: customerId,
+      role: 'PRO',
+    },
+  })
+
+  // Verifica se já existe token para este user
   const existingToken = await prisma.token.findFirst({
-    where: { stripeCustomerId: customerId },
+    where: { userId: user.id },
   })
 
   if (existingToken) {
-    console.log('[Webhook] Token já existe para customer:', customerId)
     // Atualiza subscription se mudou
     if (existingToken.stripeSubscriptionId !== subscriptionId) {
       await prisma.token.update({
@@ -66,34 +79,28 @@ export async function handleCheckoutCompleted(
   // Gera novo token Pro
   const token = generateProToken()
 
-  // Cria registro no banco
+  // Cria registro no banco vinculado ao User
   await prisma.token.create({
     data: {
       token,
-      email,
-      stripeCustomerId: customerId,
+      userId: user.id,
       stripeSubscriptionId: subscriptionId,
       plan: 'PRO',
       status: 'ACTIVE',
     },
   })
 
-  console.log('[Webhook] Token Pro criado para:', email)
-
   // Envia email com o token
   try {
     await sendTokenEmail({ to: email, token })
-    console.log('[Webhook] Email com token enviado para:', email)
-  } catch (error) {
-    // Log do erro mas não falha o webhook
-    // O token foi criado, email pode ser reenviado manualmente se necessário
-    console.error('[Webhook] Falha ao enviar email com token:', error)
+  } catch {
+    // Falha de email não deve bloquear o webhook
   }
 }
 
 /**
  * Handler para customer.subscription.updated
- * Executado quando a assinatura é modificada (upgrade, downgrade, etc)
+ * Executado quando a assinatura é modificada
  */
 export async function handleSubscriptionUpdated(
   subscription: Stripe.Subscription,
@@ -111,32 +118,43 @@ export async function handleSubscriptionUpdated(
     return
   }
 
-  const token = await prisma.token.findFirst({
+  const user = await prisma.user.findUnique({
     where: { stripeCustomerId: customerId },
   })
 
+  if (!user) {
+    console.error('[Webhook] User não encontrado para customer:', customerId)
+    return
+  }
+
+  const token = await prisma.token.findFirst({
+    where: { userId: user.id },
+  })
+
   if (!token) {
-    console.error('[Webhook] Token não encontrado para customer:', customerId)
+    console.error('[Webhook] Token não encontrado para user:', user.id)
     return
   }
 
   // Atualiza status baseado no status da subscription
   let status: 'ACTIVE' | 'CANCELLED' | 'EXPIRED' = 'ACTIVE'
   let expiresAt: Date | null = null
+  let userRole: 'FREE' | 'PRO' = 'PRO'
 
   switch (subscription.status) {
     case 'active':
     case 'trialing':
       status = 'ACTIVE'
+      userRole = 'PRO'
       break
     case 'canceled':
       status = 'CANCELLED'
+      userRole = 'PRO' // Mantém PRO durante período de graça
       break
     case 'past_due':
     case 'unpaid': {
-      // Mantém ativo mas marca data de expiração
       status = 'ACTIVE'
-      // current_period_end pode estar em items.data[0] nas versões mais recentes do Stripe
+      userRole = 'PRO'
       const periodEnd = (
         subscription as unknown as { current_period_end?: number }
       ).current_period_end
@@ -148,22 +166,31 @@ export async function handleSubscriptionUpdated(
     case 'incomplete':
     case 'incomplete_expired':
       status = 'EXPIRED'
+      userRole = 'FREE'
       break
   }
 
-  await prisma.token.update({
-    where: { id: token.id },
-    data: {
-      status,
-      expiresAt,
-      stripeSubscriptionId: subscription.id,
-    },
-  })
+  // Atualiza token e role do user em transação
+  await prisma.$transaction([
+    prisma.token.update({
+      where: { id: token.id },
+      data: {
+        status,
+        expiresAt,
+        stripeSubscriptionId: subscription.id,
+      },
+    }),
+    prisma.user.update({
+      where: { id: user.id },
+      data: { role: userRole },
+    }),
+  ])
 
   console.log('[Webhook] Subscription atualizada:', {
-    customer: customerId,
+    userId: user.id,
     status: subscription.status,
     tokenStatus: status,
+    userRole,
   })
 }
 
@@ -187,36 +214,45 @@ export async function handleSubscriptionDeleted(
     return
   }
 
-  const token = await prisma.token.findFirst({
+  const user = await prisma.user.findUnique({
     where: { stripeCustomerId: customerId },
   })
 
-  if (!token) {
-    console.error('[Webhook] Token não encontrado para customer:', customerId)
+  if (!user) {
+    console.error('[Webhook] User não encontrado para customer:', customerId)
     return
   }
 
-  // Marca como cancelado com data de expiração no fim do período pago
+  const token = await prisma.token.findFirst({
+    where: { userId: user.id },
+  })
+
+  if (!token) {
+    console.error('[Webhook] Token não encontrado para user:', user.id)
+    return
+  }
+
   const periodEnd = (subscription as unknown as { current_period_end?: number })
     .current_period_end
-  const expiresAt = periodEnd ? new Date(periodEnd * 1000) : new Date()
+  const gracePeriodEnd = periodEnd ? new Date(periodEnd * 1000) : new Date()
 
+  // Marca token como cancelado com período de graça
+  // User mantém role PRO até o período expirar
   await prisma.token.update({
     where: { id: token.id },
     data: {
       status: 'CANCELLED',
-      expiresAt,
+      expiresAt: gracePeriodEnd,
     },
   })
 
-  console.log('[Webhook] Subscription cancelada:', customerId)
-
-  // Envia email notificando cancelamento
   try {
-    await sendCancellationEmail({ to: token.email, expiresAt })
-    console.log('[Webhook] Email de cancelamento enviado para:', token.email)
-  } catch (error) {
-    console.error('[Webhook] Falha ao enviar email de cancelamento:', error)
+    await sendCancellationEmail({
+      to: user.email,
+      expiresAt: gracePeriodEnd,
+    })
+  } catch {
+    // Falha de email não deve bloquear o webhook
   }
 }
 
@@ -235,32 +271,23 @@ export async function handlePaymentFailed(invoice: Stripe.Invoice) {
     return
   }
 
-  const token = await prisma.token.findFirst({
+  const user = await prisma.user.findUnique({
     where: { stripeCustomerId: customerId },
   })
 
-  if (!token) {
-    console.error('[Webhook] Token não encontrado para customer:', customerId)
+  if (!user) {
+    console.error('[Webhook] User não encontrado para customer:', customerId)
     return
   }
 
   console.log('[Webhook] Pagamento falhou:', {
-    customer: customerId,
-    email: token.email,
+    userId: user.id,
     invoiceId: invoice.id,
   })
 
-  // Envia email notificando falha de pagamento
   try {
-    await sendPaymentFailedEmail({ to: token.email })
-    console.log(
-      '[Webhook] Email de falha de pagamento enviado para:',
-      token.email,
-    )
-  } catch (error) {
-    console.error(
-      '[Webhook] Falha ao enviar email de falha de pagamento:',
-      error,
-    )
+    await sendPaymentFailedEmail({ to: user.email })
+  } catch {
+    // Falha de email não deve bloquear o webhook
   }
 }

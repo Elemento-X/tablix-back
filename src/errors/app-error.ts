@@ -5,6 +5,7 @@ export const ErrorCodes = {
   TOKEN_ALREADY_USED: 'TOKEN_ALREADY_USED',
   SUBSCRIPTION_EXPIRED: 'SUBSCRIPTION_EXPIRED',
   UNAUTHORIZED: 'UNAUTHORIZED',
+  FORBIDDEN: 'FORBIDDEN',
 
   // Limites
   LIMIT_EXCEEDED: 'LIMIT_EXCEEDED',
@@ -76,6 +77,9 @@ export const Errors = {
 
   unauthorized: (message = 'Não autorizado') =>
     new AppError(ErrorCodes.UNAUTHORIZED, message, 401),
+
+  forbidden: (message = 'Permissão insuficiente para este recurso') =>
+    new AppError(ErrorCodes.FORBIDDEN, message, 403),
 
   limitExceeded: (limit: string, actual: string, file?: string) =>
     new AppError(ErrorCodes.LIMIT_EXCEEDED, 'Limite excedido', 400, {

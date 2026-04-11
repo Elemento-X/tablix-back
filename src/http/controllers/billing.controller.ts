@@ -63,13 +63,13 @@ export async function portal(request: FastifyRequest, reply: FastifyReply) {
     throw Errors.unauthorized('Usuário não autenticado')
   }
 
-  // Busca o token no banco para pegar o stripeCustomerId
-  const tokenRecord = await prisma.token.findUnique({
-    where: { id: request.user.sub },
+  // Busca o User para pegar o stripeCustomerId
+  const user = await prisma.user.findUnique({
+    where: { id: request.user.userId },
   })
 
-  if (!tokenRecord) {
-    throw Errors.invalidToken('Token não encontrado')
+  if (!user || !user.stripeCustomerId) {
+    throw Errors.notFound('Usuário ou assinatura')
   }
 
   const validation = createPortalSchema.safeParse(body)
@@ -82,7 +82,7 @@ export async function portal(request: FastifyRequest, reply: FastifyReply) {
 
   const { returnUrl } = validation.data
   const portalUrl = await createPortalSession(
-    tokenRecord.stripeCustomerId,
+    user.stripeCustomerId,
     returnUrl || env.FRONTEND_URL,
   )
 

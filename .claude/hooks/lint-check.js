@@ -1,4 +1,5 @@
 const { execSync } = require('child_process')
+const path = require('path')
 const parseInput = require('./parse-hook-input')
 
 parseInput().then(({ filePath }) => {
@@ -8,10 +9,12 @@ parseInput().then(({ filePath }) => {
   const normalized = filePath.replace(/\\/g, '/')
   if (!normalized.includes('/src/')) process.exit(0)
 
+  const eslintBin = path.resolve('node_modules', '.bin', 'eslint')
+
   try {
     const result = execSync(
-      `npx eslint --no-error-on-unmatched-pattern ${JSON.stringify(filePath)} 2>&1`,
-      { encoding: 'utf8', timeout: 15000 }
+      `"${eslintBin}" --no-error-on-unmatched-pattern ${JSON.stringify(filePath)} 2>&1`,
+      { encoding: 'utf8', timeout: 15000 },
     )
 
     if (result.trim()) {

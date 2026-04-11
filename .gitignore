@@ -1,6 +1,5 @@
 node_modules
 dist
-*-lock.json
 coverage/
 .claude/settings.local.json
 /generated/prisma

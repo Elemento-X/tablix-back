@@ -7,15 +7,27 @@ import {
 import { Errors } from '../errors/app-error'
 
 /**
- * Extrai o identificador do cliente (IP) para rate limiting
+ * Extrai o IP do cliente para rate limiting
  */
-function getClientIdentifier(request: FastifyRequest): string {
+function getClientIp(request: FastifyRequest): string {
   const forwarded = request.headers['x-forwarded-for']
   if (forwarded) {
     const ip = Array.isArray(forwarded) ? forwarded[0] : forwarded.split(',')[0]
     return ip.trim()
   }
   return request.ip || 'unknown'
+}
+
+/**
+ * Retorna o identifier para rate limiting:
+ * - Usuário autenticado: usa userId (mais justo que IP)
+ * - Não autenticado: usa IP
+ */
+function getRateLimitIdentifier(request: FastifyRequest): string {
+  if (request.user?.userId) {
+    return `user:${request.user.userId}`
+  }
+  return `ip:${getClientIp(request)}`
 }
 
 /**
@@ -32,7 +44,7 @@ export function createRateLimitMiddleware(type: RateLimiterType) {
       return
     }
 
-    const identifier = getClientIdentifier(request)
+    const identifier = getRateLimitIdentifier(request)
     const { success, limit, remaining, reset } = await limiter.limit(identifier)
 
     reply.header('X-RateLimit-Limit', limit)

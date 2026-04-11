@@ -1,6 +1,6 @@
 import { FastifyInstance } from 'fastify'
 import { ZodTypeProvider } from 'fastify-type-provider-zod'
-import { authMiddleware } from '../../middleware/auth.middleware'
+import { authMiddleware, requireRole } from '../../middleware/auth.middleware'
 import { rateLimitMiddleware } from '../../middleware/rate-limit.middleware'
 import * as processController from '../controllers/process.controller'
 import {
@@ -13,7 +13,11 @@ export async function processRoutes(app: FastifyInstance) {
 
   // POST /process/sync - Processa e unifica planilhas
   server.post('/sync', {
-    preHandler: [rateLimitMiddleware.process, authMiddleware],
+    preHandler: [
+      rateLimitMiddleware.process,
+      authMiddleware,
+      requireRole('PRO'),
+    ],
     schema: {
       tags: ['Process'],
       summary: 'Unificar planilhas',
@@ -50,6 +54,7 @@ curl -X POST /process/sync \\
         200: processSyncResponseSchema,
         400: errorResponseSchema,
         401: errorResponseSchema,
+        403: errorResponseSchema,
         429: errorResponseSchema,
       },
     },

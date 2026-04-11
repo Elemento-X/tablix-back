@@ -33,13 +33,13 @@ function getCurrentPeriod(): string {
 /**
  * Busca o uso atual do mês para o token
  */
-async function getCurrentUsage(tokenId: string): Promise<number> {
+async function getCurrentUsage(userId: string): Promise<number> {
   const period = getCurrentPeriod()
 
   const usage = await prisma.usage.findUnique({
     where: {
-      tokenId_period: {
-        tokenId,
+      userId_period: {
+        userId,
         period,
       },
     },
@@ -51,13 +51,13 @@ async function getCurrentUsage(tokenId: string): Promise<number> {
 /**
  * Incrementa o contador de uso mensal
  */
-async function incrementUsage(tokenId: string): Promise<void> {
+async function incrementUsage(userId: string): Promise<void> {
   const period = getCurrentPeriod()
 
   await prisma.usage.upsert({
     where: {
-      tokenId_period: {
-        tokenId,
+      userId_period: {
+        userId,
         period,
       },
     },
@@ -67,7 +67,7 @@ async function incrementUsage(tokenId: string): Promise<void> {
       },
     },
     create: {
-      tokenId,
+      userId,
       period,
       unificationsCount: 1,
     },
@@ -78,11 +78,11 @@ async function incrementUsage(tokenId: string): Promise<void> {
  * Valida os limites do plano Pro antes do processamento
  */
 export async function validateProLimits(
-  tokenId: string,
+  userId: string,
   files: FileData[],
 ): Promise<void> {
   // Verifica limite de unificações mensais
-  const currentUsage = await getCurrentUsage(tokenId)
+  const currentUsage = await getCurrentUsage(userId)
   if (currentUsage >= PRO_LIMITS.unificationsPerMonth) {
     throw Errors.limitExceeded(
       `${PRO_LIMITS.unificationsPerMonth} unificações/mês`,
@@ -125,14 +125,14 @@ function validateRowLimits(spreadsheets: ParsedSpreadsheet[]): void {
  * Processa as planilhas e retorna o arquivo unificado
  */
 export async function processSpreadsheets(
-  tokenId: string,
+  userId: string,
   files: FileData[],
   input: ProcessSyncInput,
 ): Promise<ProcessSyncResponse> {
   const { selectedColumns, outputFormat } = input
 
   // Valida limites antes de processar
-  await validateProLimits(tokenId, files)
+  await validateProLimits(userId, files)
 
   // Valida número de colunas
   if (selectedColumns.length > PRO_LIMITS.maxColumns) {
@@ -164,7 +164,7 @@ export async function processSpreadsheets(
   const outputFile = generateOutputFile(merged, outputFormat as OutputFormat)
 
   // Incrementa contador de uso
-  await incrementUsage(tokenId)
+  await incrementUsage(userId)
 
   // Retorna resposta
   return {

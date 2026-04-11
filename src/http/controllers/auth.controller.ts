@@ -1,24 +1,26 @@
 import { FastifyRequest, FastifyReply } from 'fastify'
 import {
-  validateTokenSchema,
-  refreshTokenSchema,
+  validateTokenBodySchema,
+  refreshBodySchema,
 } from '../../modules/auth/auth.schema'
 import {
   validateProToken,
   refreshSession,
   getUserInfo,
+  revokeSession,
+  revokeAllSessions,
 } from '../../modules/auth/auth.service'
 import { Errors } from '../../errors/app-error'
 
 /**
  * POST /auth/validate-token
- * Valida um token Pro e retorna JWT de sessão
+ * Valida um token Pro e retorna access + refresh tokens
  */
 export async function validateToken(
   request: FastifyRequest<{ Body: { token: string; fingerprint: string } }>,
   reply: FastifyReply,
 ) {
-  const validation = validateTokenSchema.safeParse(request.body)
+  const validation = validateTokenBodySchema.safeParse(request.body)
 
   if (!validation.success) {
     throw Errors.validationError('Dados inválidos', {
@@ -27,23 +29,29 @@ export async function validateToken(
   }
 
   const { token, fingerprint } = validation.data
-  const result = await validateProToken(token, fingerprint)
+
+  const result = await validateProToken(token, {
+    fingerprint,
+    userAgent: request.headers['user-agent'],
+    ipAddress: request.ip,
+  })
 
   return reply.send({
-    jwt: result.jwt,
+    accessToken: result.accessToken,
+    refreshToken: result.refreshToken,
     user: result.user,
   })
 }
 
 /**
  * POST /auth/refresh
- * Renova um JWT expirado
+ * Renova tokens usando refresh token
  */
 export async function refresh(
   request: FastifyRequest<{ Body: { refreshToken: string } }>,
   reply: FastifyReply,
 ) {
-  const validation = refreshTokenSchema.safeParse(request.body)
+  const validation = refreshBodySchema.safeParse(request.body)
 
   if (!validation.success) {
     throw Errors.validationError('Dados inválidos', {
@@ -55,7 +63,8 @@ export async function refresh(
   const result = await refreshSession(refreshToken)
 
   return reply.send({
-    jwt: result.jwt,
+    accessToken: result.accessToken,
+    refreshToken: result.refreshToken,
   })
 }
 
@@ -68,17 +77,35 @@ export async function me(request: FastifyRequest, reply: FastifyReply) {
     throw Errors.unauthorized('Usuário não autenticado')
   }
 
-  const userInfo = await getUserInfo(request.user)
+  const userInfo = await getUserInfo(request.user.userId)
 
   return reply.send({ user: userInfo })
 }
 
 /**
  * POST /auth/logout
- * Logout (client-side - apenas retorna sucesso)
+ * Revoga a sessão atual
  */
 export async function logout(request: FastifyRequest, reply: FastifyReply) {
-  // JWT é stateless - logout é feito no cliente removendo o token
-  // Este endpoint existe apenas para consistência da API
+  if (!request.user) {
+    throw Errors.unauthorized('Usuário não autenticado')
+  }
+
+  await revokeSession(request.user.sub)
+
   return reply.send({ success: true })
+}
+
+/**
+ * POST /auth/logout-all
+ * Revoga todas as sessões do usuário
+ */
+export async function logoutAll(request: FastifyRequest, reply: FastifyReply) {
+  if (!request.user) {
+    throw Errors.unauthorized('Usuário não autenticado')
+  }
+
+  const count = await revokeAllSessions(request.user.userId)
+
+  return reply.send({ success: true, sessionsRevoked: count })
 }

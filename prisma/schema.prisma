@@ -13,51 +13,98 @@ datasource db {
 }
 
 // ===========================================
-// TOKENS - Tokens de acesso Pro
+// USERS - Identidade do usuario
 // ===========================================
-// Armazena tokens gerados apos pagamento no Stripe
-// Token vinculado ao fingerprint no primeiro uso
+// Entidade central de identidade, desacoplada de billing
 
-model Token {
-  id                    String    @id @default(uuid())
-  token                 String    @unique @db.VarChar(64)
-  fingerprint           String?   @db.VarChar(64) // NULL ate primeiro uso
-  stripeCustomerId      String    @map("stripe_customer_id") @db.VarChar(255)
-  stripeSubscriptionId  String?   @map("stripe_subscription_id") @db.VarChar(255)
-  plan                  Plan      @default(PRO)
-  status                TokenStatus @default(ACTIVE)
-  email                 String    @db.VarChar(255)
-  createdAt             DateTime  @default(now()) @map("created_at")
-  activatedAt           DateTime? @map("activated_at") // Quando vinculou ao fingerprint
-  expiresAt             DateTime? @map("expires_at") // NULL se assinatura ativa
+model User {
+  id                String    @id @default(uuid())
+  email             String    @unique @db.VarChar(255)
+  role              Role      @default(FREE)
+  stripeCustomerId  String?   @unique @map("stripe_customer_id") @db.VarChar(255)
+  createdAt         DateTime  @default(now()) @map("created_at")
+  updatedAt         DateTime  @updatedAt @map("updated_at")
 
   // Relacionamentos
-  usages                Usage[]
-  jobs                  Job[]
+  tokens            Token[]
+  sessions          Session[]
+  usages            Usage[]
+  jobs              Job[]
+
+  @@index([email])
+  @@map("users")
+}
+
+// ===========================================
+// SESSIONS - Sessoes ativas do usuario
+// ===========================================
+// Cada login cria uma Session. JWT referencia session.id.
+// Logout revoga a session (seta revokedAt).
+
+model Session {
+  id                String    @id @default(uuid())
+  userId            String    @map("user_id")
+  fingerprint       String?   @db.VarChar(64)
+  userAgent         String?   @map("user_agent") @db.VarChar(512)
+  ipAddress         String?   @map("ip_address") @db.VarChar(45)
+  refreshTokenHash  String    @unique @map("refresh_token_hash") @db.VarChar(64)
+  createdAt         DateTime  @default(now()) @map("created_at")
+  lastActivityAt    DateTime  @default(now()) @map("last_activity_at")
+  expiresAt         DateTime  @map("expires_at")
+  revokedAt         DateTime? @map("revoked_at")
+
+  // Relacionamento
+  user              User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt], map: "idx_sessions_expires_at")
+  @@index([revokedAt], map: "idx_sessions_revoked_at")
+  @@map("sessions")
+}
+
+// ===========================================
+// TOKENS - Tokens de acesso Pro (ativacao)
+// ===========================================
+// Token gerado apos pagamento no Stripe, enviado por email.
+// Mecanismo de ativacao, nao identidade.
+
+model Token {
+  id                    String      @id @default(uuid())
+  userId                String      @map("user_id")
+  token                 String      @unique @db.VarChar(64)
+  fingerprint           String?     @db.VarChar(64)
+  stripeSubscriptionId  String?     @map("stripe_subscription_id") @db.VarChar(255)
+  plan                  Plan        @default(PRO)
+  status                TokenStatus @default(ACTIVE)
+  createdAt             DateTime    @default(now()) @map("created_at")
+  activatedAt           DateTime?   @map("activated_at")
+  expiresAt             DateTime?   @map("expires_at")
+
+  // Relacionamento — RESTRICT: cancelar subscription antes de deletar user
+  user                  User        @relation(fields: [userId], references: [id], onDelete: Restrict)
 
   @@index([token])
   @@index([fingerprint])
-  @@index([stripeCustomerId], map: "idx_tokens_stripe_customer")
+  @@index([userId], map: "idx_tokens_user")
   @@map("tokens")
 }
 
 // ===========================================
-// USAGE - Uso mensal (para limites do Pro)
+// USAGE - Uso mensal (para limites do plano)
 // ===========================================
-// Controla quantas unificacoes o usuario Pro fez no mes
+// Controla quantas unificacoes o usuario fez no mes
 
 model Usage {
   id                String   @id @default(uuid())
-  tokenId           String   @map("token_id")
+  userId            String   @map("user_id")
   period            String   @db.VarChar(7) // Formato: 'YYYY-MM'
   unificationsCount Int      @default(0) @map("unifications_count")
   createdAt         DateTime @default(now()) @map("created_at")
 
-  // Relacionamento
-  token             Token    @relation(fields: [tokenId], references: [id], onDelete: Cascade)
+  // Relacionamento — RESTRICT: preservar historico de billing
+  user              User     @relation(fields: [userId], references: [id], onDelete: Restrict)
 
-  @@unique([tokenId, period])
-  @@index([tokenId, period], map: "idx_usage_token_period")
+  @@unique([userId, period])
   @@map("usage")
 }
 
@@ -68,9 +115,9 @@ model Usage {
 
 model Job {
   id              String    @id @default(uuid())
-  tokenId         String    @map("token_id")
+  userId          String    @map("user_id")
   status          JobStatus @default(PENDING)
-  inputFiles      Json      @map("input_files") // Metadados dos arquivos
+  inputFiles      Json      @map("input_files")
   outputFileUrl   String?   @map("output_file_url") @db.VarChar(500)
   errorMessage    String?   @map("error_message")
   createdAt       DateTime  @default(now()) @map("created_at")
@@ -78,8 +125,9 @@ model Job {
   completedAt     DateTime? @map("completed_at")
 
   // Relacionamento
-  token           Token     @relation(fields: [tokenId], references: [id], onDelete: Cascade)
+  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 
+  @@index([userId], map: "idx_jobs_user")
   @@index([status], map: "idx_jobs_status")
   @@map("jobs")
 }
@@ -87,6 +135,11 @@ model Job {
 // ===========================================
 // ENUMS
 // ===========================================
+
+enum Role {
+  FREE
+  PRO
+}
 
 enum Plan {
   PRO

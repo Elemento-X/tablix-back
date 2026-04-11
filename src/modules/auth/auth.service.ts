@@ -1,95 +1,132 @@
 import { prisma } from '../../lib/prisma'
-import { generateSessionJwt, decodeJwt, JwtPayload } from '../../lib/jwt'
+import {
+  generateAccessToken,
+  generateRefreshToken,
+  hashRefreshToken,
+  getRefreshTokenExpiresAt,
+} from '../../lib/jwt'
 import { isValidTokenFormat } from '../../lib/token-generator'
 import { Errors } from '../../errors/app-error'
+import { createHmac, timingSafeEqual } from 'crypto'
 
 export interface ValidateTokenResult {
-  jwt: string
+  accessToken: string
+  refreshToken: string
   user: {
+    id: string
     email: string
-    plan: 'PRO'
+    role: 'FREE' | 'PRO'
     status: string
     activatedAt: Date | null
     expiresAt: Date | null
   }
 }
 
-export interface RefreshTokenResult {
-  jwt: string
+export interface RefreshResult {
+  accessToken: string
+  refreshToken: string
+}
+
+export interface SessionInfo {
+  fingerprint: string
+  userAgent?: string
+  ipAddress?: string
 }
 
 /**
- * Valida um token Pro e retorna um JWT de sessão
+ * Valida um token Pro e retorna access + refresh tokens
  * - Verifica se o token existe e está ativo
- * - Vincula ao fingerprint no primeiro uso
- * - Gera JWT de sessão
+ * - Cria User se não existe (primeiro uso)
+ * - Vincula fingerprint no primeiro uso
+ * - Cria Session
+ * - Gera access token (15min) + refresh token (30d)
  */
 export async function validateProToken(
   token: string,
-  fingerprint: string,
+  sessionInfo: SessionInfo,
 ): Promise<ValidateTokenResult> {
-  // Valida formato do token
   if (!isValidTokenFormat(token)) {
     throw Errors.invalidToken('Formato de token inválido')
   }
 
-  // Busca o token no banco
   const tokenRecord = await prisma.token.findUnique({
     where: { token },
+    include: { user: true },
   })
 
   if (!tokenRecord) {
-    throw Errors.invalidToken('Token não encontrado')
+    throw Errors.invalidToken('Token inválido ou expirado')
   }
 
-  // Verifica status do token
   if (tokenRecord.status === 'EXPIRED') {
-    throw Errors.subscriptionExpired('Assinatura expirada')
+    throw Errors.subscriptionExpired('Token inválido ou expirado')
   }
 
   if (tokenRecord.status === 'CANCELLED') {
-    // Verifica se ainda está no período de graça
     if (!tokenRecord.expiresAt || tokenRecord.expiresAt < new Date()) {
-      throw Errors.subscriptionExpired(
-        'Assinatura cancelada e período de acesso encerrado',
-      )
+      throw Errors.subscriptionExpired('Token inválido ou expirado')
     }
-    // Ainda tem acesso até expirar - continua
   }
 
   // Verifica vinculação do fingerprint
   if (tokenRecord.fingerprint) {
-    // Token já foi usado - verifica se é o mesmo fingerprint
-    if (tokenRecord.fingerprint !== fingerprint) {
-      throw Errors.tokenAlreadyUsed(
-        'Este token já está vinculado a outro dispositivo. ' +
-          'Se você é o dono, use o mesmo dispositivo onde ativou pela primeira vez.',
-      )
+    // Token já foi usado — verifica se é o mesmo fingerprint (timing-safe)
+    const fingerprintMatch = safeCompare(
+      tokenRecord.fingerprint,
+      sessionInfo.fingerprint,
+    )
+    if (!fingerprintMatch) {
+      throw Errors.tokenAlreadyUsed('Token inválido ou expirado')
     }
   } else {
-    // Primeiro uso - vincula ao fingerprint
+    // Primeiro uso — vincula fingerprint e ativa
     await prisma.token.update({
       where: { id: tokenRecord.id },
       data: {
-        fingerprint,
+        fingerprint: sessionInfo.fingerprint,
         activatedAt: new Date(),
       },
     })
   }
 
-  // Gera JWT de sessão
-  const jwt = generateSessionJwt({
-    sub: tokenRecord.id,
-    email: tokenRecord.email,
-    plan: 'PRO',
-    fingerprint,
+  // User já existe (criado pelo webhook) — atualiza role se necessário
+  const user = tokenRecord.user
+  if (user.role !== 'PRO') {
+    await prisma.user.update({
+      where: { id: user.id },
+      data: { role: 'PRO' },
+    })
+  }
+
+  // Cria sessão
+  const refreshTokenData = generateRefreshToken()
+  const expiresAt = getRefreshTokenExpiresAt()
+
+  const session = await prisma.session.create({
+    data: {
+      userId: user.id,
+      fingerprint: sessionInfo.fingerprint,
+      userAgent: sessionInfo.userAgent,
+      ipAddress: sessionInfo.ipAddress,
+      refreshTokenHash: refreshTokenData.hash,
+      expiresAt,
+    },
+  })
+
+  const accessToken = generateAccessToken({
+    sub: session.id,
+    userId: user.id,
+    email: user.email,
+    role: 'PRO',
   })
 
   return {
-    jwt,
+    accessToken,
+    refreshToken: refreshTokenData.token,
     user: {
-      email: tokenRecord.email,
-      plan: 'PRO',
+      id: user.id,
+      email: user.email,
+      role: 'PRO',
       status: tokenRecord.status,
       activatedAt: tokenRecord.activatedAt,
       expiresAt: tokenRecord.expiresAt,
@@ -98,94 +135,155 @@ export async function validateProToken(
 }
 
 /**
- * Renova um JWT expirado
- * - Decodifica o JWT antigo (sem verificar expiração)
- * - Verifica se o token Pro ainda está ativo
- * - Gera novo JWT
+ * Renova tokens usando refresh token
+ * - Valida refresh token via hash
+ * - Verifica session ativa (não revogada, não expirada)
+ * - Rotaciona refresh token (invalida anterior, gera novo)
+ * - Gera novo access token
  */
 export async function refreshSession(
-  expiredJwt: string,
-): Promise<RefreshTokenResult> {
-  // Decodifica sem verificar (para pegar o sub mesmo expirado)
-  const payload = decodeJwt(expiredJwt)
+  refreshToken: string,
+): Promise<RefreshResult> {
+  const hash = hashRefreshToken(refreshToken)
 
-  if (!payload || !payload.sub) {
-    throw Errors.invalidToken('Token de refresh inválido')
-  }
-
-  // Busca o token Pro no banco
-  const tokenRecord = await prisma.token.findUnique({
-    where: { id: payload.sub },
+  const session = await prisma.session.findUnique({
+    where: { refreshTokenHash: hash },
+    include: { user: true },
   })
 
-  if (!tokenRecord) {
-    throw Errors.invalidToken('Token não encontrado')
+  if (!session) {
+    throw Errors.invalidToken('Refresh token inválido')
   }
 
-  // Verifica se ainda está ativo
-  if (tokenRecord.status === 'EXPIRED') {
-    throw Errors.subscriptionExpired(
-      'Assinatura expirada. Renove para continuar.',
-    )
+  if (session.revokedAt) {
+    throw Errors.unauthorized('Sessão revogada. Faça login novamente.')
   }
 
-  if (tokenRecord.status === 'CANCELLED') {
-    if (!tokenRecord.expiresAt || tokenRecord.expiresAt < new Date()) {
+  if (session.expiresAt < new Date()) {
+    throw Errors.unauthorized('Sessão expirada. Faça login novamente.')
+  }
+
+  // Verifica se user ainda tem acesso (subscription pode ter expirado)
+  const activeToken = await prisma.token.findFirst({
+    where: {
+      userId: session.userId,
+      status: { in: ['ACTIVE', 'CANCELLED'] },
+    },
+    orderBy: { createdAt: 'desc' },
+  })
+
+  if (!activeToken) {
+    // Revoga sessão se não tem token ativo
+    await prisma.session.update({
+      where: { id: session.id },
+      data: { revokedAt: new Date() },
+    })
+    throw Errors.subscriptionExpired('Assinatura expirada')
+  }
+
+  // Se CANCELLED, verifica período de graça
+  if (activeToken.status === 'CANCELLED') {
+    if (!activeToken.expiresAt || activeToken.expiresAt < new Date()) {
+      await prisma.session.update({
+        where: { id: session.id },
+        data: { revokedAt: new Date() },
+      })
       throw Errors.subscriptionExpired(
         'Assinatura cancelada e período de acesso encerrado',
       )
     }
   }
 
-  // Verifica fingerprint (se tiver no payload)
-  if (payload.fingerprint && tokenRecord.fingerprint !== payload.fingerprint) {
-    throw Errors.tokenAlreadyUsed('Dispositivo não reconhecido')
-  }
+  // Rotaciona refresh token atomicamente (WHERE inclui hash atual → previne TOCTOU)
+  const newRefreshTokenData = generateRefreshToken()
+  const newExpiresAt = getRefreshTokenExpiresAt()
 
-  // Gera novo JWT
-  const jwt = generateSessionJwt({
-    sub: tokenRecord.id,
-    email: tokenRecord.email,
-    plan: 'PRO',
-    fingerprint: tokenRecord.fingerprint,
+  const rotated = await prisma.session.updateMany({
+    where: {
+      id: session.id,
+      refreshTokenHash: hash,
+      revokedAt: null,
+    },
+    data: {
+      refreshTokenHash: newRefreshTokenData.hash,
+      lastActivityAt: new Date(),
+      expiresAt: newExpiresAt,
+    },
   })
 
-  return { jwt }
+  if (rotated.count === 0) {
+    throw Errors.unauthorized('Sessão inválida. Faça login novamente.')
+  }
+
+  const accessToken = generateAccessToken({
+    sub: session.id,
+    userId: session.user.id,
+    email: session.user.email,
+    role: session.user.role,
+  })
+
+  return {
+    accessToken,
+    refreshToken: newRefreshTokenData.token,
+  }
 }
 
 /**
- * Retorna informações do usuário a partir do payload JWT
+ * Retorna informações do usuário autenticado
  */
-export async function getUserInfo(payload: JwtPayload) {
-  const tokenRecord = await prisma.token.findUnique({
-    where: { id: payload.sub },
+export async function getUserInfo(userId: string) {
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
     include: {
       usages: {
-        where: {
-          period: getCurrentPeriod(),
-        },
+        where: { period: getCurrentPeriod() },
       },
     },
   })
 
-  if (!tokenRecord) {
-    throw Errors.invalidToken('Token não encontrado')
+  if (!user) {
+    throw Errors.invalidToken('Usuário não encontrado')
   }
 
-  const currentUsage = tokenRecord.usages[0]?.unificationsCount ?? 0
+  const currentUsage = user.usages[0]?.unificationsCount ?? 0
+  const unificationsLimit = user.role === 'PRO' ? 40 : 5
 
   return {
-    email: tokenRecord.email,
-    plan: tokenRecord.plan,
-    status: tokenRecord.status,
-    activatedAt: tokenRecord.activatedAt,
-    expiresAt: tokenRecord.expiresAt,
+    id: user.id,
+    email: user.email,
+    role: user.role,
     usage: {
       period: getCurrentPeriod(),
-      unificationsUsed: currentUsage,
-      unificationsLimit: 40, // Pro limit
+      current: currentUsage,
+      limit: unificationsLimit,
+      remaining: Math.max(0, unificationsLimit - currentUsage),
     },
   }
+}
+
+/**
+ * Revoga uma sessão específica (logout)
+ */
+export async function revokeSession(sessionId: string): Promise<void> {
+  await prisma.session.update({
+    where: { id: sessionId },
+    data: { revokedAt: new Date() },
+  })
+}
+
+/**
+ * Revoga todas as sessões de um usuário (logout de todos os dispositivos)
+ */
+export async function revokeAllSessions(userId: string): Promise<number> {
+  const result = await prisma.session.updateMany({
+    where: {
+      userId,
+      revokedAt: null,
+    },
+    data: { revokedAt: new Date() },
+  })
+
+  return result.count
 }
 
 /**
@@ -196,4 +294,15 @@ function getCurrentPeriod(): string {
   const year = now.getFullYear()
   const month = String(now.getMonth() + 1).padStart(2, '0')
   return `${year}-${month}`
+}
+
+/**
+ * Comparação timing-safe de strings
+ * Usa HMAC para normalizar tamanho e eliminar timing leak por length
+ */
+function safeCompare(a: string, b: string): boolean {
+  const key = Buffer.from('safeCompare')
+  const hmacA = createHmac('sha256', key).update(a).digest()
+  const hmacB = createHmac('sha256', key).update(b).digest()
+  return timingSafeEqual(hmacA, hmacB)
 }
