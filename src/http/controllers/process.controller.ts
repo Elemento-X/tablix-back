@@ -3,15 +3,79 @@ import { Errors } from '../../errors/app-error'
 import { processSyncInputSchema } from '../../modules/process/process.schema'
 import { processSpreadsheets } from '../../modules/process/process.service'
 import { isValidExtension } from '../../lib/spreadsheet'
+import { redis } from '../../config/redis'
 
 interface FileData {
   buffer: Buffer
   fileName: string
 }
 
+/** Headers custom expostos ao frontend */
+const TABLIX_HEADERS = {
+  rows: 'X-Tablix-Rows',
+  columns: 'X-Tablix-Columns',
+  fileSize: 'X-Tablix-File-Size',
+  format: 'X-Tablix-Format',
+  fileName: 'X-Tablix-File-Name',
+} as const
+
+/** Max requests simultâneas por usuário */
+const MAX_CONCURRENT_PER_USER = 2
+const CONCURRENCY_KEY_PREFIX = 'tablix:concurrency:'
+const CONCURRENCY_TTL_SECONDS = 120
+
+/**
+ * Adquire slot de concorrência via Redis INCR.
+ * Retorna true se adquiriu, false se limite atingido.
+ */
+async function acquireConcurrencySlot(userId: string): Promise<boolean> {
+  if (!redis) return true // sem Redis, sem guard
+
+  const key = `${CONCURRENCY_KEY_PREFIX}${userId}`
+  const current = await redis.incr(key)
+
+  // Sempre seta TTL após INCR — garante que a key expira mesmo se
+  // houve crash entre INCR e EXPIRE em request anterior
+  await redis.expire(key, CONCURRENCY_TTL_SECONDS)
+
+  if (current > MAX_CONCURRENT_PER_USER) {
+    // Desfaz o increment — não adquiriu
+    await redis.decr(key)
+    return false
+  }
+
+  return true
+}
+
+/**
+ * Libera slot de concorrência via Redis DECR.
+ * Envolvido em try/catch — falha no release não deve propagar pro caller.
+ */
+async function releaseConcurrencySlot(
+  userId: string,
+  log?: { warn: (obj: Record<string, unknown>, msg: string) => void },
+): Promise<void> {
+  if (!redis) return
+
+  try {
+    const key = `${CONCURRENCY_KEY_PREFIX}${userId}`
+    const val = await redis.decr(key)
+
+    // Limpa key se zerou (evita lixo no Redis)
+    if (val <= 0) {
+      await redis.del(key)
+    }
+  } catch (err) {
+    log?.warn(
+      { userId, error: err instanceof Error ? err.message : String(err) },
+      'concurrency slot release failed — TTL will auto-expire',
+    )
+  }
+}
+
 /**
  * POST /process/sync
- * Processa e unifica planilhas de forma síncrona
+ * Processa e unifica planilhas — retorna binary com metadata nos headers
  */
 export async function processSync(
   request: FastifyRequest,
@@ -22,81 +86,117 @@ export async function processSync(
   }
 
   const userId = request.user.userId
-  const files: FileData[] = []
-  let selectedColumns: string[] = []
-  let outputFormat = 'xlsx'
+  const heapBefore = process.memoryUsage().heapUsed
 
-  // Coleta arquivos e campos do multipart
-  const parts = request.parts()
+  // Concurrency guard
+  const acquired = await acquireConcurrencySlot(userId)
+  if (!acquired) {
+    throw Errors.rateLimited(
+      'Limite de processamento simultâneo atingido. Aguarde a conclusão da request anterior.',
+    )
+  }
 
-  for await (const part of parts) {
-    if (part.type === 'file') {
-      // Valida extensão do arquivo
-      if (!isValidExtension(part.filename)) {
-        throw Errors.validationError(
-          `Formato de arquivo não suportado: ${part.filename}`,
-          {
-            validFormats: ['.csv', '.xlsx', '.xls'],
-          },
-        )
-      }
+  try {
+    const files: FileData[] = []
+    let selectedColumns: string[] = []
+    let outputFormat = 'xlsx'
 
-      // Lê o buffer do arquivo
-      const chunks: Buffer[] = []
-      for await (const chunk of part.file) {
-        chunks.push(chunk)
-      }
-      const buffer = Buffer.concat(chunks)
+    // Coleta arquivos e campos do multipart
+    const parts = request.parts()
 
-      // Verifica se o arquivo foi truncado (excedeu o limite)
-      if (part.file.truncated) {
-        throw Errors.limitExceeded(
-          '30MB por upload',
-          `arquivo ${part.filename} excedeu`,
-        )
-      }
-
-      files.push({
-        buffer,
-        fileName: part.filename,
-      })
-    } else if (part.type === 'field') {
-      // Processa campos do formulário
-      const value = part.value as string
-
-      if (part.fieldname === 'selectedColumns') {
-        // Aceita como JSON array ou como campo repetido
-        try {
-          selectedColumns = JSON.parse(value)
-        } catch {
-          // Se não for JSON, adiciona como item único
-          selectedColumns.push(value)
+    for await (const part of parts) {
+      if (part.type === 'file') {
+        // Valida extensão do arquivo
+        if (!isValidExtension(part.filename)) {
+          throw Errors.validationError(
+            `Formato de arquivo não suportado: ${part.filename}`,
+            {
+              validFormats: ['.csv', '.xlsx', '.xls'],
+            },
+          )
         }
-      } else if (part.fieldname === 'outputFormat') {
-        outputFormat = value
+
+        // Lê o buffer do arquivo
+        const chunks: Buffer[] = []
+        for await (const chunk of part.file) {
+          chunks.push(chunk)
+        }
+        const buffer = Buffer.concat(chunks)
+
+        // Verifica se o arquivo foi truncado (excedeu o limite)
+        if (part.file.truncated) {
+          throw Errors.limitExceeded(
+            '2MB por arquivo',
+            `arquivo ${part.filename} excedeu`,
+          )
+        }
+
+        files.push({ buffer, fileName: part.filename })
+      } else if (part.type === 'field') {
+        const value = part.value as string
+
+        if (part.fieldname === 'selectedColumns') {
+          try {
+            selectedColumns = JSON.parse(value)
+          } catch {
+            selectedColumns.push(value)
+          }
+        } else if (part.fieldname === 'outputFormat') {
+          outputFormat = value
+        }
       }
     }
-  }
 
-  // Valida se há arquivos
-  if (files.length === 0) {
-    throw Errors.validationError('Nenhum arquivo enviado')
-  }
+    // Valida se há arquivos
+    if (files.length === 0) {
+      throw Errors.validationError('Nenhum arquivo enviado')
+    }
 
-  // Valida input com Zod
-  const validation = processSyncInputSchema.safeParse({
-    selectedColumns,
-    outputFormat,
-  })
-
-  if (!validation.success) {
-    throw Errors.validationError('Dados inválidos', {
-      errors: validation.error.flatten().fieldErrors,
+    // Valida input com Zod
+    const validation = processSyncInputSchema.safeParse({
+      selectedColumns,
+      outputFormat,
     })
+
+    if (!validation.success) {
+      throw Errors.validationError('Dados inválidos', {
+        errors: validation.error.flatten().fieldErrors,
+      })
+    }
+
+    // Processa as planilhas
+    const result = await processSpreadsheets(userId, files, validation.data)
+
+    // Memory logging
+    const heapAfter = process.memoryUsage().heapUsed
+    const heapDeltaMB = ((heapAfter - heapBefore) / 1024 / 1024).toFixed(2)
+    request.log.info(
+      {
+        userId,
+        filesCount: files.length,
+        rowsCount: result.rowsCount,
+        heapBeforeMB: (heapBefore / 1024 / 1024).toFixed(2),
+        heapAfterMB: (heapAfter / 1024 / 1024).toFixed(2),
+        heapDeltaMB,
+      },
+      'process/sync heap usage',
+    )
+
+    // Envia binary com metadata nos headers
+    return reply
+      .status(200)
+      .header('Content-Type', result.mimeType)
+      .header(
+        'Content-Disposition',
+        `attachment; filename="${result.fileName}"`,
+      )
+      .header(TABLIX_HEADERS.rows, String(result.rowsCount))
+      .header(TABLIX_HEADERS.columns, String(result.columnsCount))
+      .header(TABLIX_HEADERS.fileSize, String(result.fileSize))
+      .header(TABLIX_HEADERS.format, result.format)
+      .header(TABLIX_HEADERS.fileName, result.fileName)
+      .send(result.buffer)
+  } finally {
+    await releaseConcurrencySlot(userId, request.log)
   }
-
-  // Processa as planilhas
-  const result = await processSpreadsheets(userId, files, validation.data)
-
-  return reply.send(result)
 }

@@ -33,6 +33,14 @@ export async function buildApp() {
   await app.register(cors, {
     origin: env.FRONTEND_URL,
     credentials: true,
+    exposedHeaders: [
+      'Content-Disposition',
+      'X-Tablix-Rows',
+      'X-Tablix-Columns',
+      'X-Tablix-File-Size',
+      'X-Tablix-Format',
+      'X-Tablix-File-Name',
+    ],
   })
 
   await app.register(helmet, {

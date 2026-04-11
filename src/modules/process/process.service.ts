@@ -13,7 +13,7 @@ import {
   ParsedSpreadsheet,
   OutputFormat,
 } from '../../lib/spreadsheet'
-import { ProcessSyncInput, ProcessSyncResponse } from './process.schema'
+import { ProcessSyncInput, ProcessSyncResult } from './process.schema'
 
 interface FileData {
   buffer: Buffer
@@ -148,13 +148,13 @@ function validateRowLimits(spreadsheets: ParsedSpreadsheet[]): void {
 }
 
 /**
- * Processa as planilhas e retorna o arquivo unificado
+ * Processa as planilhas e retorna buffer + metadata
  */
 export async function processSpreadsheets(
   userId: string,
   files: FileData[],
   input: ProcessSyncInput,
-): Promise<ProcessSyncResponse> {
+): Promise<ProcessSyncResult> {
   const { selectedColumns, outputFormat } = input
 
   // Valida limites antes de processar
@@ -192,13 +192,13 @@ export async function processSpreadsheets(
   // Incrementa contador de uso
   await incrementUsage(userId)
 
-  // Retorna resposta
   return {
-    file: outputFile.buffer.toString('base64'),
+    buffer: outputFile.buffer,
     fileName: outputFile.fileName,
     fileSize: outputFile.buffer.length,
     rowsCount: merged.totalRows,
     columnsCount: selectedColumns.length,
     format: outputFormat,
+    mimeType: outputFile.mimeType,
   }
 }
