@@ -8,11 +8,11 @@
 export const PRO_LIMITS = {
   unificationsPerMonth: 40,
   maxInputFiles: 15,
-  maxFileSize: Infinity, // Sem limite por arquivo
-  maxTotalSize: 30 * 1024 * 1024, // 30MB
-  maxRowsPerFile: Infinity, // Sem limite por arquivo
-  maxTotalRows: 75000,
-  maxColumns: 15,
+  maxFileSize: 2 * 1024 * 1024, // 2 MB por arquivo (D.1: front é fonte da verdade)
+  maxTotalSize: 30 * 1024 * 1024, // 30 MB total
+  maxRowsPerFile: 5_000, // 5.000 linhas por arquivo (D.1)
+  maxTotalRows: 75_000, // 75.000 linhas totais no merge
+  maxColumns: 10, // 10 colunas selecionáveis (D.1)
 } as const
 
 /**

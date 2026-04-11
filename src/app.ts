@@ -13,6 +13,7 @@ import {
 import { env } from './config/env'
 import { registerRoutes } from './http/routes'
 import { AppError } from './errors/app-error'
+import { PRO_LIMITS } from './lib/spreadsheet'
 
 export async function buildApp() {
   const app = fastify({
@@ -38,11 +39,11 @@ export async function buildApp() {
     contentSecurityPolicy: env.NODE_ENV === 'production',
   })
 
-  // Multipart para upload de arquivos
+  // Multipart para upload de arquivos (limites alinhados com PRO_LIMITS — D.1)
   await app.register(multipart, {
     limits: {
-      fileSize: 30 * 1024 * 1024, // 30MB total
-      files: 15, // Máximo 15 arquivos por unificação
+      fileSize: PRO_LIMITS.maxFileSize, // 2 MB por arquivo (D.1)
+      files: PRO_LIMITS.maxInputFiles, // 15 arquivos por unificação
     },
   })
 

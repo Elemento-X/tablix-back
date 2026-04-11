@@ -98,12 +98,27 @@ export async function validateProLimits(
     )
   }
 
+  // Verifica tamanho por arquivo individual (D.1)
+  const limitMB = (PRO_LIMITS.maxFileSize / 1024 / 1024).toFixed(0)
+  for (const file of files) {
+    if (file.buffer.length > PRO_LIMITS.maxFileSize) {
+      const fileMB = (file.buffer.length / 1024 / 1024).toFixed(2)
+      throw Errors.limitExceeded(
+        `${limitMB}MB por arquivo`,
+        `${file.fileName} tem ${fileMB}MB`,
+      )
+    }
+  }
+
   // Verifica tamanho total
   const totalSize = files.reduce((acc, file) => acc + file.buffer.length, 0)
   if (totalSize > PRO_LIMITS.maxTotalSize) {
     const totalMB = (totalSize / 1024 / 1024).toFixed(2)
-    const limitMB = (PRO_LIMITS.maxTotalSize / 1024 / 1024).toFixed(0)
-    throw Errors.limitExceeded(`${limitMB}MB total`, `${totalMB}MB enviados`)
+    const totalLimitMB = (PRO_LIMITS.maxTotalSize / 1024 / 1024).toFixed(0)
+    throw Errors.limitExceeded(
+      `${totalLimitMB}MB total`,
+      `${totalMB}MB enviados`,
+    )
   }
 }
 
@@ -111,6 +126,17 @@ export async function validateProLimits(
  * Valida o limite total de linhas após o parse
  */
 function validateRowLimits(spreadsheets: ParsedSpreadsheet[]): void {
+  // Verifica linhas por arquivo individual (D.1)
+  for (const spreadsheet of spreadsheets) {
+    if (spreadsheet.rowCount > PRO_LIMITS.maxRowsPerFile) {
+      throw Errors.limitExceeded(
+        `${PRO_LIMITS.maxRowsPerFile.toLocaleString()} linhas por arquivo`,
+        `${spreadsheet.fileName} tem ${spreadsheet.rowCount.toLocaleString()} linhas`,
+      )
+    }
+  }
+
+  // Verifica total de linhas no merge
   const totalRows = spreadsheets.reduce((acc, s) => acc + s.rowCount, 0)
 
   if (totalRows > PRO_LIMITS.maxTotalRows) {
