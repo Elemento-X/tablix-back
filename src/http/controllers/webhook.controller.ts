@@ -1,5 +1,6 @@
 import { FastifyRequest, FastifyReply } from 'fastify'
 import Stripe from 'stripe'
+import { Prisma } from '@prisma/client'
 import { constructWebhookEvent } from '../../modules/billing/stripe.service'
 import {
   handleCheckoutCompleted,
@@ -7,71 +8,111 @@ import {
   handleSubscriptionDeleted,
   handlePaymentFailed,
 } from '../../modules/billing/webhook.handler'
+import { prisma } from '../../lib/prisma'
 import { Errors } from '../../errors/app-error'
 
 /**
+ * Registra evento do Stripe para deduplicacao.
+ * Retorna true se o evento foi registrado (novo).
+ * Retorna false se ja foi processado (duplicata - P2002).
+ */
+async function registerStripeEvent(event: Stripe.Event): Promise<boolean> {
+  try {
+    await prisma.stripeEvent.create({
+      data: {
+        id: event.id,
+        type: event.type,
+      },
+    })
+    return true
+  } catch (error) {
+    if (
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      error.code === 'P2002'
+    ) {
+      return false
+    }
+    throw error
+  }
+}
+
+/**
  * POST /webhooks/stripe
- * Recebe e processa webhooks do Stripe
+ * Recebe e processa webhooks do Stripe.
+ *
+ * Idempotencia: registra event.id em stripe_events antes de processar.
+ * Duplicata retorna 200 sem side effects.
+ * Erros reais propagam (500) para a Stripe reenviar.
  */
 export async function stripeWebhook(
-  request: FastifyRequest<{ Headers: { 'stripe-signature'?: string } }>,
+  request: FastifyRequest<{
+    Headers: { 'stripe-signature'?: string }
+  }>,
   reply: FastifyReply,
 ) {
   const signature = request.headers['stripe-signature']
 
   if (!signature) {
-    throw Errors.webhookFailed('Assinatura do webhook não fornecida')
+    throw Errors.webhookFailed('Assinatura do webhook nao fornecida')
   }
 
-  // O body já vem como Buffer por causa do content type parser
   const payload = request.body as Buffer
 
-  // Valida a assinatura do webhook
   let event: Stripe.Event
 
   try {
     event = constructWebhookEvent(payload, signature)
   } catch (error) {
-    console.error('[Webhook] Erro de validação:', error)
+    request.log.error(
+      { err: error },
+      '[Webhook] Erro de validacao de assinatura',
+    )
     throw error
   }
 
-  console.log('[Webhook] Evento recebido:', event.type)
+  // Deduplicacao: tenta registrar o event.id
+  const isNew = await registerStripeEvent(event)
 
-  // Processa o evento
-  try {
-    switch (event.type) {
-      case 'checkout.session.completed':
-        await handleCheckoutCompleted(
-          event.data.object as Stripe.Checkout.Session,
-        )
-        break
-
-      case 'customer.subscription.updated':
-        await handleSubscriptionUpdated(
-          event.data.object as Stripe.Subscription,
-        )
-        break
-
-      case 'customer.subscription.deleted':
-        await handleSubscriptionDeleted(
-          event.data.object as Stripe.Subscription,
-        )
-        break
-
-      case 'invoice.payment_failed':
-        await handlePaymentFailed(event.data.object as Stripe.Invoice)
-        break
-
-      default:
-        console.log('[Webhook] Evento não tratado:', event.type)
-    }
-  } catch (error) {
-    console.error('[Webhook] Erro ao processar evento:', error)
-    // Retorna 200 mesmo com erro para o Stripe não reenviar
-    // O erro já foi logado
+  if (!isNew) {
+    request.log.info(
+      { eventId: event.id, type: event.type },
+      '[Webhook] Evento duplicado, ignorando',
+    )
+    return reply.send({ received: true, duplicate: true })
   }
 
-  // Stripe espera um 200 OK
+  request.log.info(
+    { eventId: event.id, type: event.type },
+    '[Webhook] Processando evento',
+  )
+
+  // Processa o evento - erros propagam para Fastify retornar 500
+  // e a Stripe reenvia automaticamente
+  switch (event.type) {
+    case 'checkout.session.completed':
+      await handleCheckoutCompleted(
+        event.data.object as Stripe.Checkout.Session,
+      )
+      break
+
+    case 'customer.subscription.updated':
+      await handleSubscriptionUpdated(event.data.object as Stripe.Subscription)
+      break
+
+    case 'customer.subscription.deleted':
+      await handleSubscriptionDeleted(event.data.object as Stripe.Subscription)
+      break
+
+    case 'invoice.payment_failed':
+      await handlePaymentFailed(event.data.object as Stripe.Invoice)
+      break
+
+    default:
+      request.log.info(
+        { eventId: event.id, type: event.type },
+        '[Webhook] Evento nao tratado',
+      )
+  }
+
   return reply.send({ received: true })
 }

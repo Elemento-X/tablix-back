@@ -31,7 +31,6 @@ model User {
   usages            Usage[]
   jobs              Job[]
 
-  @@index([email])
   @@map("users")
 }
 
@@ -83,6 +82,7 @@ model Token {
   // Relacionamento — RESTRICT: cancelar subscription antes de deletar user
   user                  User        @relation(fields: [userId], references: [id], onDelete: Restrict)
 
+  @@unique([userId, stripeSubscriptionId], map: "uq_tokens_user_subscription")
   @@index([token])
   @@index([fingerprint])
   @@index([userId], map: "idx_tokens_user")
@@ -130,6 +130,21 @@ model Job {
   @@index([userId], map: "idx_jobs_user")
   @@index([status], map: "idx_jobs_status")
   @@map("jobs")
+}
+
+// ===========================================
+// STRIPE EVENTS - Idempotencia de webhooks
+// ===========================================
+// Registra event.id processados para deduplicacao.
+// Insert duplicado gera P2002 (unique violation) = evento ja processado.
+
+model StripeEvent {
+  id          String   @id @db.VarChar(255) // event.id do Stripe (evt_...)
+  type        String   @db.VarChar(255)
+  processedAt DateTime @default(now()) @map("processed_at") @db.Timestamptz(3)
+
+  @@index([processedAt], map: "idx_stripe_events_processed_at")
+  @@map("stripe_events")
 }
 
 // ===========================================

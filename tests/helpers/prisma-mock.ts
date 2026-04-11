@@ -29,6 +29,7 @@ export function createPrismaMock() {
     token: createModelMock(),
     usage: createModelMock(),
     job: createModelMock(),
+    stripeEvent: createModelMock(),
     $transaction: vi.fn(),
     $connect: vi.fn(),
     $disconnect: vi.fn(),

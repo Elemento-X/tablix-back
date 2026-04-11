@@ -15,6 +15,8 @@ export default defineConfig({
         'src/modules/auth/auth.service.ts',
         'src/middleware/auth.middleware.ts',
         'src/errors/app-error.ts',
+        'src/http/controllers/webhook.controller.ts',
+        'src/modules/billing/webhook.handler.ts',
       ],
       thresholds: {
         lines: 90,
