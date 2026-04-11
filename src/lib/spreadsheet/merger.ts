@@ -37,7 +37,7 @@ export function mergeSpreadsheets(
 
     // Extrai os dados de cada linha
     for (const row of spreadsheet.rows) {
-      const mergedRow: SpreadsheetRow = {}
+      const mergedRow: SpreadsheetRow = Object.create(null)
 
       for (const selectedCol of selectedColumns) {
         const actualCol = columnMapping.get(selectedCol)

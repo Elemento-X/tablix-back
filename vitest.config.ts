@@ -19,6 +19,7 @@ export default defineConfig({
         'src/modules/billing/webhook.handler.ts',
         'src/lib/spreadsheet/sanitizer.ts',
         'src/lib/spreadsheet/merger.ts',
+        'src/lib/spreadsheet/parser.ts',
         'src/modules/process/process.service.ts',
       ],
       thresholds: {
