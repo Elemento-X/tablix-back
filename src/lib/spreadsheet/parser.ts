@@ -55,6 +55,75 @@ const MAX_DECOMPRESSION_RATIO = 100
 const MAX_DECOMPRESSED_SIZE = 100 * 1024 * 1024
 
 // -------------------------------------------------
+// Camada 0: Decode de buffer texto (encoding + BOM)
+// -------------------------------------------------
+
+/**
+ * Decodifica um buffer de texto (CSV) respeitando BOM e encoding real.
+ *
+ * Problema (Card 1.14):
+ *   - `buffer.toString('utf-8')` usa substituição silenciosa (bytes inválidos
+ *     viram U+FFFD sem erro). CSVs exportados pelo Excel BR costumam vir em
+ *     windows-1252 (latin1 estendido) — decodificar como UTF-8 corrompe
+ *     silenciosamente `á`, `ç`, `ã`, `ô`, `€`, etc.
+ *   - BOM UTF-8 (EF BB BF) não removido fica colado no primeiro header:
+ *     `\uFEFFNome` não bate em `validateColumns` → "coluna não encontrada".
+ *   - UTF-16 LE/BE (Excel "Save as Unicode Text") não é contemplado.
+ *
+ * Estratégia:
+ *   1. Detecta e remove BOM (UTF-8, UTF-16 LE, UTF-16 BE).
+ *   2. Se BOM UTF-16 presente, decoda no encoding correspondente.
+ *   3. Caso contrário, tenta UTF-8 estrito (`fatal: true`). Bytes inválidos
+ *      lançam — o fallback assume windows-1252.
+ *   4. Fallback windows-1252 cobre latin1 (iso-8859-1) + caracteres extras
+ *      (€, aspas tipográficas, travessão). É o encoding default do Excel
+ *      em PT-BR, então cobre o caso real de quase 100% dos usuários.
+ *
+ * Por que windows-1252 e não iso-8859-1 puro: em builds com full-icu, win-1252
+ * popula bytes 0x80–0x9F com €, aspas tipográficas, etc. Em builds com mapeamento
+ * reduzido, esses bytes caem em U+0080..U+009F (C1 controls) — sem perda de dados,
+ * só sem os símbolos extras. Para CSVs Excel PT-BR isso é irrelevante: todos os
+ * acentos usados (á, é, í, ó, ú, ç, ã, õ, â, ê, etc.) vivem em 0xC0–0xFF, range
+ * onde win-1252 e iso-8859-1 concordam.
+ *
+ * `TextDecoder` é built-in do Node (>=11). Zero dep nova.
+ */
+export function decodeTextBuffer(buffer: Buffer): string {
+  // BOM UTF-16 LE: FF FE
+  if (buffer.length >= 2 && buffer[0] === 0xff && buffer[1] === 0xfe) {
+    return new TextDecoder('utf-16le').decode(buffer.subarray(2))
+  }
+
+  // BOM UTF-16 BE: FE FF
+  if (buffer.length >= 2 && buffer[0] === 0xfe && buffer[1] === 0xff) {
+    return new TextDecoder('utf-16be').decode(buffer.subarray(2))
+  }
+
+  // BOM UTF-8: EF BB BF (strip antes de decodar)
+  let start = 0
+  if (
+    buffer.length >= 3 &&
+    buffer[0] === 0xef &&
+    buffer[1] === 0xbb &&
+    buffer[2] === 0xbf
+  ) {
+    start = 3
+  }
+
+  const payload = start > 0 ? buffer.subarray(start) : buffer
+
+  try {
+    // fatal: true → bytes inválidos lançam TypeError em vez de silenciar U+FFFD
+    return new TextDecoder('utf-8', { fatal: true }).decode(payload)
+  } catch {
+    // Fallback permissivo: windows-1252 aceita qualquer byte. Pior caso é
+    // caractere errado (em vez de crash) — aceitável: alternativa seria
+    // rejeitar o upload do usuário, UX pior.
+    return new TextDecoder('windows-1252').decode(payload)
+  }
+}
+
+// -------------------------------------------------
 // Camada 1: Sanitizacao de headers perigosos
 // -------------------------------------------------
 
@@ -216,7 +285,10 @@ export function isValidExtension(fileName: string): boolean {
  * Faz o parse de um arquivo CSV usando papaparse
  */
 function parseCsv(buffer: Buffer, fileName: string): ParsedSpreadsheet {
-  const content = buffer.toString('utf-8')
+  // Card 1.14: detecta BOM + encoding real em vez de assumir UTF-8.
+  // CSVs exportados pelo Excel BR costumam vir em windows-1252 —
+  // `buffer.toString('utf-8')` corromperia `á`, `ç`, `ã` silenciosamente.
+  const content = decodeTextBuffer(buffer)
 
   const result = Papa.parse<Record<string, string>>(content, {
     header: true,
