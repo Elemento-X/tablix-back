@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 /**
  * Unit tests for rate-limit.middleware.ts (Card 1.20 fix)
  * Covers:
@@ -9,13 +10,20 @@
  *   - middleware sets X-RateLimit-* headers and passes when success
  *   - middleware throws AppError RATE_LIMITED (429) when limit exceeded
  *   - identifier uses userId when request.user is present
- *   - identifier falls back to x-forwarded-for IP
- *   - identifier falls back to request.ip
- *   - identifier falls back to 'unknown' when all sources are absent
+ *   - identifier falls back to request.ip (resolvido por Fastify + trustProxy)
+ *   - middleware lança IP_UNRESOLVABLE (400) quando request.ip ausente
+ *     (fail-closed — Card 1.12 hardening pós-@security)
+ *   - middleware NÃO lê x-forwarded-for cru (Card 1.12 — anti-spoof)
  *
  * @owner: @tester
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+
+import {
+  createRateLimitMiddleware,
+  rateLimitMiddleware,
+} from '../../src/middleware/rate-limit.middleware'
+import { AppError, ErrorCodes } from '../../src/errors/app-error'
 
 // --- Mocks (hoisted) ---
 const { mockIsRateLimitEnabled, mockRateLimiters } = vi.hoisted(() => {
@@ -43,12 +51,6 @@ vi.mock('../../src/config/rate-limit', () => ({
   isRateLimitEnabled: mockIsRateLimitEnabled,
 }))
 
-import {
-  createRateLimitMiddleware,
-  rateLimitMiddleware,
-} from '../../src/middleware/rate-limit.middleware'
-import { AppError, ErrorCodes } from '../../src/errors/app-error'
-
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -65,7 +67,20 @@ function makeRequest(
   return {
     user: overrides.user,
     headers: overrides.headers ?? {},
-    ip: overrides.ip ?? '',
+    // Default IP válido — fail-closed do middleware rejeita request sem IP.
+    // Testes que validam o fail-closed passam `ip: ''` ou `ip: undefined`
+    // explicitamente.
+    ip: overrides.ip ?? '127.0.0.1',
+    url: '/test',
+    method: 'GET',
+    // Pino-compatible stub — middleware chama request.log.warn() antes
+    // do throw de IP_UNRESOLVABLE (observability hook).
+    log: {
+      warn: vi.fn(),
+      error: vi.fn(),
+      info: vi.fn(),
+      debug: vi.fn(),
+    },
   }
 }
 
@@ -355,40 +370,7 @@ describe('createRateLimitMiddleware — resolução de identifier', () => {
     expect((mockRateLimiters as any).checkout.limit).toHaveBeenCalledWith('user:usr_abc123')
   })
 
-  it('deve usar ip:x-forwarded-for (string simples) quando sem usuário', async () => {
-    const mw = createRateLimitMiddleware('checkout')
-    const request = makeRequest({
-      headers: { 'x-forwarded-for': '203.0.113.5' },
-    })
-
-    await mw(request, makeReply())
-
-    expect((mockRateLimiters as any).checkout.limit).toHaveBeenCalledWith('ip:203.0.113.5')
-  })
-
-  it('deve usar o primeiro IP do x-forwarded-for quando for lista separada por vírgula', async () => {
-    const mw = createRateLimitMiddleware('checkout')
-    const request = makeRequest({
-      headers: { 'x-forwarded-for': '203.0.113.5, 10.0.0.1, 172.16.0.1' },
-    })
-
-    await mw(request, makeReply())
-
-    expect((mockRateLimiters as any).checkout.limit).toHaveBeenCalledWith('ip:203.0.113.5')
-  })
-
-  it('deve usar o primeiro IP do x-forwarded-for quando for array', async () => {
-    const mw = createRateLimitMiddleware('checkout')
-    const request = makeRequest({
-      headers: { 'x-forwarded-for': ['203.0.113.7', '10.0.0.1'] },
-    })
-
-    await mw(request, makeReply())
-
-    expect((mockRateLimiters as any).checkout.limit).toHaveBeenCalledWith('ip:203.0.113.7')
-  })
-
-  it('deve usar ip:request.ip quando x-forwarded-for ausente', async () => {
+  it('deve usar ip:request.ip quando sem usuario (Fastify resolve XFF via trustProxy)', async () => {
     const mw = createRateLimitMiddleware('checkout')
     const request = makeRequest({ ip: '192.168.1.1' })
 
@@ -397,24 +379,143 @@ describe('createRateLimitMiddleware — resolução de identifier', () => {
     expect((mockRateLimiters as any).checkout.limit).toHaveBeenCalledWith('ip:192.168.1.1')
   })
 
-  it('deve usar ip:unknown quando nenhuma fonte de IP disponível', async () => {
+  it('deve lançar IP_UNRESOLVABLE (400) quando request.ip ausente (fail-closed)', async () => {
+    // Pós-@security review: fail-closed em vez de bucket compartilhado 'unknown'.
+    // Bucket compartilhado permitiria todos os requests sem IP afogarem uns aos outros.
     const mw = createRateLimitMiddleware('checkout')
-    const request = { headers: {}, ip: '', user: undefined } as any
+    const request = makeRequest({ ip: '' })
 
-    await mw(request, makeReply())
-
-    expect((mockRateLimiters as any).checkout.limit).toHaveBeenCalledWith('ip:unknown')
+    await expect(mw(request, makeReply())).rejects.toMatchObject({
+      code: ErrorCodes.IP_UNRESOLVABLE,
+      statusCode: 400,
+    })
+    expect((mockRateLimiters as any).checkout.limit).not.toHaveBeenCalled()
+    // Observability: log.warn emitido antes do throw (BAIXO run #2).
+    expect(request.log.warn).toHaveBeenCalledTimes(1)
   })
 
-  it('userId preferido sobre x-forwarded-for quando ambos presentes', async () => {
+  it('userId preferido sobre request.ip quando ambos presentes', async () => {
     const mw = createRateLimitMiddleware('checkout')
     const request = makeRequest({
       user: { userId: 'usr_priority' },
-      headers: { 'x-forwarded-for': '203.0.113.5' },
+      ip: '192.168.1.1',
     })
 
     await mw(request, makeReply())
 
     expect((mockRateLimiters as any).checkout.limit).toHaveBeenCalledWith('user:usr_priority')
+  })
+
+  // =========================================================================
+  // Card 1.12 — regression guard anti-spoof
+  // =========================================================================
+  // O middleware NAO pode ler x-forwarded-for cru. Resolucao de XFF e
+  // responsabilidade do Fastify via opcao `trustProxy` em app.ts, que
+  // so confia em hops permitidos. Ler XFF direto permite spoof trivial:
+  // qualquer cliente manda `X-Forwarded-For: 1.2.3.4` e contorna rate limit.
+  // =========================================================================
+  it('Card 1.12: NAO deve ler x-forwarded-for cru — com ip ausente, fail-closed', async () => {
+    const mw = createRateLimitMiddleware('checkout')
+    // XFF presente mas request.ip ausente — fail-closed (IP_UNRESOLVABLE),
+    // NAO usa o XFF cru como fallback. Se o middleware estivesse lendo XFF,
+    // chamaria limit('ip:1.2.3.4') silenciosamente.
+    const request = makeRequest({
+      headers: { 'x-forwarded-for': '1.2.3.4' },
+      ip: '',
+    })
+
+    await expect(mw(request, makeReply())).rejects.toMatchObject({
+      code: ErrorCodes.IP_UNRESOLVABLE,
+    })
+    expect((mockRateLimiters as any).checkout.limit).not.toHaveBeenCalledWith('ip:1.2.3.4')
+    expect((mockRateLimiters as any).checkout.limit).not.toHaveBeenCalled()
+  })
+
+  it('Card 1.12: ignora x-real-ip cru (qualquer proxy header bruto é spoofável)', async () => {
+    const mw = createRateLimitMiddleware('checkout')
+    const request = makeRequest({
+      headers: { 'x-real-ip': '1.2.3.4' },
+      ip: '',
+    })
+
+    await expect(mw(request, makeReply())).rejects.toMatchObject({
+      code: ErrorCodes.IP_UNRESOLVABLE,
+    })
+    expect((mockRateLimiters as any).checkout.limit).not.toHaveBeenCalledWith('ip:1.2.3.4')
+  })
+
+  it('Card 1.12: ignora cf-connecting-ip cru (Cloudflare header spoofável sem trustProxy)', async () => {
+    const mw = createRateLimitMiddleware('checkout')
+    const request = makeRequest({
+      headers: { 'cf-connecting-ip': '1.2.3.4' },
+      ip: '',
+    })
+
+    await expect(mw(request, makeReply())).rejects.toMatchObject({
+      code: ErrorCodes.IP_UNRESOLVABLE,
+    })
+    expect((mockRateLimiters as any).checkout.limit).not.toHaveBeenCalledWith('ip:1.2.3.4')
+  })
+
+  it('Card 1.12: ignora true-client-ip, forwarded, via — só confia em request.ip', async () => {
+    const mw = createRateLimitMiddleware('checkout')
+    const request = makeRequest({
+      headers: {
+        'true-client-ip': '1.1.1.1',
+        forwarded: 'for=2.2.2.2',
+        via: '1.1 proxy.example.com',
+      },
+      ip: '203.0.113.50',
+    })
+
+    await mw(request, makeReply())
+
+    // Qualquer que seja o header bruto, a resposta é sempre request.ip.
+    expect((mockRateLimiters as any).checkout.limit).toHaveBeenCalledWith('ip:203.0.113.50')
+  })
+
+  it('user autenticado NÃO é afetado por ip ausente (fail-closed é só pro branch de IP)', async () => {
+    // Mutation guard: se alguém refatorar e mover o check `if (!ip) throw`
+    // pra antes do branch de user, usuário autenticado vindo de rede esquisita
+    // (sem request.ip resolvido) seria negado indevidamente — DoS em conta real.
+    // A ordem no getRateLimitIdentifier é SAGRADA: user primeiro, ip depois.
+    const mw = createRateLimitMiddleware('checkout')
+    const request = makeRequest({
+      user: { userId: 'usr_no_ip' },
+      ip: '',
+    })
+
+    await expect(mw(request, makeReply())).resolves.toBeUndefined()
+    expect((mockRateLimiters as any).checkout.limit).toHaveBeenCalledWith('user:usr_no_ip')
+  })
+
+  it('Card 1.12: ip=undefined também dispara fail-closed (não cai em bucket compartilhado)', async () => {
+    // Mutation guard: qualquer fallback silencioso (|| 'foo', || '', etc)
+    // deve quebrar — a única resposta aceitável é throw IP_UNRESOLVABLE.
+    const mw = createRateLimitMiddleware('checkout')
+    const request = makeRequest()
+    // Força undefined (passar via overrides.ip cai no ?? default '127.0.0.1')
+    request.ip = undefined
+
+    await expect(mw(request, makeReply())).rejects.toMatchObject({
+      code: ErrorCodes.IP_UNRESOLVABLE,
+      statusCode: 400,
+    })
+    expect((mockRateLimiters as any).checkout.limit).not.toHaveBeenCalled()
+  })
+
+  it('Card 1.12: quando request.ip presente, ignora XFF mesmo com valor diferente', async () => {
+    const mw = createRateLimitMiddleware('checkout')
+    // Fastify+trustProxy ja resolveu request.ip corretamente.
+    // Um XFF spoofado no header bruto nao deve interferir.
+    const request = makeRequest({
+      headers: { 'x-forwarded-for': '1.2.3.4' }, // spoof tentado
+      ip: '203.0.113.99', // valor confiavel vindo do Fastify
+    })
+
+    await mw(request, makeReply())
+
+    expect((mockRateLimiters as any).checkout.limit).toHaveBeenCalledWith('ip:203.0.113.99')
+    expect((mockRateLimiters as any).checkout.limit).not.toHaveBeenCalledWith('ip:1.2.3.4')
   })
 })

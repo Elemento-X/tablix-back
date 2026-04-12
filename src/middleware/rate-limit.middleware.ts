@@ -7,27 +7,37 @@ import {
 import { Errors } from '../errors/app-error'
 
 /**
- * Extrai o IP do cliente para rate limiting
- */
-function getClientIp(request: FastifyRequest): string {
-  const forwarded = request.headers['x-forwarded-for']
-  if (forwarded) {
-    const ip = Array.isArray(forwarded) ? forwarded[0] : forwarded.split(',')[0]
-    return ip.trim()
-  }
-  return request.ip || 'unknown'
-}
-
-/**
  * Retorna o identifier para rate limiting:
- * - Usuário autenticado: usa userId (mais justo que IP)
- * - Não autenticado: usa IP
+ * - Usuário autenticado: usa userId (mais justo que IP).
+ * - Não autenticado: usa `request.ip` do Fastify (respeita `trustProxy`
+ *   configurado em app.ts — ver Card 1.12).
+ *
+ * Card 1.12: NUNCA lê `x-forwarded-for` cru. Resolução de XFF é
+ * responsabilidade do Fastify via `trustProxy`, que só confia em hops
+ * permitidos. Ler XFF direto permitiria spoof trivial.
+ *
+ * Fail-closed: se `request.ip` estiver ausente (caso extremo, não
+ * deveria acontecer com Fastify), a requisição é rejeitada com
+ * IP_UNRESOLVABLE. Fallback para bucket compartilhado ("unknown")
+ * seria uma via de bypass — todos os requests sem IP compartilhariam
+ * o mesmo counter e poderiam afogar uns aos outros.
  */
 function getRateLimitIdentifier(request: FastifyRequest): string {
   if (request.user?.userId) {
     return `user:${request.user.userId}`
   }
-  return `ip:${getClientIp(request)}`
+  const ip = request.ip
+  if (!ip) {
+    // Observability: fail-closed é silencioso por default. Log estruturado
+    // permite alerta em dashboard se a taxa de IP_UNRESOLVABLE subir
+    // (bug de trustProxy, proxy novo mal configurado, etc.).
+    request.log.warn(
+      { url: request.url, method: request.method },
+      '[rate-limit] request.ip ausente — fail-closed (IP_UNRESOLVABLE)',
+    )
+    throw Errors.ipUnresolvable()
+  }
+  return `ip:${ip}`
 }
 
 /**

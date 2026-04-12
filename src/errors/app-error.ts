@@ -10,6 +10,7 @@ export const ErrorCodes = {
   // Limites
   LIMIT_EXCEEDED: 'LIMIT_EXCEEDED',
   RATE_LIMITED: 'RATE_LIMITED',
+  IP_UNRESOLVABLE: 'IP_UNRESOLVABLE',
 
   // Processamento
   PROCESSING_FAILED: 'PROCESSING_FAILED',
@@ -92,6 +93,9 @@ export const Errors = {
   rateLimited: (
     message = 'Muitas requisições. Tente novamente em alguns minutos.',
   ) => new AppError(ErrorCodes.RATE_LIMITED, message, 429),
+
+  ipUnresolvable: (message = 'Requisição inválida') =>
+    new AppError(ErrorCodes.IP_UNRESOLVABLE, message, 400),
 
   processingFailed: (message = 'Erro no processamento') =>
     new AppError(ErrorCodes.PROCESSING_FAILED, message, 500),
