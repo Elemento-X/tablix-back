@@ -23,7 +23,8 @@ const createLimiter = (requests: number, window: Duration, prefix: string) => {
  * - validateToken: /auth/validate-token (5 req/min) - anti brute-force
  * - authRefresh: /auth/refresh (10 req/min)
  * - authMe: /auth/me (60 req/min) - frontend pode fazer polling
- * - billing: /billing/* (20 req/min)
+ * - checkout: /billing/create-checkout (5 req/min) - dispara chamada Stripe, anti denial-of-wallet
+ * - billing: /billing/* exceto checkout (20 req/min)
  * - process: /process/* (10 req/min) - futuro
  */
 export const rateLimiters = {
@@ -31,6 +32,7 @@ export const rateLimiters = {
   validateToken: createLimiter(5, '1m', 'validate-token'),
   authRefresh: createLimiter(10, '1m', 'auth-refresh'),
   authMe: createLimiter(60, '1m', 'auth-me'),
+  checkout: createLimiter(5, '1m', 'checkout'),
   billing: createLimiter(20, '1m', 'billing'),
   process: createLimiter(10, '1m', 'process'),
 } as const

@@ -19,6 +19,7 @@ export const ErrorCodes = {
   CHECKOUT_FAILED: 'CHECKOUT_FAILED',
   WEBHOOK_FAILED: 'WEBHOOK_FAILED',
   PORTAL_FAILED: 'PORTAL_FAILED',
+  CURRENCY_UNAVAILABLE: 'CURRENCY_UNAVAILABLE',
 
   // Geral
   VALIDATION_ERROR: 'VALIDATION_ERROR',
@@ -108,6 +109,17 @@ export const Errors = {
 
   portalFailed: (message = 'Erro ao gerar portal') =>
     new AppError(ErrorCodes.PORTAL_FAILED, message, 500),
+
+  currencyUnavailable: (currency: string, interval: string) =>
+    new AppError(
+      ErrorCodes.CURRENCY_UNAVAILABLE,
+      'Plano não disponível para esta moeda',
+      422,
+      {
+        currency,
+        interval,
+      },
+    ),
 
   validationError: (message: string, details?: ErrorDetails) =>
     new AppError(ErrorCodes.VALIDATION_ERROR, message, 400, details),

@@ -159,12 +159,53 @@ export async function getSubscription(
   }
 }
 
+export type Currency = 'BRL' | 'USD' | 'EUR'
+export type Interval = 'monthly' | 'yearly'
+
 /**
- * Retorna os IDs de preço configurados
+ * Mapa de preços por moeda e intervalo.
+ * Resolução server-side — cliente nunca envia priceId.
  */
-export function getPriceIds() {
-  return {
-    monthly: env.STRIPE_PRO_MONTHLY_PRICE_ID,
-    yearly: env.STRIPE_PRO_YEARLY_PRICE_ID,
-  }
+const PRICE_MAP: Record<Currency, Record<Interval, string | undefined>> = {
+  BRL: {
+    monthly: env.STRIPE_PRO_MONTHLY_BRL_PRICE_ID,
+    yearly: env.STRIPE_PRO_YEARLY_BRL_PRICE_ID,
+  },
+  USD: {
+    monthly: env.STRIPE_PRO_MONTHLY_USD_PRICE_ID,
+    yearly: env.STRIPE_PRO_YEARLY_USD_PRICE_ID,
+  },
+  EUR: {
+    monthly: env.STRIPE_PRO_MONTHLY_EUR_PRICE_ID,
+    yearly: env.STRIPE_PRO_YEARLY_EUR_PRICE_ID,
+  },
+}
+
+/**
+ * Retorna o priceId para uma moeda e intervalo específicos.
+ * Retorna undefined se não configurado.
+ */
+export function getPriceId(
+  currency: Currency,
+  interval: Interval,
+): string | undefined {
+  return PRICE_MAP[currency]?.[interval]
+}
+
+/**
+ * Retorna preços disponíveis por moeda.
+ * Filtra currencies sem nenhum price configurado (evita expor config operacional).
+ */
+export function getAllPrices() {
+  return Object.entries(PRICE_MAP)
+    .filter(([, intervals]) => intervals.monthly || intervals.yearly)
+    .map(([currency, intervals]) => ({
+      currency,
+      monthly: {
+        available: !!intervals.monthly,
+      },
+      yearly: {
+        available: !!intervals.yearly,
+      },
+    }))
 }

@@ -242,6 +242,7 @@ describe('app-error.ts', () => {
         'CHECKOUT_FAILED',
         'WEBHOOK_FAILED',
         'PORTAL_FAILED',
+        'CURRENCY_UNAVAILABLE',
         'VALIDATION_ERROR',
         'NOT_FOUND',
         'INTERNAL_ERROR',
@@ -252,6 +253,48 @@ describe('app-error.ts', () => {
       for (const code of expectedCodes) {
         expect(actualCodes).toContain(code)
       }
+    })
+  })
+
+  // =============================================
+  // Errors.currencyUnavailable — Card 1.20 fix
+  // =============================================
+  describe('Errors.currencyUnavailable (Card 1.20)', () => {
+    it('deve retornar 422 com CURRENCY_UNAVAILABLE', () => {
+      const err = Errors.currencyUnavailable('EUR', 'monthly')
+
+      expect(err.code).toBe('CURRENCY_UNAVAILABLE')
+      expect(err.statusCode).toBe(422)
+    })
+
+    it('deve incluir currency e interval nos details', () => {
+      const err = Errors.currencyUnavailable('USD', 'yearly')
+
+      expect(err.details).toEqual({ currency: 'USD', interval: 'yearly' })
+    })
+
+    it('deve ter mensagem human-readable sem expor internals', () => {
+      const err = Errors.currencyUnavailable('GBP', 'monthly')
+
+      expect(err.message).toBeTruthy()
+      expect(err.message).not.toContain('undefined')
+      expect(err.message).not.toContain('null')
+    })
+
+    it('deve serializar corretamente via toJSON (details presentes)', () => {
+      const err = Errors.currencyUnavailable('BRL', 'yearly')
+      const json = err.toJSON()
+
+      expect(json.error.code).toBe('CURRENCY_UNAVAILABLE')
+      expect(json.error.details).toEqual({ currency: 'BRL', interval: 'yearly' })
+    })
+
+    it('nao deve expor stack trace no toJSON', () => {
+      const err = Errors.currencyUnavailable('EUR', 'monthly')
+      const json = JSON.stringify(err.toJSON())
+
+      expect(json).not.toContain('stack')
+      expect(json).not.toContain('at ')
     })
   })
 })

@@ -17,7 +17,7 @@ export async function billingRoutes(app: FastifyInstance) {
 
   // POST /billing/create-checkout - Cria sessão de checkout Stripe
   server.post('/create-checkout', {
-    preHandler: rateLimitMiddleware.billing,
+    preHandler: rateLimitMiddleware.checkout,
     schema: {
       tags: ['Billing'],
       summary: 'Criar checkout',

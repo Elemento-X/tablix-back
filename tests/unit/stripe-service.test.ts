@@ -48,6 +48,13 @@ vi.mock('../../src/config/env', () => ({
     FRONTEND_URL: 'http://localhost:3000',
     STRIPE_SECRET_KEY: 'sk_test_fake_key',
     STRIPE_WEBHOOK_SECRET: 'whsec_fake_secret',
+    // Card 1.20: multi-currency price IDs
+    STRIPE_PRO_MONTHLY_BRL_PRICE_ID: 'price_brl_monthly_test',
+    STRIPE_PRO_YEARLY_BRL_PRICE_ID: 'price_brl_yearly_test',
+    STRIPE_PRO_MONTHLY_USD_PRICE_ID: 'price_usd_monthly_test',
+    STRIPE_PRO_YEARLY_USD_PRICE_ID: 'price_usd_yearly_test',
+    STRIPE_PRO_MONTHLY_EUR_PRICE_ID: 'price_eur_monthly_test',
+    STRIPE_PRO_YEARLY_EUR_PRICE_ID: 'price_eur_yearly_test',
   },
 }))
 
@@ -85,6 +92,8 @@ import {
   getCheckoutSession,
   getSubscription,
   constructWebhookEvent,
+  getPriceId,
+  getAllPrices,
 } from '../../src/modules/billing/stripe.service'
 import { AppError } from '../../src/errors/app-error'
 
@@ -294,5 +303,110 @@ describe('stripe.service.ts — error sanitization (Card 1.10)', () => {
         expect(appErr.code).toBe('WEBHOOK_FAILED')
       }
     })
+  })
+
+  // =============================================
+  // Card 1.20: getPriceId — resolução server-side
+  // =============================================
+  describe('getPriceId (Card 1.20)', () => {
+    // 6 happy paths: 3 currencies × 2 intervals
+    it('deve retornar priceId correto para BRL monthly', () => {
+      expect(getPriceId('BRL', 'monthly')).toBe('price_brl_monthly_test')
+    })
+
+    it('deve retornar priceId correto para BRL yearly', () => {
+      expect(getPriceId('BRL', 'yearly')).toBe('price_brl_yearly_test')
+    })
+
+    it('deve retornar priceId correto para USD monthly', () => {
+      expect(getPriceId('USD', 'monthly')).toBe('price_usd_monthly_test')
+    })
+
+    it('deve retornar priceId correto para USD yearly', () => {
+      expect(getPriceId('USD', 'yearly')).toBe('price_usd_yearly_test')
+    })
+
+    it('deve retornar priceId correto para EUR monthly', () => {
+      expect(getPriceId('EUR', 'monthly')).toBe('price_eur_monthly_test')
+    })
+
+    it('deve retornar priceId correto para EUR yearly', () => {
+      expect(getPriceId('EUR', 'yearly')).toBe('price_eur_yearly_test')
+    })
+
+    it('deve retornar undefined para currency inexistente no mapa', () => {
+      // TypeScript não permite passar 'GBP' diretamente — cast para testar runtime
+      const result = getPriceId('GBP' as 'BRL', 'monthly')
+      expect(result).toBeUndefined()
+    })
+
+    it('deve retornar undefined para interval inexistente no mapa', () => {
+      const result = getPriceId('BRL', 'weekly' as 'monthly')
+      expect(result).toBeUndefined()
+    })
+  })
+
+  // =============================================
+  // Card 1.20: getAllPrices — estrutura de resposta
+  // =============================================
+  describe('getAllPrices (Card 1.20)', () => {
+    it('deve retornar array com exatamente 3 entradas (BRL, USD, EUR)', () => {
+      const result = getAllPrices()
+      expect(result).toHaveLength(3)
+    })
+
+    it('deve conter as 3 currencies esperadas', () => {
+      const result = getAllPrices()
+      const currencies = result.map((r) => r.currency)
+      expect(currencies).toContain('BRL')
+      expect(currencies).toContain('USD')
+      expect(currencies).toContain('EUR')
+    })
+
+    it('deve retornar estrutura correta para cada entrada (currency, monthly, yearly)', () => {
+      const result = getAllPrices()
+      for (const entry of result) {
+        expect(entry).toHaveProperty('currency')
+        expect(entry).toHaveProperty('monthly')
+        expect(entry).toHaveProperty('yearly')
+        expect(entry.monthly).toHaveProperty('available')
+        expect(entry.yearly).toHaveProperty('available')
+      }
+    })
+
+    it('deve marcar available:true quando price ID está configurado', () => {
+      const result = getAllPrices()
+      for (const entry of result) {
+        expect(entry.monthly.available).toBe(true)
+        expect(entry.yearly.available).toBe(true)
+      }
+    })
+
+    it('deve retornar available:true para BRL no getAllPrices', () => {
+      const result = getAllPrices()
+      const brl = result.find((r) => r.currency === 'BRL')
+      expect(brl).toBeDefined()
+      expect(brl?.monthly.available).toBe(true)
+      expect(brl?.yearly.available).toBe(true)
+    })
+
+    it('deve retornar available:true para USD no getAllPrices', () => {
+      const result = getAllPrices()
+      const usd = result.find((r) => r.currency === 'USD')
+      expect(usd).toBeDefined()
+      expect(usd?.monthly.available).toBe(true)
+      expect(usd?.yearly.available).toBe(true)
+    })
+
+    it('deve retornar available:true para EUR no getAllPrices', () => {
+      const result = getAllPrices()
+      const eur = result.find((r) => r.currency === 'EUR')
+      expect(eur).toBeDefined()
+      expect(eur?.monthly.available).toBe(true)
+      expect(eur?.yearly.available).toBe(true)
+    })
+
+    // Teste de env parcial (available:false, priceId:null) está em
+    // stripe-price-map.test.ts — precisa de mock de env diferente
   })
 })

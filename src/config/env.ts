@@ -23,8 +23,14 @@ const envSchema = z
     // Stripe
     STRIPE_SECRET_KEY: z.string().optional(),
     STRIPE_WEBHOOK_SECRET: z.string().optional(),
-    STRIPE_PRO_MONTHLY_PRICE_ID: z.string().optional(),
-    STRIPE_PRO_YEARLY_PRICE_ID: z.string().optional(),
+
+    // Price IDs por moeda (psychological pricing por mercado)
+    STRIPE_PRO_MONTHLY_BRL_PRICE_ID: z.string().optional(),
+    STRIPE_PRO_YEARLY_BRL_PRICE_ID: z.string().optional(),
+    STRIPE_PRO_MONTHLY_USD_PRICE_ID: z.string().optional(),
+    STRIPE_PRO_YEARLY_USD_PRICE_ID: z.string().optional(),
+    STRIPE_PRO_MONTHLY_EUR_PRICE_ID: z.string().optional(),
+    STRIPE_PRO_YEARLY_EUR_PRICE_ID: z.string().optional(),
 
     // Email
     EMAIL_PROVIDER: z.enum(['resend', 'sendgrid']).default('resend'),
@@ -89,6 +95,25 @@ const envSchema = z
           message:
             'UPSTASH_REDIS_REST_TOKEN é obrigatório em produção (rate limiting)',
         })
+      }
+
+      // Price IDs obrigatórios em produção (multi-currency)
+      const priceIdVars = [
+        'STRIPE_PRO_MONTHLY_BRL_PRICE_ID',
+        'STRIPE_PRO_YEARLY_BRL_PRICE_ID',
+        'STRIPE_PRO_MONTHLY_USD_PRICE_ID',
+        'STRIPE_PRO_YEARLY_USD_PRICE_ID',
+        'STRIPE_PRO_MONTHLY_EUR_PRICE_ID',
+        'STRIPE_PRO_YEARLY_EUR_PRICE_ID',
+      ] as const
+      for (const varName of priceIdVars) {
+        if (!data[varName]) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: [varName],
+            message: `${varName} é obrigatório em produção`,
+          })
+        }
       }
 
       // Email obrigatório em produção

@@ -14,6 +14,10 @@ export const createCheckoutBodySchema = z.object({
     .enum(['monthly', 'yearly'])
     .default('monthly')
     .describe('Tipo de plano: mensal ou anual'),
+  currency: z
+    .enum(['BRL', 'USD', 'EUR'])
+    .default('BRL')
+    .describe('Moeda do checkout: BRL, USD ou EUR'),
 })
 
 export const createCheckoutResponseSchema = z.object({
@@ -52,13 +56,19 @@ export type CreatePortalResponse = z.infer<typeof createPortalResponseSchema>
 // ============================================
 
 const priceInfoSchema = z.object({
-  priceId: z.string().nullable().describe('ID do preço no Stripe'),
   available: z.boolean().describe('Se o preço está configurado'),
 })
 
-export const pricesResponseSchema = z.object({
+const currencyPricesSchema = z.object({
+  currency: z.string().describe('Código da moeda (BRL, USD, EUR)'),
   monthly: priceInfoSchema,
   yearly: priceInfoSchema,
+})
+
+export const pricesResponseSchema = z.object({
+  currencies: z
+    .array(currencyPricesSchema)
+    .describe('Preços disponíveis por moeda'),
 })
 
 export type PricesResponse = z.infer<typeof pricesResponseSchema>

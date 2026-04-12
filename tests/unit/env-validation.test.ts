@@ -1,11 +1,12 @@
 /**
- * Unit tests for env.ts validation logic (Cards 1.9, 1.10)
+ * Unit tests for env.ts validation logic (Cards 1.9, 1.10, 1.20)
  * Covers:
  *   - RESEND_API_KEY required in production
  *   - FRONTEND_URL must be HTTPS in production
  *   - FRONTEND_URL cannot be localhost in production
  *   - Existing prod validations still work (Stripe, Redis)
  *   - Dev/test mode allows optional values
+ *   - Multi-currency price IDs required in production (Card 1.20)
  *
  * Strategy: test the Zod schema directly by importing it fresh
  * with NODE_ENV manipulated, since env.ts reads process.env at module load.
@@ -32,8 +33,13 @@ function buildEnvSchema(isProd: boolean) {
       UPSTASH_REDIS_REST_TOKEN: z.string().optional(),
       STRIPE_SECRET_KEY: z.string().optional(),
       STRIPE_WEBHOOK_SECRET: z.string().optional(),
-      STRIPE_PRO_MONTHLY_PRICE_ID: z.string().optional(),
-      STRIPE_PRO_YEARLY_PRICE_ID: z.string().optional(),
+      // Multi-currency price IDs (Card 1.20) — substitui STRIPE_PRO_MONTHLY_PRICE_ID e STRIPE_PRO_YEARLY_PRICE_ID
+      STRIPE_PRO_MONTHLY_BRL_PRICE_ID: z.string().optional(),
+      STRIPE_PRO_YEARLY_BRL_PRICE_ID: z.string().optional(),
+      STRIPE_PRO_MONTHLY_USD_PRICE_ID: z.string().optional(),
+      STRIPE_PRO_YEARLY_USD_PRICE_ID: z.string().optional(),
+      STRIPE_PRO_MONTHLY_EUR_PRICE_ID: z.string().optional(),
+      STRIPE_PRO_YEARLY_EUR_PRICE_ID: z.string().optional(),
       EMAIL_PROVIDER: z.enum(['resend', 'sendgrid']).default('resend'),
       RESEND_API_KEY: z.string().optional(),
       FROM_EMAIL: z.string().default('Tablix <noreply@tablix.com.br>'),
@@ -87,6 +93,24 @@ function buildEnvSchema(isProd: boolean) {
             message: 'UPSTASH_REDIS_REST_TOKEN é obrigatório em produção (rate limiting)',
           })
         }
+        // Multi-currency price IDs — Card 1.20
+        const priceIdVars = [
+          'STRIPE_PRO_MONTHLY_BRL_PRICE_ID',
+          'STRIPE_PRO_YEARLY_BRL_PRICE_ID',
+          'STRIPE_PRO_MONTHLY_USD_PRICE_ID',
+          'STRIPE_PRO_YEARLY_USD_PRICE_ID',
+          'STRIPE_PRO_MONTHLY_EUR_PRICE_ID',
+          'STRIPE_PRO_YEARLY_EUR_PRICE_ID',
+        ] as const
+        for (const varName of priceIdVars) {
+          if (!data[varName]) {
+            ctx.addIssue({
+              code: z.ZodIssueCode.custom,
+              path: [varName],
+              message: `${varName} é obrigatório em produção`,
+            })
+          }
+        }
         if (!data.RESEND_API_KEY) {
           ctx.addIssue({
             code: z.ZodIssueCode.custom,
@@ -113,6 +137,8 @@ function buildEnvSchema(isProd: boolean) {
 }
 
 // Base valid env for production (all required fields populated)
+// Card 1.20: inclui as 6 price IDs multi-currency; STRIPE_PRO_MONTHLY_PRICE_ID e
+// STRIPE_PRO_YEARLY_PRICE_ID foram removidas do schema de produção.
 const validProdEnv = {
   PORT: 3333,
   NODE_ENV: 'production',
@@ -121,6 +147,12 @@ const validProdEnv = {
   STRIPE_WEBHOOK_SECRET: 'whsec_real_secret_here',
   UPSTASH_REDIS_REST_URL: 'https://redis.upstash.io',
   UPSTASH_REDIS_REST_TOKEN: 'real_redis_token',
+  STRIPE_PRO_MONTHLY_BRL_PRICE_ID: 'price_brl_monthly_real',
+  STRIPE_PRO_YEARLY_BRL_PRICE_ID: 'price_brl_yearly_real',
+  STRIPE_PRO_MONTHLY_USD_PRICE_ID: 'price_usd_monthly_real',
+  STRIPE_PRO_YEARLY_USD_PRICE_ID: 'price_usd_yearly_real',
+  STRIPE_PRO_MONTHLY_EUR_PRICE_ID: 'price_eur_monthly_real',
+  STRIPE_PRO_YEARLY_EUR_PRICE_ID: 'price_eur_yearly_real',
   RESEND_API_KEY: 're_real_api_key_here',
   JWT_SECRET: 'a]3kF9#mP!qR7$vX2&wZ5^cB8(dG0+hJ4*lN6-oS1@tU',
   FRONTEND_URL: 'https://app.tablix.com.br',
@@ -247,7 +279,7 @@ describe('env.ts validation (Cards 1.9 + 1.10)', () => {
   describe('production mode — all required vars fail-loud', () => {
     const schema = buildEnvSchema(true)
 
-    it('deve acumular TODOS os erros quando multiplas vars faltam', () => {
+    it('deve acumular TODOS os erros quando multiplas vars faltam (incluindo price IDs)', () => {
       const env = {
         NODE_ENV: 'production',
         DATABASE_URL: 'postgresql://user:pass@db.example.com:5432/tablix',
@@ -265,6 +297,13 @@ describe('env.ts validation (Cards 1.9 + 1.10)', () => {
         expect(paths).toContain('UPSTASH_REDIS_REST_TOKEN')
         expect(paths).toContain('RESEND_API_KEY')
         expect(paths).toContain('FRONTEND_URL')
+        // Card 1.20: todas as 6 price IDs devem ser reportadas
+        expect(paths).toContain('STRIPE_PRO_MONTHLY_BRL_PRICE_ID')
+        expect(paths).toContain('STRIPE_PRO_YEARLY_BRL_PRICE_ID')
+        expect(paths).toContain('STRIPE_PRO_MONTHLY_USD_PRICE_ID')
+        expect(paths).toContain('STRIPE_PRO_YEARLY_USD_PRICE_ID')
+        expect(paths).toContain('STRIPE_PRO_MONTHLY_EUR_PRICE_ID')
+        expect(paths).toContain('STRIPE_PRO_YEARLY_EUR_PRICE_ID')
       }
     })
 
@@ -329,6 +368,120 @@ describe('env.ts validation (Cards 1.9 + 1.10)', () => {
       })
 
       expect(result.success).toBe(false)
+    })
+  })
+
+  // =============================================
+  // Card 1.20: Multi-currency price IDs em produção
+  // =============================================
+  describe('price IDs multi-currency em produção (Card 1.20)', () => {
+    const schema = buildEnvSchema(true)
+
+    // Nomes das 6 vars para iterar nos testes de ausência individual
+    const ALL_PRICE_ID_VARS = [
+      'STRIPE_PRO_MONTHLY_BRL_PRICE_ID',
+      'STRIPE_PRO_YEARLY_BRL_PRICE_ID',
+      'STRIPE_PRO_MONTHLY_USD_PRICE_ID',
+      'STRIPE_PRO_YEARLY_USD_PRICE_ID',
+      'STRIPE_PRO_MONTHLY_EUR_PRICE_ID',
+      'STRIPE_PRO_YEARLY_EUR_PRICE_ID',
+    ] as const
+
+    it('deve passar quando todas as 6 price IDs estão presentes em produção', () => {
+      const result = schema.safeParse(validProdEnv)
+      expect(result.success).toBe(true)
+    })
+
+    it('deve falhar quando TODAS as 6 price IDs estão ausentes em produção', () => {
+      const env = {
+        ...validProdEnv,
+        STRIPE_PRO_MONTHLY_BRL_PRICE_ID: undefined,
+        STRIPE_PRO_YEARLY_BRL_PRICE_ID: undefined,
+        STRIPE_PRO_MONTHLY_USD_PRICE_ID: undefined,
+        STRIPE_PRO_YEARLY_USD_PRICE_ID: undefined,
+        STRIPE_PRO_MONTHLY_EUR_PRICE_ID: undefined,
+        STRIPE_PRO_YEARLY_EUR_PRICE_ID: undefined,
+      }
+      const result = schema.safeParse(env)
+
+      expect(result.success).toBe(false)
+      if (!result.success) {
+        const paths = result.error.issues.map((i) => i.path[0] as string)
+        for (const varName of ALL_PRICE_ID_VARS) {
+          expect(paths).toContain(varName)
+        }
+        // Garantia: erros acumulados individualmente, não agrupados em mensagem genérica
+        expect(
+          result.error.issues.filter((i) =>
+            ALL_PRICE_ID_VARS.includes(i.path[0] as (typeof ALL_PRICE_ID_VARS)[number]),
+          ).length,
+        ).toBe(6)
+      }
+    })
+
+    it.each(ALL_PRICE_ID_VARS)(
+      'deve falhar quando apenas %s está ausente em produção',
+      (missingVar) => {
+        const env = { ...validProdEnv, [missingVar]: undefined }
+        const result = schema.safeParse(env)
+
+        expect(result.success).toBe(false)
+        if (!result.success) {
+          const relevantIssues = result.error.issues.filter((i) => i.path[0] === missingVar)
+          expect(relevantIssues.length).toBeGreaterThan(0)
+          expect(relevantIssues[0].message).toContain(missingVar)
+          expect(relevantIssues[0].message).toContain('obrigatório em produção')
+          // Não deve ter erro nas outras 5 vars que estão presentes
+          const otherPriceVarErrors = result.error.issues.filter(
+            (i) =>
+              ALL_PRICE_ID_VARS.includes(i.path[0] as (typeof ALL_PRICE_ID_VARS)[number]) &&
+              i.path[0] !== missingVar,
+          )
+          expect(otherPriceVarErrors.length).toBe(0)
+        }
+      },
+    )
+
+    it('deve aceitar todas as price IDs ausentes em dev (não prod)', () => {
+      const devSchema = buildEnvSchema(false)
+      const result = devSchema.safeParse(validDevEnv)
+      // Em dev, nenhuma price ID é obrigatória
+      expect(result.success).toBe(true)
+    })
+
+    it('deve aceitar env com apenas algumas price IDs em dev', () => {
+      const devSchema = buildEnvSchema(false)
+      const result = devSchema.safeParse({
+        ...validDevEnv,
+        STRIPE_PRO_MONTHLY_BRL_PRICE_ID: 'price_brl_test',
+        // as outras 5 ausentes: ok em dev
+      })
+      expect(result.success).toBe(true)
+    })
+
+    it('deve reportar mensagem de erro contendo o nome da var ausente', () => {
+      const env = { ...validProdEnv, STRIPE_PRO_MONTHLY_EUR_PRICE_ID: undefined }
+      const result = schema.safeParse(env)
+
+      expect(result.success).toBe(false)
+      if (!result.success) {
+        const issue = result.error.issues.find(
+          (i) => i.path[0] === 'STRIPE_PRO_MONTHLY_EUR_PRICE_ID',
+        )
+        expect(issue).toBeDefined()
+        expect(issue?.message).toContain('STRIPE_PRO_MONTHLY_EUR_PRICE_ID')
+      }
+    })
+
+    it('deve rejeitar price ID como string vazia (falsy) em produção', () => {
+      const env = { ...validProdEnv, STRIPE_PRO_YEARLY_USD_PRICE_ID: '' }
+      const result = schema.safeParse(env)
+
+      expect(result.success).toBe(false)
+      if (!result.success) {
+        const paths = result.error.issues.map((i) => i.path[0])
+        expect(paths).toContain('STRIPE_PRO_YEARLY_USD_PRICE_ID')
+      }
     })
   })
 })

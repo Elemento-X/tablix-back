@@ -6,7 +6,8 @@ import {
 import {
   createCheckoutSession,
   createPortalSession,
-  getPriceIds,
+  getPriceId,
+  getAllPrices,
 } from '../../modules/billing/stripe.service'
 import { env } from '../../config/env'
 import { Errors } from '../../errors/app-error'
@@ -18,7 +19,11 @@ import { prisma } from '../../lib/prisma'
  */
 export async function createCheckout(
   request: FastifyRequest<{
-    Body: { email: string; plan?: 'monthly' | 'yearly' }
+    Body: {
+      email: string
+      plan?: 'monthly' | 'yearly'
+      currency?: 'BRL' | 'USD' | 'EUR'
+    }
   }>,
   reply: FastifyReply,
 ) {
@@ -30,13 +35,11 @@ export async function createCheckout(
     })
   }
 
-  const { email, plan } = validation.data
-  const priceIds = getPriceIds()
-
-  const priceId = plan === 'yearly' ? priceIds.yearly : priceIds.monthly
+  const { email, plan, currency } = validation.data
+  const priceId = getPriceId(currency, plan)
 
   if (!priceId) {
-    throw Errors.internal()
+    throw Errors.currencyUnavailable(currency, plan)
   }
 
   const result = await createCheckoutSession({
@@ -56,9 +59,10 @@ export async function createCheckout(
  * POST /billing/portal
  * Gera URL para o Customer Portal do Stripe
  */
-export async function portal(request: FastifyRequest, reply: FastifyReply) {
-  const body = request.body as { returnUrl?: string } | undefined
-
+export async function portal(
+  request: FastifyRequest<{ Body: { returnUrl?: string } }>,
+  reply: FastifyReply,
+) {
   if (!request.user) {
     throw Errors.unauthorized('Usuário não autenticado')
   }
@@ -72,7 +76,7 @@ export async function portal(request: FastifyRequest, reply: FastifyReply) {
     throw Errors.notFound('Usuário ou assinatura')
   }
 
-  const validation = createPortalSchema.safeParse(body)
+  const validation = createPortalSchema.safeParse(request.body)
 
   if (!validation.success) {
     throw Errors.validationError('Dados inválidos', {
@@ -94,16 +98,7 @@ export async function portal(request: FastifyRequest, reply: FastifyReply) {
  * Retorna os preços disponíveis (para exibição no frontend)
  */
 export async function prices(request: FastifyRequest, reply: FastifyReply) {
-  const priceIds = getPriceIds()
-
-  return reply.send({
-    monthly: {
-      priceId: priceIds.monthly,
-      available: !!priceIds.monthly,
-    },
-    yearly: {
-      priceId: priceIds.yearly,
-      available: !!priceIds.yearly,
-    },
+  return reply.header('Cache-Control', 'public, max-age=300').send({
+    currencies: getAllPrices(),
   })
 }

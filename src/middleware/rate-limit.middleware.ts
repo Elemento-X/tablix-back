@@ -64,6 +64,7 @@ export const rateLimitMiddleware = {
   validateToken: createRateLimitMiddleware('validateToken'),
   authRefresh: createRateLimitMiddleware('authRefresh'),
   authMe: createRateLimitMiddleware('authMe'),
+  checkout: createRateLimitMiddleware('checkout'),
   billing: createRateLimitMiddleware('billing'),
   process: createRateLimitMiddleware('process'),
 }
