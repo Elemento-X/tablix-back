@@ -128,13 +128,21 @@ export async function buildApp() {
     },
   })
 
-  await app.register(swaggerUi, {
-    routePrefix: '/docs',
-    uiConfig: {
-      docExpansion: 'list',
-      deepLinking: true,
-    },
-  })
+  // Card 1.18 @security finding SEC.18 (OWASP A05): Swagger UI em produção
+  // expõe schemas completos, endpoints e exemplos — facilita reconhecimento
+  // pra atacante. Em prod, nada é registrado em /docs. O spec continua
+  // acessível via `app.swagger()` programaticamente (build-time export,
+  // testes, etc.), só não via HTTP público. Se algum dia precisar de
+  // /docs/json em runtime de prod, adicionar com basic auth — nunca aberto.
+  if (env.NODE_ENV !== 'production') {
+    await app.register(swaggerUi, {
+      routePrefix: '/docs',
+      uiConfig: {
+        docExpansion: 'list',
+        deepLinking: true,
+      },
+    })
+  }
 
   // Error handler global
   app.setErrorHandler(
