@@ -77,10 +77,18 @@ export async function buildApp() {
   })
 
   // Multipart para upload de arquivos (limites alinhados com PRO_LIMITS — D.1)
+  // fieldSize/fields (Card 1.16 / @security finding c8a3f70e5d12):
+  //   Sem esses caps, atacante autenticado manda request com N fields de 1MB
+  //   (default busboy) e paga parse+zod por iteração. Aqui temos só 2 fieldnames
+  //   válidos (selectedColumns, outputFormat); fields=10 dá folga de 5x sem
+  //   abrir vetor. fieldSize=8KB casa com MAX_SELECTED_COLUMNS_FIELD_BYTES.
   await app.register(multipart, {
     limits: {
       fileSize: PRO_LIMITS.maxFileSize, // 2 MB por arquivo (D.1)
       files: PRO_LIMITS.maxInputFiles, // 15 arquivos por unificação
+      fields: 10, // max fields não-arquivo por request (Card 1.16)
+      fieldSize: 8 * 1024, // 8 KB por field (Card 1.16 — alinhado com helper)
+      fieldNameSize: 100, // 100 bytes por nome de field (default explícito)
     },
   })
 

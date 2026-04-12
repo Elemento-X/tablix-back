@@ -11,6 +11,12 @@
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
+import * as XLSX from 'xlsx'
+import { processSpreadsheets } from '../../src/modules/process/process.service'
+import { ProcessSyncResult } from '../../src/modules/process/process.schema'
+import { parseSpreadsheet, validateColumns } from '../../src/lib/spreadsheet'
+import { MIME_TYPES } from '../../src/lib/spreadsheet/types'
+
 // --- vi.hoisted: shared mock state ---
 const { prismaMock, redisMock } = vi.hoisted(() => {
   function createModelMock() {
@@ -82,12 +88,6 @@ vi.mock('../../src/lib/spreadsheet', async (importOriginal) => {
     validateColumns: vi.fn(),
   }
 })
-
-import * as XLSX from 'xlsx'
-import { processSpreadsheets } from '../../src/modules/process/process.service'
-import { ProcessSyncResult } from '../../src/modules/process/process.schema'
-import { parseSpreadsheet, validateColumns } from '../../src/lib/spreadsheet'
-import { MIME_TYPES } from '../../src/lib/spreadsheet/types'
 
 // Helper: make a valid XLSX buffer
 function makeXlsxBuffer(headers: string[], rows: string[][]): Buffer {
@@ -195,7 +195,12 @@ describe('XLSX buffer validity', () => {
 
     const result = await processSpreadsheets(
       'user-1',
-      [{ buffer: makeXlsxBuffer(['Col1', 'Col2'], [['a', 'b']]), fileName: 'data.xlsx' }],
+      [
+        {
+          buffer: makeXlsxBuffer(['Col1', 'Col2'], [['a', 'b']]),
+          fileName: 'data.xlsx',
+        },
+      ],
       { selectedColumns: ['Col1', 'Col2'], outputFormat: 'xlsx' },
     )
 
@@ -228,7 +233,7 @@ describe('XLSX buffer validity', () => {
     // Round-trip: parse the generated buffer
     const wb = XLSX.read(result.buffer, { type: 'buffer' })
     expect(wb.SheetNames).toContain('Unified')
-    const ws = wb.Sheets['Unified']
+    const ws = wb.Sheets.Unified
     const data = XLSX.utils.sheet_to_json(ws)
     expect(data).toHaveLength(1)
   })
@@ -254,7 +259,8 @@ describe('concurrency guard', () => {
     vi.mocked(validateColumns).mockReturnValue(undefined)
 
     // Import controller module to test concurrency
-    const { processSync } = await import('../../src/http/controllers/process.controller')
+    const { processSync } =
+      await import('../../src/http/controllers/process.controller')
 
     // Create mock request/reply
     const headers: Record<string, string> = {}
@@ -296,7 +302,7 @@ describe('concurrency guard', () => {
         role: 'PRO' as const,
       },
       parts: () => partsIterator(),
-      log: { info: vi.fn(), error: vi.fn() },
+      log: { info: vi.fn(), error: vi.fn(), warn: vi.fn() },
     }
 
     await processSync(mockRequest as never, mockReply as never)
@@ -329,7 +335,8 @@ describe('concurrency guard', () => {
     // Simulate 3rd concurrent request (limit is 2)
     redisMock.incr.mockResolvedValue(3)
 
-    const { processSync } = await import('../../src/http/controllers/process.controller')
+    const { processSync } =
+      await import('../../src/http/controllers/process.controller')
 
     const mockRequest = {
       user: {
@@ -339,7 +346,7 @@ describe('concurrency guard', () => {
         role: 'PRO' as const,
       },
       parts: async function* () {},
-      log: { info: vi.fn(), error: vi.fn() },
+      log: { info: vi.fn(), error: vi.fn(), warn: vi.fn() },
     }
 
     const mockReply = {
@@ -348,9 +355,9 @@ describe('concurrency guard', () => {
       send: vi.fn().mockReturnThis(),
     }
 
-    await expect(processSync(mockRequest as never, mockReply as never)).rejects.toThrow(
-      'Limite de processamento simultâneo',
-    )
+    await expect(
+      processSync(mockRequest as never, mockReply as never),
+    ).rejects.toThrow('Limite de processamento simultâneo')
 
     // Should have decremented after rejection
     expect(redisMock.decr).toHaveBeenCalledWith('tablix:concurrency:user-1')
@@ -359,7 +366,8 @@ describe('concurrency guard', () => {
   it('releases slot even when processing throws', async () => {
     redisMock.incr.mockResolvedValue(1)
 
-    const { processSync } = await import('../../src/http/controllers/process.controller')
+    const { processSync } =
+      await import('../../src/http/controllers/process.controller')
 
     // Parts that yield no files → will throw validation error
     const mockRequest = {
@@ -370,7 +378,7 @@ describe('concurrency guard', () => {
         role: 'PRO' as const,
       },
       parts: async function* () {},
-      log: { info: vi.fn(), error: vi.fn() },
+      log: { info: vi.fn(), error: vi.fn(), warn: vi.fn() },
     }
 
     const mockReply = {
@@ -379,9 +387,9 @@ describe('concurrency guard', () => {
       send: vi.fn().mockReturnThis(),
     }
 
-    await expect(processSync(mockRequest as never, mockReply as never)).rejects.toThrow(
-      'Nenhum arquivo enviado',
-    )
+    await expect(
+      processSync(mockRequest as never, mockReply as never),
+    ).rejects.toThrow('Nenhum arquivo enviado')
 
     // Slot released in finally block
     expect(redisMock.decr).toHaveBeenCalledWith('tablix:concurrency:user-1')
@@ -407,7 +415,8 @@ describe('memory logging', () => {
     vi.mocked(parseSpreadsheet).mockReturnValue(mockParsed)
     vi.mocked(validateColumns).mockReturnValue(undefined)
 
-    const { processSync } = await import('../../src/http/controllers/process.controller')
+    const { processSync } =
+      await import('../../src/http/controllers/process.controller')
 
     const logInfo = vi.fn()
 
@@ -437,7 +446,7 @@ describe('memory logging', () => {
         role: 'PRO' as const,
       },
       parts: () => partsIterator(),
-      log: { info: logInfo, error: vi.fn() },
+      log: { info: logInfo, error: vi.fn(), warn: vi.fn() },
     }
 
     const mockReply = {
@@ -487,12 +496,13 @@ describe('CORS configuration', () => {
 // ===========================================
 describe('processSync controller — error paths', () => {
   it('rejects with 401 when request.user is absent', async () => {
-    const { processSync } = await import('../../src/http/controllers/process.controller')
+    const { processSync } =
+      await import('../../src/http/controllers/process.controller')
 
     const mockRequest = {
       user: undefined,
       parts: async function* () {},
-      log: { info: vi.fn(), error: vi.fn() },
+      log: { info: vi.fn(), error: vi.fn(), warn: vi.fn() },
     }
 
     const mockReply = {
@@ -501,15 +511,16 @@ describe('processSync controller — error paths', () => {
       send: vi.fn().mockReturnThis(),
     }
 
-    await expect(processSync(mockRequest as never, mockReply as never)).rejects.toThrow(
-      'Usuário não autenticado',
-    )
+    await expect(
+      processSync(mockRequest as never, mockReply as never),
+    ).rejects.toThrow('Usuário não autenticado')
   })
 
   it('rejects with validation error on unsupported file extension', async () => {
     redisMock.incr.mockResolvedValue(1)
 
-    const { processSync } = await import('../../src/http/controllers/process.controller')
+    const { processSync } =
+      await import('../../src/http/controllers/process.controller')
 
     async function* partsIterator() {
       yield {
@@ -525,9 +536,14 @@ describe('processSync controller — error paths', () => {
     }
 
     const mockRequest = {
-      user: { sub: 'session-1', userId: 'user-1', email: 'test@test.com', role: 'PRO' as const },
+      user: {
+        sub: 'session-1',
+        userId: 'user-1',
+        email: 'test@test.com',
+        role: 'PRO' as const,
+      },
       parts: () => partsIterator(),
-      log: { info: vi.fn(), error: vi.fn() },
+      log: { info: vi.fn(), error: vi.fn(), warn: vi.fn() },
     }
 
     const mockReply = {
@@ -536,9 +552,9 @@ describe('processSync controller — error paths', () => {
       send: vi.fn().mockReturnThis(),
     }
 
-    await expect(processSync(mockRequest as never, mockReply as never)).rejects.toThrow(
-      'Formato de arquivo não suportado: document.pdf',
-    )
+    await expect(
+      processSync(mockRequest as never, mockReply as never),
+    ).rejects.toThrow('Formato de arquivo não suportado: document.pdf')
 
     // Slot must be released in finally even after extension rejection
     expect(redisMock.decr).toHaveBeenCalledWith('tablix:concurrency:user-1')
@@ -547,7 +563,8 @@ describe('processSync controller — error paths', () => {
   it('rejects with limit error when file is truncated', async () => {
     redisMock.incr.mockResolvedValue(1)
 
-    const { processSync } = await import('../../src/http/controllers/process.controller')
+    const { processSync } =
+      await import('../../src/http/controllers/process.controller')
 
     async function* partsIterator() {
       yield {
@@ -564,9 +581,14 @@ describe('processSync controller — error paths', () => {
     }
 
     const mockRequest = {
-      user: { sub: 'session-1', userId: 'user-1', email: 'test@test.com', role: 'PRO' as const },
+      user: {
+        sub: 'session-1',
+        userId: 'user-1',
+        email: 'test@test.com',
+        role: 'PRO' as const,
+      },
       parts: () => partsIterator(),
-      log: { info: vi.fn(), error: vi.fn() },
+      log: { info: vi.fn(), error: vi.fn(), warn: vi.fn() },
     }
 
     const mockReply = {
@@ -575,9 +597,9 @@ describe('processSync controller — error paths', () => {
       send: vi.fn().mockReturnThis(),
     }
 
-    await expect(processSync(mockRequest as never, mockReply as never)).rejects.toThrow(
-      'Limite excedido',
-    )
+    await expect(
+      processSync(mockRequest as never, mockReply as never),
+    ).rejects.toThrow('Limite excedido')
 
     expect(redisMock.decr).toHaveBeenCalledWith('tablix:concurrency:user-1')
   })
@@ -597,7 +619,8 @@ describe('processSync controller — error paths', () => {
     vi.mocked(parseSpreadsheet).mockReturnValue(mockParsed)
     vi.mocked(validateColumns).mockReturnValue(undefined)
 
-    const { processSync } = await import('../../src/http/controllers/process.controller')
+    const { processSync } =
+      await import('../../src/http/controllers/process.controller')
 
     async function* partsIterator() {
       yield {
@@ -619,14 +642,19 @@ describe('processSync controller — error paths', () => {
     }
 
     const mockRequest = {
-      user: { sub: 'session-1', userId: 'user-1', email: 'test@test.com', role: 'PRO' as const },
+      user: {
+        sub: 'session-1',
+        userId: 'user-1',
+        email: 'test@test.com',
+        role: 'PRO' as const,
+      },
       parts: () => partsIterator(),
-      log: { info: vi.fn(), error: vi.fn() },
+      log: { info: vi.fn(), error: vi.fn(), warn: vi.fn() },
     }
 
     const mockReply = {
       status: vi.fn().mockReturnThis(),
-      header: vi.fn((k: string, v: string) => mockReply),
+      header: vi.fn((_k: string, _v: string) => mockReply),
       send: vi.fn().mockReturnThis(),
     }
 
@@ -651,7 +679,8 @@ describe('processSync controller — error paths', () => {
     vi.mocked(parseSpreadsheet).mockReturnValue(mockParsed)
     vi.mocked(validateColumns).mockReturnValue(undefined)
 
-    const { processSync } = await import('../../src/http/controllers/process.controller')
+    const { processSync } =
+      await import('../../src/http/controllers/process.controller')
 
     const headers: Record<string, string> = {}
 
@@ -679,9 +708,14 @@ describe('processSync controller — error paths', () => {
     }
 
     const mockRequest = {
-      user: { sub: 'session-1', userId: 'user-1', email: 'test@test.com', role: 'PRO' as const },
+      user: {
+        sub: 'session-1',
+        userId: 'user-1',
+        email: 'test@test.com',
+        role: 'PRO' as const,
+      },
       parts: () => partsIterator(),
-      log: { info: vi.fn(), error: vi.fn() },
+      log: { info: vi.fn(), error: vi.fn(), warn: vi.fn() },
     }
 
     const mockReply = {
@@ -698,10 +732,11 @@ describe('processSync controller — error paths', () => {
     expect(headers['X-Tablix-Format']).toBe('csv')
   })
 
-  it('rejects with validation error when selectedColumns is empty array (Zod fails)', async () => {
+  it('rejects with validation error when selectedColumns is empty array (parseSelectedColumnsField fails)', async () => {
     redisMock.incr.mockResolvedValue(1)
 
-    const { processSync } = await import('../../src/http/controllers/process.controller')
+    const { processSync } =
+      await import('../../src/http/controllers/process.controller')
 
     async function* partsIterator() {
       yield {
@@ -714,7 +749,10 @@ describe('processSync controller — error paths', () => {
           truncated: false,
         },
       }
-      // Empty array → Zod min(1) fails
+      // Empty array → parseSelectedColumnsField (Card 1.16) rejeita antes do Zod do schema público
+      // Comportamento mudou: antes falhava no processSyncInputSchema ("Dados inválidos");
+      // agora falha na camada 1 do helper defensivo ("selectedColumns tem formato inválido").
+      // Continua sendo validationError, só com mensagem mais específica.
       yield {
         type: 'field' as const,
         fieldname: 'selectedColumns',
@@ -723,9 +761,14 @@ describe('processSync controller — error paths', () => {
     }
 
     const mockRequest = {
-      user: { sub: 'session-1', userId: 'user-1', email: 'test@test.com', role: 'PRO' as const },
+      user: {
+        sub: 'session-1',
+        userId: 'user-1',
+        email: 'test@test.com',
+        role: 'PRO' as const,
+      },
       parts: () => partsIterator(),
-      log: { info: vi.fn(), error: vi.fn() },
+      log: { info: vi.fn(), error: vi.fn(), warn: vi.fn() },
     }
 
     const mockReply = {
@@ -734,11 +777,120 @@ describe('processSync controller — error paths', () => {
       send: vi.fn().mockReturnThis(),
     }
 
-    await expect(processSync(mockRequest as never, mockReply as never)).rejects.toThrow(
-      'Dados inválidos',
-    )
+    await expect(
+      processSync(mockRequest as never, mockReply as never),
+    ).rejects.toThrow('selectedColumns tem formato inválido')
 
     expect(redisMock.decr).toHaveBeenCalledWith('tablix:concurrency:user-1')
+  })
+
+  // ============================================
+  // Card 1.16 — multipart hardening (findings c8a3f70e5d12)
+  // ============================================
+  it('rejeita fieldname duplicado de selectedColumns (anti-DoS multipart)', async () => {
+    const { processSync } =
+      await import('../../src/http/controllers/process.controller')
+    redisMock.incr.mockResolvedValue(1)
+    redisMock.expire.mockResolvedValue(1)
+    redisMock.decr.mockResolvedValue(0)
+    redisMock.del.mockResolvedValue(1)
+
+    async function* partsIterator() {
+      yield {
+        type: 'file' as const,
+        filename: 'test.csv',
+        file: {
+          [Symbol.asyncIterator]: async function* () {
+            yield Buffer.from('Name\nAlice')
+          },
+          truncated: false,
+        },
+      }
+      yield {
+        type: 'field' as const,
+        fieldname: 'selectedColumns',
+        value: '["Name"]',
+      }
+      yield {
+        type: 'field' as const,
+        fieldname: 'selectedColumns',
+        value: '["Email"]',
+      }
+    }
+
+    const logWarn = vi.fn()
+    const mockRequest = {
+      user: {
+        sub: 's',
+        userId: 'user-1',
+        email: 't@t.com',
+        role: 'PRO' as const,
+      },
+      parts: () => partsIterator(),
+      log: { info: vi.fn(), error: vi.fn(), warn: logWarn },
+    }
+    const mockReply = {
+      status: vi.fn().mockReturnThis(),
+      header: vi.fn().mockReturnThis(),
+      send: vi.fn().mockReturnThis(),
+    }
+
+    await expect(
+      processSync(mockRequest as never, mockReply as never),
+    ).rejects.toThrow('Campo selectedColumns enviado mais de uma vez')
+    expect(logWarn).toHaveBeenCalledWith(
+      expect.objectContaining({ fieldname: 'selectedColumns' }),
+      expect.stringContaining('duplicate'),
+    )
+    expect(redisMock.decr).toHaveBeenCalledWith('tablix:concurrency:user-1')
+  })
+
+  it('rejeita fieldname desconhecido no multipart', async () => {
+    const { processSync } =
+      await import('../../src/http/controllers/process.controller')
+    redisMock.incr.mockResolvedValue(1)
+    redisMock.expire.mockResolvedValue(1)
+    redisMock.decr.mockResolvedValue(0)
+    redisMock.del.mockResolvedValue(1)
+
+    async function* partsIterator() {
+      yield {
+        type: 'file' as const,
+        filename: 'test.csv',
+        file: {
+          [Symbol.asyncIterator]: async function* () {
+            yield Buffer.from('Name\nAlice')
+          },
+          truncated: false,
+        },
+      }
+      yield { type: 'field' as const, fieldname: 'evilField', value: 'payload' }
+    }
+
+    const logWarn = vi.fn()
+    const mockRequest = {
+      user: {
+        sub: 's',
+        userId: 'user-1',
+        email: 't@t.com',
+        role: 'PRO' as const,
+      },
+      parts: () => partsIterator(),
+      log: { info: vi.fn(), error: vi.fn(), warn: logWarn },
+    }
+    const mockReply = {
+      status: vi.fn().mockReturnThis(),
+      header: vi.fn().mockReturnThis(),
+      send: vi.fn().mockReturnThis(),
+    }
+
+    await expect(
+      processSync(mockRequest as never, mockReply as never),
+    ).rejects.toThrow('Campo desconhecido: evilField')
+    expect(logWarn).toHaveBeenCalledWith(
+      expect.objectContaining({ fieldname: 'evilField' }),
+      expect.stringContaining('unknown'),
+    )
   })
 })
 
@@ -754,7 +906,9 @@ describe('processSpreadsheets — pro-limit edge cases', () => {
     const file1 = { buffer: Buffer.alloc(halfOver), fileName: 'a.csv' }
     const file2 = { buffer: Buffer.alloc(halfOver), fileName: 'b.csv' }
 
-    prismaMock.usage.findUnique.mockResolvedValue({ unificationsCount: 0 } as never)
+    prismaMock.usage.findUnique.mockResolvedValue({
+      unificationsCount: 0,
+    } as never)
 
     await expect(
       processSpreadsheets('user-1', [file1, file2], {
@@ -772,7 +926,9 @@ describe('processSpreadsheets — pro-limit edge cases', () => {
       fileName: 'huge.csv',
     }
 
-    prismaMock.usage.findUnique.mockResolvedValue({ unificationsCount: 0 } as never)
+    prismaMock.usage.findUnique.mockResolvedValue({
+      unificationsCount: 0,
+    } as never)
 
     await expect(
       processSpreadsheets('user-1', [oversizedFile], {
@@ -790,22 +946,31 @@ describe('processSpreadsheets — pro-limit edge cases', () => {
     } as never)
 
     await expect(
-      processSpreadsheets('user-1', [{ buffer: Buffer.from('data'), fileName: 'a.csv' }], {
-        selectedColumns: ['Col'],
-        outputFormat: 'xlsx',
-      }),
+      processSpreadsheets(
+        'user-1',
+        [{ buffer: Buffer.from('data'), fileName: 'a.csv' }],
+        {
+          selectedColumns: ['Col'],
+          outputFormat: 'xlsx',
+        },
+      ),
     ).rejects.toThrow('Limite excedido')
   })
 
   it('rejects when number of files exceeds maxInputFiles', async () => {
     const { PRO_LIMITS } = await import('../../src/lib/spreadsheet/types')
 
-    prismaMock.usage.findUnique.mockResolvedValue({ unificationsCount: 0 } as never)
+    prismaMock.usage.findUnique.mockResolvedValue({
+      unificationsCount: 0,
+    } as never)
 
-    const tooManyFiles = Array.from({ length: PRO_LIMITS.maxInputFiles + 1 }, (_, i) => ({
-      buffer: Buffer.from('data'),
-      fileName: `file${i}.csv`,
-    }))
+    const tooManyFiles = Array.from(
+      { length: PRO_LIMITS.maxInputFiles + 1 },
+      (_, i) => ({
+        buffer: Buffer.from('data'),
+        fileName: `file${i}.csv`,
+      }),
+    )
 
     await expect(
       processSpreadsheets('user-1', tooManyFiles, {
@@ -818,22 +983,33 @@ describe('processSpreadsheets — pro-limit edge cases', () => {
   it('rejects when selectedColumns exceeds maxColumns', async () => {
     const { PRO_LIMITS } = await import('../../src/lib/spreadsheet/types')
 
-    prismaMock.usage.findUnique.mockResolvedValue({ unificationsCount: 0 } as never)
+    prismaMock.usage.findUnique.mockResolvedValue({
+      unificationsCount: 0,
+    } as never)
 
-    const tooManyColumns = Array.from({ length: PRO_LIMITS.maxColumns + 1 }, (_, i) => `col${i}`)
+    const tooManyColumns = Array.from(
+      { length: PRO_LIMITS.maxColumns + 1 },
+      (_, i) => `col${i}`,
+    )
 
     await expect(
-      processSpreadsheets('user-1', [{ buffer: Buffer.from('data'), fileName: 'a.csv' }], {
-        selectedColumns: tooManyColumns,
-        outputFormat: 'xlsx',
-      }),
+      processSpreadsheets(
+        'user-1',
+        [{ buffer: Buffer.from('data'), fileName: 'a.csv' }],
+        {
+          selectedColumns: tooManyColumns,
+          outputFormat: 'xlsx',
+        },
+      ),
     ).rejects.toThrow('Limite excedido')
   })
 
   it('rejects when a single file exceeds maxRowsPerFile', async () => {
     const { PRO_LIMITS } = await import('../../src/lib/spreadsheet/types')
 
-    prismaMock.usage.findUnique.mockResolvedValue({ unificationsCount: 0 } as never)
+    prismaMock.usage.findUnique.mockResolvedValue({
+      unificationsCount: 0,
+    } as never)
 
     // Mock parseSpreadsheet to return a spreadsheet with too many rows
     vi.mocked(parseSpreadsheet).mockReturnValue({
@@ -847,17 +1023,23 @@ describe('processSpreadsheets — pro-limit edge cases', () => {
     vi.mocked(validateColumns).mockReturnValue(undefined)
 
     await expect(
-      processSpreadsheets('user-1', [{ buffer: Buffer.from('data'), fileName: 'large.csv' }], {
-        selectedColumns: ['Name'],
-        outputFormat: 'xlsx',
-      }),
+      processSpreadsheets(
+        'user-1',
+        [{ buffer: Buffer.from('data'), fileName: 'large.csv' }],
+        {
+          selectedColumns: ['Name'],
+          outputFormat: 'xlsx',
+        },
+      ),
     ).rejects.toThrow('Limite excedido')
   })
 
   it('rejects when total rows across files exceeds maxTotalRows', async () => {
     const { PRO_LIMITS } = await import('../../src/lib/spreadsheet/types')
 
-    prismaMock.usage.findUnique.mockResolvedValue({ unificationsCount: 0 } as never)
+    prismaMock.usage.findUnique.mockResolvedValue({
+      unificationsCount: 0,
+    } as never)
 
     const halfOver = Math.floor(PRO_LIMITS.maxTotalRows / 2) + 1
 
@@ -905,7 +1087,10 @@ describe('concurrency guard — Redis absent', () => {
   // an architecture-violation finding is raised separately.
   it('controller source contains null-redis bypass guard', async () => {
     const { readFileSync } = await import('fs')
-    const source = readFileSync('src/http/controllers/process.controller.ts', 'utf-8')
+    const source = readFileSync(
+      'src/http/controllers/process.controller.ts',
+      'utf-8',
+    )
 
     // Proves the guard exists and will short-circuit when redis is falsy
     expect(source).toContain('if (!redis) return true')
@@ -934,7 +1119,8 @@ describe('concurrency guard — slot cleanup on zero', () => {
     vi.mocked(parseSpreadsheet).mockReturnValue(mockParsed)
     vi.mocked(validateColumns).mockReturnValue(undefined)
 
-    const { processSync } = await import('../../src/http/controllers/process.controller')
+    const { processSync } =
+      await import('../../src/http/controllers/process.controller')
 
     async function* partsIterator() {
       yield {
@@ -955,9 +1141,14 @@ describe('concurrency guard — slot cleanup on zero', () => {
     }
 
     const mockRequest = {
-      user: { sub: 'session-1', userId: 'user-1', email: 'test@test.com', role: 'PRO' as const },
+      user: {
+        sub: 'session-1',
+        userId: 'user-1',
+        email: 'test@test.com',
+        role: 'PRO' as const,
+      },
       parts: () => partsIterator(),
-      log: { info: vi.fn(), error: vi.fn() },
+      log: { info: vi.fn(), error: vi.fn(), warn: vi.fn() },
     }
 
     const mockReply = {
@@ -989,7 +1180,8 @@ describe('concurrency guard — slot cleanup on zero', () => {
     vi.mocked(parseSpreadsheet).mockReturnValue(mockParsed)
     vi.mocked(validateColumns).mockReturnValue(undefined)
 
-    const { processSync } = await import('../../src/http/controllers/process.controller')
+    const { processSync } =
+      await import('../../src/http/controllers/process.controller')
 
     async function* partsIterator() {
       yield {
@@ -1010,9 +1202,14 @@ describe('concurrency guard — slot cleanup on zero', () => {
     }
 
     const mockRequest = {
-      user: { sub: 'session-1', userId: 'user-1', email: 'test@test.com', role: 'PRO' as const },
+      user: {
+        sub: 'session-1',
+        userId: 'user-1',
+        email: 'test@test.com',
+        role: 'PRO' as const,
+      },
       parts: () => partsIterator(),
-      log: { info: vi.fn(), error: vi.fn() },
+      log: { info: vi.fn(), error: vi.fn(), warn: vi.fn() },
     }
 
     const mockReply = {
@@ -1045,7 +1242,8 @@ describe('concurrency guard — slot cleanup on zero', () => {
     vi.mocked(parseSpreadsheet).mockReturnValue(mockParsed)
     vi.mocked(validateColumns).mockReturnValue(undefined)
 
-    const { processSync } = await import('../../src/http/controllers/process.controller')
+    const { processSync } =
+      await import('../../src/http/controllers/process.controller')
 
     async function* partsIterator() {
       yield {
@@ -1066,9 +1264,14 @@ describe('concurrency guard — slot cleanup on zero', () => {
     }
 
     const mockRequest = {
-      user: { sub: 'session-1', userId: 'user-1', email: 'test@test.com', role: 'PRO' as const },
+      user: {
+        sub: 'session-1',
+        userId: 'user-1',
+        email: 'test@test.com',
+        role: 'PRO' as const,
+      },
       parts: () => partsIterator(),
-      log: { info: vi.fn(), error: vi.fn() },
+      log: { info: vi.fn(), error: vi.fn(), warn: vi.fn() },
     }
 
     const mockReply = {
@@ -1080,7 +1283,10 @@ describe('concurrency guard — slot cleanup on zero', () => {
     await processSync(mockRequest as never, mockReply as never)
 
     // expire IS called on every incr (resilient TTL refresh)
-    expect(redisMock.expire).toHaveBeenCalledWith('tablix:concurrency:user-1', 120)
+    expect(redisMock.expire).toHaveBeenCalledWith(
+      'tablix:concurrency:user-1',
+      120,
+    )
     // del was NOT called (val was 1, not <= 0)
     expect(redisMock.del).not.toHaveBeenCalled()
     // Still succeeded — second concurrent slot is within limit

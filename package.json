@@ -2,6 +2,9 @@
   "name": "tablix-back-end",
   "version": "1.0.0",
   "description": "Backend do Tablix App",
+  "engines": {
+    "node": ">=20.0.0"
+  },
   "scripts": {
     "dev": "tsx watch src/server.ts",
     "lint": "eslint src --ext .ts --fix",

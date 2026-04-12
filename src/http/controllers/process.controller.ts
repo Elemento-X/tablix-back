@@ -3,6 +3,7 @@ import { Errors } from '../../errors/app-error'
 import { processSyncInputSchema } from '../../modules/process/process.schema'
 import { processSpreadsheets } from '../../modules/process/process.service'
 import { isValidExtension } from '../../lib/spreadsheet'
+import { parseSelectedColumnsField } from '../../lib/parse-selected-columns'
 import { redis } from '../../config/redis'
 
 interface FileData {
@@ -100,6 +101,10 @@ export async function processSync(
     const files: FileData[] = []
     let selectedColumns: string[] = []
     let outputFormat = 'xlsx'
+    // Card 1.16 @security finding c8a3f70e5d12: sem flag, atacante manda o
+    // mesmo fieldname N vezes e cada iteração paga parse+Zod. Trava em 1 só.
+    let selectedColumnsSeen = false
+    let outputFormatSeen = false
 
     // Coleta arquivos e campos do multipart
     const parts = request.parts()
@@ -136,13 +141,59 @@ export async function processSync(
         const value = part.value as string
 
         if (part.fieldname === 'selectedColumns') {
+          // Defesa em profundidade (Card 1.16) — 2 camadas:
+          //   Camada 1 (aqui): parseSelectedColumnsField faz cap de 8KB,
+          //     JSON.parse seguro, valida shape (rejeita prototype pollution,
+          //     control chars, tamanho por coluna). Falha rápido na borda.
+          //   Camada 2 (abaixo): processSyncInputSchema valida a cardinalidade
+          //     (PRO_LIMITS.maxColumns) depois. Mesmo input passa por 2 Zods
+          //     independentes — remover qualquer um não abre vetor.
+          if (selectedColumnsSeen) {
+            // @security finding c8a3f70e5d12: rejeita duplicatas pra evitar
+            // que atacante force N parses num único request.
+            request.log.warn(
+              { userId, fieldname: 'selectedColumns' },
+              'duplicate multipart field rejected',
+            )
+            throw Errors.validationError(
+              'Campo selectedColumns enviado mais de uma vez',
+            )
+          }
+          selectedColumnsSeen = true
           try {
-            selectedColumns = JSON.parse(value)
-          } catch {
-            selectedColumns.push(value)
+            selectedColumns = parseSelectedColumnsField(value)
+          } catch (err) {
+            // @reviewer finding (observability): log estruturado de tentativa
+            // suspeita antes de re-lançar. Pega ataques no 3am test.
+            request.log.warn(
+              {
+                userId,
+                fieldname: 'selectedColumns',
+                valueLength: value.length,
+                error: err instanceof Error ? err.message : String(err),
+              },
+              'selectedColumns parse rejected',
+            )
+            throw err
           }
         } else if (part.fieldname === 'outputFormat') {
+          if (outputFormatSeen) {
+            throw Errors.validationError(
+              'Campo outputFormat enviado mais de uma vez',
+            )
+          }
+          outputFormatSeen = true
           outputFormat = value
+        } else {
+          // @security finding c8a3f70e5d12: rejeita fieldnames desconhecidos
+          // em vez de ignorar silenciosamente. Cada um consome budget
+          // (fields=10 no @fastify/multipart) — fechar silenciosamente amplia
+          // a janela de abuso sem trazer valor.
+          request.log.warn(
+            { userId, fieldname: part.fieldname },
+            'unknown multipart field rejected',
+          )
+          throw Errors.validationError(`Campo desconhecido: ${part.fieldname}`)
         }
       }
     }
@@ -152,7 +203,7 @@ export async function processSync(
       throw Errors.validationError('Nenhum arquivo enviado')
     }
 
-    // Valida input com Zod
+    // Valida input com Zod (camada 2 — ver doc no handler de selectedColumns)
     const validation = processSyncInputSchema.safeParse({
       selectedColumns,
       outputFormat,
