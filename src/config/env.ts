@@ -73,7 +73,7 @@ const envSchema = z
         })
       }
 
-      // Redis obrigatório em produção (rate limiting)
+      // Redis obrigatório em produção (rate limiting + concurrency guard)
       if (!data.UPSTASH_REDIS_REST_URL) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
@@ -88,6 +88,35 @@ const envSchema = z
           path: ['UPSTASH_REDIS_REST_TOKEN'],
           message:
             'UPSTASH_REDIS_REST_TOKEN é obrigatório em produção (rate limiting)',
+        })
+      }
+
+      // Email obrigatório em produção
+      if (!data.RESEND_API_KEY) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['RESEND_API_KEY'],
+          message: 'RESEND_API_KEY é obrigatório em produção',
+        })
+      }
+
+      // FRONTEND_URL deve ser HTTPS em produção (CORS seguro, sem localhost)
+      const frontendHostname = (() => {
+        try {
+          return new URL(data.FRONTEND_URL).hostname
+        } catch {
+          return ''
+        }
+      })()
+      if (
+        frontendHostname === 'localhost' ||
+        !data.FRONTEND_URL.startsWith('https://')
+      ) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['FRONTEND_URL'],
+          message:
+            'FRONTEND_URL deve ser HTTPS em produção (não pode ser localhost)',
         })
       }
     }

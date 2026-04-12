@@ -26,9 +26,7 @@ export async function handleCheckoutCompleted(
   const email = session.customer_email || session.customer_details?.email
 
   if (!email) {
-    throw Errors.webhookFailed(
-      'checkout.session.completed: dados incompletos (email ausente)',
-    )
+    throw Errors.webhookFailed()
   }
 
   const customerId =
@@ -42,9 +40,7 @@ export async function handleCheckoutCompleted(
       : session.subscription?.id
 
   if (!customerId || !subscriptionId) {
-    throw Errors.webhookFailed(
-      'checkout.session.completed: dados incompletos (customer/subscription ausente)',
-    )
+    throw Errors.webhookFailed()
   }
 
   // Cria ou encontra User (upsert por email - atomico)
@@ -133,7 +129,7 @@ export async function handleSubscriptionUpdated(
       : subscription.customer?.id
 
   if (!customerId) {
-    throw Errors.webhookFailed('subscription.updated: customer ausente')
+    throw Errors.webhookFailed()
   }
 
   const user = await prisma.user.findUnique({
@@ -141,7 +137,7 @@ export async function handleSubscriptionUpdated(
   })
 
   if (!user) {
-    throw Errors.webhookFailed('subscription.updated: user nao encontrado')
+    throw Errors.webhookFailed()
   }
 
   const token = await prisma.token.findFirst({
@@ -152,7 +148,7 @@ export async function handleSubscriptionUpdated(
   })
 
   if (!token) {
-    throw Errors.webhookFailed('subscription.updated: token nao encontrado')
+    throw Errors.webhookFailed()
   }
 
   // Atualiza status baseado no status da subscription
@@ -221,7 +217,7 @@ export async function handleSubscriptionDeleted(
       : subscription.customer?.id
 
   if (!customerId) {
-    throw Errors.webhookFailed('subscription.deleted: customer ausente')
+    throw Errors.webhookFailed()
   }
 
   const user = await prisma.user.findUnique({
@@ -229,7 +225,7 @@ export async function handleSubscriptionDeleted(
   })
 
   if (!user) {
-    throw Errors.webhookFailed('subscription.deleted: user nao encontrado')
+    throw Errors.webhookFailed()
   }
 
   const token = await prisma.token.findFirst({
@@ -240,7 +236,7 @@ export async function handleSubscriptionDeleted(
   })
 
   if (!token) {
-    throw Errors.webhookFailed('subscription.deleted: token nao encontrado')
+    throw Errors.webhookFailed()
   }
 
   const periodEnd = (subscription as unknown as { current_period_end?: number })
@@ -278,7 +274,7 @@ export async function handlePaymentFailed(invoice: Stripe.Invoice) {
       : invoice.customer?.id
 
   if (!customerId) {
-    throw Errors.webhookFailed('invoice.payment_failed: customer ausente')
+    throw Errors.webhookFailed()
   }
 
   const user = await prisma.user.findUnique({
@@ -286,7 +282,7 @@ export async function handlePaymentFailed(invoice: Stripe.Invoice) {
   })
 
   if (!user) {
-    throw Errors.webhookFailed('invoice.payment_failed: user nao encontrado')
+    throw Errors.webhookFailed()
   }
 
   // Envia email de falha (fire-and-forget)

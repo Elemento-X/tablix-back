@@ -7,7 +7,7 @@ const resend = env.RESEND_API_KEY ? new Resend(env.RESEND_API_KEY) : null
 
 function getResend(): Resend {
   if (!resend) {
-    throw Errors.internal('Resend não configurado. Verifique RESEND_API_KEY.')
+    throw Errors.internal()
   }
   return resend
 }
@@ -36,27 +36,18 @@ export async function sendTokenEmail(
   params: SendTokenEmailParams,
 ): Promise<void> {
   const client = getResend()
-
   const { to, token } = params
 
-  try {
-    const { error } = await client.emails.send({
-      from: FROM_EMAIL,
-      to,
-      subject: 'Seu token Pro do Tablix',
-      html: generateTokenEmailHtml(token),
-      text: generateTokenEmailText(token),
-    })
+  const { error } = await client.emails.send({
+    from: FROM_EMAIL,
+    to,
+    subject: 'Seu token Pro do Tablix',
+    html: generateTokenEmailHtml(token),
+    text: generateTokenEmailText(token),
+  })
 
-    if (error) {
-      console.error('[Email] Erro ao enviar token:', error)
-      throw Errors.internal(`Erro ao enviar email: ${error.message}`)
-    }
-
-    console.log('[Email] Token enviado para:', to)
-  } catch (error) {
-    console.error('[Email] Falha ao enviar token:', error)
-    throw error
+  if (error) {
+    throw Errors.internal('Erro ao enviar email')
   }
 }
 
@@ -67,27 +58,18 @@ export async function sendCancellationEmail(
   params: SendCancellationEmailParams,
 ): Promise<void> {
   const client = getResend()
-
   const { to, expiresAt } = params
 
-  try {
-    const { error } = await client.emails.send({
-      from: FROM_EMAIL,
-      to,
-      subject: 'Sua assinatura Tablix Pro foi cancelada',
-      html: generateCancellationEmailHtml(expiresAt),
-      text: generateCancellationEmailText(expiresAt),
-    })
+  const { error } = await client.emails.send({
+    from: FROM_EMAIL,
+    to,
+    subject: 'Sua assinatura Tablix Pro foi cancelada',
+    html: generateCancellationEmailHtml(expiresAt),
+    text: generateCancellationEmailText(expiresAt),
+  })
 
-    if (error) {
-      console.error('[Email] Erro ao enviar cancelamento:', error)
-      throw Errors.internal(`Erro ao enviar email: ${error.message}`)
-    }
-
-    console.log('[Email] Cancelamento enviado para:', to)
-  } catch (error) {
-    console.error('[Email] Falha ao enviar cancelamento:', error)
-    throw error
+  if (error) {
+    throw Errors.internal('Erro ao enviar email')
   }
 }
 
@@ -98,27 +80,18 @@ export async function sendPaymentFailedEmail(
   params: SendPaymentFailedEmailParams,
 ): Promise<void> {
   const client = getResend()
-
   const { to } = params
 
-  try {
-    const { error } = await client.emails.send({
-      from: FROM_EMAIL,
-      to,
-      subject: 'Problema com seu pagamento - Tablix Pro',
-      html: generatePaymentFailedEmailHtml(),
-      text: generatePaymentFailedEmailText(),
-    })
+  const { error } = await client.emails.send({
+    from: FROM_EMAIL,
+    to,
+    subject: 'Problema com seu pagamento - Tablix Pro',
+    html: generatePaymentFailedEmailHtml(),
+    text: generatePaymentFailedEmailText(),
+  })
 
-    if (error) {
-      console.error('[Email] Erro ao enviar falha de pagamento:', error)
-      throw Errors.internal(`Erro ao enviar email: ${error.message}`)
-    }
-
-    console.log('[Email] Falha de pagamento enviado para:', to)
-  } catch (error) {
-    console.error('[Email] Falha ao enviar notificação:', error)
-    throw error
+  if (error) {
+    throw Errors.internal('Erro ao enviar email')
   }
 }
 

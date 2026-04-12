@@ -500,7 +500,7 @@ describe('Webhook Idempotency (Card 1.1)', () => {
         subscription: 'sub_test_123',
       }
 
-      await expect(handleCheckoutCompleted(session as never)).rejects.toThrow('email ausente')
+      await expect(handleCheckoutCompleted(session as never)).rejects.toThrow('Erro ao processar webhook')
     })
 
     it('should throw when session has no customer', async () => {
@@ -512,7 +512,7 @@ describe('Webhook Idempotency (Card 1.1)', () => {
       }
 
       await expect(handleCheckoutCompleted(session as never)).rejects.toThrow(
-        'customer/subscription ausente',
+        'Erro ao processar webhook',
       )
     })
 
@@ -581,7 +581,7 @@ describe('Webhook Idempotency (Card 1.1)', () => {
       prismaMock.user.findUnique.mockResolvedValue(null)
 
       await expect(handleSubscriptionUpdated(subscription as never)).rejects.toThrow(
-        'user nao encontrado',
+        'Erro ao processar webhook',
       )
     })
 
@@ -625,7 +625,7 @@ describe('Webhook Idempotency (Card 1.1)', () => {
       prismaMock.token.findFirst.mockResolvedValue(null)
 
       await expect(handleSubscriptionUpdated(subscription as never)).rejects.toThrow(
-        'token nao encontrado',
+        'Erro ao processar webhook',
       )
     })
 
@@ -884,7 +884,7 @@ describe('Webhook Idempotency (Card 1.1)', () => {
       prismaMock.user.findUnique.mockResolvedValue(null)
 
       await expect(handleSubscriptionDeleted(subscription as never)).rejects.toThrow(
-        'user nao encontrado',
+        'Erro ao processar webhook',
       )
     })
 
@@ -902,7 +902,7 @@ describe('Webhook Idempotency (Card 1.1)', () => {
       prismaMock.token.findFirst.mockResolvedValue(null)
 
       await expect(handleSubscriptionDeleted(subscription as never)).rejects.toThrow(
-        'token nao encontrado',
+        'Erro ao processar webhook',
       )
     })
 
@@ -963,7 +963,7 @@ describe('Webhook Idempotency (Card 1.1)', () => {
       }
       prismaMock.user.findUnique.mockResolvedValue(null)
 
-      await expect(handlePaymentFailed(invoice as never)).rejects.toThrow('user nao encontrado')
+      await expect(handlePaymentFailed(invoice as never)).rejects.toThrow('Erro ao processar webhook')
     })
 
     it('should not block on email failure', async () => {
@@ -1008,7 +1008,7 @@ describe('Webhook Idempotency (Card 1.1)', () => {
       }
 
       await expect(handlePaymentFailed(invoice as never)).rejects.toThrow(
-        'invoice.payment_failed: customer ausente',
+        'Erro ao processar webhook',
       )
     })
   })
@@ -1048,7 +1048,7 @@ describe('Webhook Idempotency (Card 1.1)', () => {
       }
 
       await expect(handleSubscriptionUpdated(subscription as never)).rejects.toThrow(
-        'subscription.updated: customer ausente',
+        'Erro ao processar webhook',
       )
     })
   })
@@ -1086,7 +1086,7 @@ describe('Webhook Idempotency (Card 1.1)', () => {
       }
 
       await expect(handleSubscriptionDeleted(subscription as never)).rejects.toThrow(
-        'subscription.deleted: customer ausente',
+        'Erro ao processar webhook',
       )
     })
   })

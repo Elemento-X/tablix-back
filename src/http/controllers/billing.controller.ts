@@ -36,7 +36,7 @@ export async function createCheckout(
   const priceId = plan === 'yearly' ? priceIds.yearly : priceIds.monthly
 
   if (!priceId) {
-    throw Errors.internal(`Price ID para plano ${plan} não configurado`)
+    throw Errors.internal()
   }
 
   const result = await createCheckoutSession({

@@ -11,9 +11,7 @@ const stripe = env.STRIPE_SECRET_KEY
 
 function getStripe(): Stripe {
   if (!stripe) {
-    throw Errors.internal(
-      'Stripe não configurado. Verifique STRIPE_SECRET_KEY.',
-    )
+    throw Errors.internal()
   }
   return stripe
 }
@@ -66,7 +64,7 @@ export async function createCheckoutSession(
     }
   } catch (error) {
     if (error instanceof Stripe.errors.StripeError) {
-      throw Errors.checkoutFailed(error.message)
+      throw Errors.checkoutFailed()
     }
     throw error
   }
@@ -90,7 +88,7 @@ export async function createPortalSession(
     return session.url
   } catch (error) {
     if (error instanceof Stripe.errors.StripeError) {
-      throw Errors.portalFailed(error.message)
+      throw Errors.portalFailed()
     }
     throw error
   }
@@ -106,7 +104,7 @@ export function constructWebhookEvent(
   const stripeClient = getStripe()
 
   if (!env.STRIPE_WEBHOOK_SECRET) {
-    throw Errors.webhookFailed('STRIPE_WEBHOOK_SECRET não configurado')
+    throw Errors.webhookFailed()
   }
 
   try {
@@ -137,7 +135,7 @@ export async function getCheckoutSession(
     })
   } catch (error) {
     if (error instanceof Stripe.errors.StripeError) {
-      throw Errors.internal(`Erro ao buscar sessão: ${error.message}`)
+      throw Errors.internal('Erro ao buscar sessão de checkout')
     }
     throw error
   }
@@ -155,7 +153,7 @@ export async function getSubscription(
     return await stripeClient.subscriptions.retrieve(subscriptionId)
   } catch (error) {
     if (error instanceof Stripe.errors.StripeError) {
-      throw Errors.internal(`Erro ao buscar assinatura: ${error.message}`)
+      throw Errors.internal('Erro ao buscar assinatura')
     }
     throw error
   }
