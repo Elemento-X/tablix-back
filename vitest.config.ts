@@ -11,6 +11,7 @@ export default defineConfig({
       reporter: ['text', 'text-summary', 'lcov', 'html'],
       reportsDirectory: './coverage',
       include: [
+        'src/config/plan-limits.ts',
         'src/lib/jwt.ts',
         'src/modules/auth/auth.service.ts',
         'src/middleware/auth.middleware.ts',

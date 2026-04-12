@@ -8,6 +8,15 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { AppError } from '../../src/errors/app-error'
 
+import {
+  validateProToken,
+  refreshSession,
+  revokeSession,
+  revokeAllSessions,
+  getUserInfo,
+} from '../../src/modules/auth/auth.service'
+import { isValidTokenFormat } from '../../src/lib/token-generator'
+
 // --- vi.hoisted: shared mock state accessible inside vi.mock factories ---
 const { prismaMock } = vi.hoisted(() => {
   function createModelMock() {
@@ -72,15 +81,6 @@ vi.mock('../../src/lib/jwt', () => ({
 vi.mock('../../src/lib/token-generator', () => ({
   isValidTokenFormat: vi.fn().mockReturnValue(true),
 }))
-
-import {
-  validateProToken,
-  refreshSession,
-  revokeSession,
-  revokeAllSessions,
-  getUserInfo,
-} from '../../src/modules/auth/auth.service'
-import { isValidTokenFormat } from '../../src/lib/token-generator'
 
 // --- Test data factories ---
 const NOW = new Date('2026-01-15T12:00:00Z')
@@ -512,11 +512,12 @@ describe('auth.service.ts', () => {
   // getUserInfo
   // =============================================
   describe('getUserInfo', () => {
-    it('deve retornar info do usuario com usage atual', async () => {
+    it('deve retornar info do usuario PRO com Token ACTIVE (limite 30 — D.1)', async () => {
       prismaMock.user.findUnique.mockResolvedValue({
         ...buildUser(),
         usages: [{ unificationsCount: 3 }],
       })
+      prismaMock.token.findFirst.mockResolvedValue({ plan: 'PRO' })
 
       const info = await getUserInfo('user-001')
 
@@ -524,51 +525,221 @@ describe('auth.service.ts', () => {
       expect(info.email).toBe('test@example.com')
       expect(info.role).toBe('PRO')
       expect(info.usage.current).toBe(3)
-      expect(info.usage.limit).toBe(40) // PRO limit
-      expect(info.usage.remaining).toBe(37)
+      // Regression guard: antes era 40 (bug fonte-dupla), D.1 fixou em 30.
+      expect(info.usage.limit).toBe(30)
+      expect(info.usage.remaining).toBe(27)
     })
 
-    it('deve retornar usage 0 quando nao tem registro no periodo', async () => {
+    it('deve consultar Token ACTIVE OU CANCELLED-dentro-do-grace-period', async () => {
+      // Pós-@security: CANCELLED só conta se `expiresAt > now` (grace period).
+      // Mirror do refreshSession — sem assimetria entre endpoints.
       prismaMock.user.findUnique.mockResolvedValue({
         ...buildUser(),
         usages: [],
       })
+      prismaMock.token.findFirst.mockResolvedValue({ plan: 'PRO' })
+
+      await getUserInfo('user-001')
+
+      const call = prismaMock.token.findFirst.mock.calls[0]?.[0]
+      expect(call).toBeDefined()
+      expect(call.where.userId).toBe('user-001')
+      expect(call.where.OR).toEqual([
+        { status: 'ACTIVE' },
+        { status: 'CANCELLED', expiresAt: { gt: expect.any(Date) } },
+      ])
+      expect(call.orderBy).toEqual({ createdAt: 'desc' })
+      expect(call.select).toEqual({ plan: true })
+    })
+
+    it('CANCELLED sem expiresAt ou com expiresAt expirado vira fallback FREE', async () => {
+      // Regression guard: se o filtro OR for mutado pra aceitar CANCELLED sem
+      // checar expiresAt, ex-PRO manteria privilégios indefinidamente.
+      // O teste simula o Prisma respondendo null (porque o filtro OR
+      // não matchou nenhum Token — CANCELLED fora do grace period).
+      prismaMock.user.findUnique.mockResolvedValue({
+        ...buildUser({ role: 'PRO' }),
+        usages: [{ unificationsCount: 0 }],
+      })
+      prismaMock.token.findFirst.mockResolvedValue(null)
+
+      const info = await getUserInfo('user-001')
+
+      expect(info.usage.limit).toBe(1) // FREE fallback
+    })
+
+    it('deve retornar limites PRO tambem para Token CANCELLED (periodo de graca)', async () => {
+      prismaMock.user.findUnique.mockResolvedValue({
+        ...buildUser(),
+        usages: [{ unificationsCount: 5 }],
+      })
+      // Token CANCELLED ainda dentro do periodo de graca — findFirst retorna ele
+      prismaMock.token.findFirst.mockResolvedValue({ plan: 'PRO' })
+
+      const info = await getUserInfo('user-001')
+
+      expect(info.usage.limit).toBe(30)
+      expect(info.usage.remaining).toBe(25)
+    })
+
+    it('deve retornar usage 0 quando nao tem registro no periodo (PRO)', async () => {
+      prismaMock.user.findUnique.mockResolvedValue({
+        ...buildUser(),
+        usages: [],
+      })
+      prismaMock.token.findFirst.mockResolvedValue({ plan: 'PRO' })
 
       const info = await getUserInfo('user-001')
 
       expect(info.usage.current).toBe(0)
-      expect(info.usage.remaining).toBe(40)
+      expect(info.usage.remaining).toBe(30)
     })
 
-    it('deve retornar limite FREE (5) para user FREE', async () => {
+    it('deve aplicar fallback FREE (limite 1) quando nao ha Token ativo', async () => {
       prismaMock.user.findUnique.mockResolvedValue({
         ...buildUser({ role: 'FREE' }),
-        usages: [{ unificationsCount: 2 }],
+        usages: [{ unificationsCount: 0 }],
       })
+      prismaMock.token.findFirst.mockResolvedValue(null)
 
       const info = await getUserInfo('user-001')
 
-      expect(info.usage.limit).toBe(5)
-      expect(info.usage.remaining).toBe(3)
+      // Regression guard: antes era 5, spec real do front e 1 unificacao/mes.
+      expect(info.usage.limit).toBe(1)
+      expect(info.usage.remaining).toBe(1)
     })
 
-    it('deve retornar remaining 0 (nao negativo) quando excede o limite', async () => {
+    it('deve retornar remaining 0 (nao negativo) quando FREE excede o limite', async () => {
       prismaMock.user.findUnique.mockResolvedValue({
         ...buildUser({ role: 'FREE' }),
-        usages: [{ unificationsCount: 10 }],
+        usages: [{ unificationsCount: 3 }],
       })
+      prismaMock.token.findFirst.mockResolvedValue(null)
 
       const info = await getUserInfo('user-001')
 
       expect(info.usage.remaining).toBe(0)
     })
 
-    it('deve lancar AppError se usuario nao existe', async () => {
+    it('deve aplicar fallback FREE mesmo se user.role=PRO mas sem Token (estado inconsistente)', async () => {
+      // Cenario defensivo: user com role PRO mas sem Token ativo.
+      // Fonte da verdade de limites e o Token, nao o role.
+      prismaMock.user.findUnique.mockResolvedValue({
+        ...buildUser({ role: 'PRO' }),
+        usages: [{ unificationsCount: 0 }],
+      })
+      prismaMock.token.findFirst.mockResolvedValue(null)
+
+      const info = await getUserInfo('user-001')
+
+      expect(info.usage.limit).toBe(1) // FREE fallback, nao PRO
+    })
+
+    it('deve lancar AppError UNAUTHORIZED (generico) se usuario nao existe', async () => {
+      // Pós-@security: error discrimination proibida (security.md).
+      // Antes retornava "Usuário não encontrado" (oracle), agora retorna
+      // 401 UNAUTHORIZED genérico — indistinguível de JWT válido pra user
+      // deletado vs JWT inválido.
       prismaMock.user.findUnique.mockResolvedValue(null)
 
       await expect(getUserInfo('nonexistent')).rejects.toMatchObject({
-        code: 'INVALID_TOKEN',
+        code: 'UNAUTHORIZED',
+        statusCode: 401,
       })
+    })
+
+    it('mensagem de erro em user inexistente NÃO contém "não encontrado" (anti-oracle)', async () => {
+      // Mutation guard + security.md: error discrimination proibida.
+      // Se alguém regride pra `Errors.invalidToken('Usuário não encontrado')`
+      // ou similar, esse teste quebra. O 401 genérico não pode vazar o motivo.
+      prismaMock.user.findUnique.mockResolvedValue(null)
+
+      try {
+        await getUserInfo('nonexistent')
+        expect.unreachable('Deveria ter lançado')
+      } catch (err) {
+        const appErr = err as AppError
+        expect(appErr.message).not.toContain('não encontrado')
+        expect(appErr.message).not.toContain('nao encontrado')
+        expect(appErr.message).not.toContain('not found')
+        expect(appErr.message).not.toContain('inexistente')
+        expect(appErr.message).toBe('Não autorizado')
+      }
+    })
+
+    it('deve ignorar Tokens EXPIRED (filtro OR só inclui ACTIVE/CANCELLED-grace)', async () => {
+      // Cenário: user tem só Token EXPIRED. findFirst deve devolver null
+      // por causa do filtro OR. Se alguém mutar o filtro pra incluir EXPIRED,
+      // o teste de fallback FREE passaria errado.
+      prismaMock.user.findUnique.mockResolvedValue({
+        ...buildUser(),
+        usages: [],
+      })
+      prismaMock.token.findFirst.mockResolvedValue(null)
+
+      const info = await getUserInfo('user-001')
+
+      expect(info.usage.limit).toBe(1)
+
+      // Mutation guard: a query DEVE conter o filtro OR exato, nunca EXPIRED
+      const call = prismaMock.token.findFirst.mock.calls[0]?.[0]
+      expect(call.where.OR).toBeDefined()
+      const statusValues = call.where.OR.map((o: { status: string }) => o.status)
+      expect(statusValues).toContain('ACTIVE')
+      expect(statusValues).toContain('CANCELLED')
+      expect(statusValues).not.toContain('EXPIRED')
+    })
+
+    it('deve ordenar Tokens por createdAt desc (retorna o mais recente)', async () => {
+      // Cenário: user com múltiplos Tokens. findFirst + orderBy desc
+      // deve retornar o mais novo. Mutação `desc → asc` seria bug grave
+      // (user renovou assinatura, mas back continua lendo o Token antigo).
+      prismaMock.user.findUnique.mockResolvedValue({
+        ...buildUser(),
+        usages: [],
+      })
+      prismaMock.token.findFirst.mockResolvedValue({ plan: 'PRO' })
+
+      await getUserInfo('user-001')
+
+      expect(prismaMock.token.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({
+          orderBy: { createdAt: 'desc' },
+        }),
+      )
+    })
+
+    it('deve usar select: { plan: true } (não vazar dados sensíveis do Token)', async () => {
+      // Mutation guard + defense-in-depth: a query só precisa de `plan`.
+      // Selecionar o Token inteiro vazaria token string, fingerprint etc.
+      prismaMock.user.findUnique.mockResolvedValue({
+        ...buildUser(),
+        usages: [],
+      })
+      prismaMock.token.findFirst.mockResolvedValue({ plan: 'PRO' })
+
+      await getUserInfo('user-001')
+
+      expect(prismaMock.token.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({
+          select: { plan: true },
+        }),
+      )
+    })
+
+    it('deve cair em fallback FREE quando Token existe mas plan é null (schema inconsistente)', async () => {
+      // Cenário defensivo: coluna `plan` null no banco (bug de migration futura,
+      // seed incompleto, linha criada antes do enum existir). getLimitsForPlan
+      // trata null como FREE — este teste é o regression guard ponta-a-ponta.
+      prismaMock.user.findUnique.mockResolvedValue({
+        ...buildUser(),
+        usages: [{ unificationsCount: 0 }],
+      })
+      prismaMock.token.findFirst.mockResolvedValue({ plan: null })
+
+      const info = await getUserInfo('user-001')
+
+      expect(info.usage.limit).toBe(1) // FREE fallback
     })
 
     it('deve incluir periodo no formato YYYY-MM', async () => {
@@ -576,6 +747,7 @@ describe('auth.service.ts', () => {
         ...buildUser(),
         usages: [],
       })
+      prismaMock.token.findFirst.mockResolvedValue({ plan: 'PRO' })
 
       const info = await getUserInfo('user-001')
 

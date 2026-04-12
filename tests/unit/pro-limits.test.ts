@@ -120,8 +120,9 @@ describe('PRO_LIMITS values (D.1 alignment)', () => {
     expect(PRO_LIMITS.maxTotalRows).toBe(75_000)
   })
 
-  it('unificationsPerMonth is 40', () => {
-    expect(PRO_LIMITS.unificationsPerMonth).toBe(40)
+  it('unificationsPerMonth is 30 (D.1)', () => {
+    // Regression guard: antes era 40, fonte da verdade e 30 (Card 1.11).
+    expect(PRO_LIMITS.unificationsPerMonth).toBe(30)
   })
 
   it('maxInputFiles is 15', () => {
@@ -235,23 +236,23 @@ describe('validateProLimits — file count (15 max)', () => {
 // ===========================================
 // validateProLimits — unifications per month
 // ===========================================
-describe('validateProLimits — unifications (40/month)', () => {
+describe('validateProLimits — unifications (30/month — D.1)', () => {
   it('rejects when at monthly limit', async () => {
     prismaMock.usage.findUnique.mockResolvedValue({
-      unificationsCount: 40,
+      unificationsCount: 30,
     })
 
     await expect(validateProLimits('user-123', [makeFile('f.csv', 1024)])).rejects.toMatchObject({
       code: 'LIMIT_EXCEEDED',
       details: expect.objectContaining({
-        limit: '40 unificações/mês',
+        limit: '30 unificações/mês',
       }),
     })
   })
 
   it('accepts when under monthly limit', async () => {
     prismaMock.usage.findUnique.mockResolvedValue({
-      unificationsCount: 39,
+      unificationsCount: 29,
     })
 
     await expect(validateProLimits('user-123', [makeFile('f.csv', 1024)])).resolves.toBeUndefined()

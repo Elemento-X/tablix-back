@@ -6,6 +6,7 @@ import {
   getRefreshTokenExpiresAt,
 } from '../../lib/jwt'
 import { isValidTokenFormat } from '../../lib/token-generator'
+import { getLimitsForPlan } from '../../config/plan-limits'
 import { Errors } from '../../errors/app-error'
 import { createHmac, timingSafeEqual } from 'crypto'
 
@@ -163,13 +164,16 @@ export async function refreshSession(
     throw Errors.unauthorized('Sessão expirada. Faça login novamente.')
   }
 
-  // Verifica se user ainda tem acesso (subscription pode ter expirado)
+  // Verifica se user ainda tem acesso (subscription pode ter expirado).
+  // `select` explícito: minimiza exposição de dados sensíveis do Token
+  // (defense-in-depth — só precisamos de status/expiresAt aqui).
   const activeToken = await prisma.token.findFirst({
     where: {
       userId: session.userId,
       status: { in: ['ACTIVE', 'CANCELLED'] },
     },
     orderBy: { createdAt: 'desc' },
+    select: { status: true, expiresAt: true },
   })
 
   if (!activeToken) {
@@ -242,11 +246,34 @@ export async function getUserInfo(userId: string) {
   })
 
   if (!user) {
-    throw Errors.invalidToken('Usuário não encontrado')
+    // Mensagem genérica — não diferenciar "não encontrado" vs "não autorizado"
+    // (security.md: error discrimination proibida). Log interno preservado
+    // pelo error handler global para observabilidade.
+    throw Errors.unauthorized()
   }
 
+  // Resolve limites via Token ativo (plano) → fallback FREE se não houver.
+  // Fonte da verdade: src/config/plan-limits.ts (Card 1.11).
+  //
+  // ALTO: CANCELLED só mantém privilégios dentro do grace period (expiresAt > now).
+  // Ex-PRO com assinatura cancelada e período encerrado volta ao fallback FREE.
+  // Mirror do fluxo de refreshSession — sem assimetria entre endpoints.
+  const now = new Date()
+  const activeToken = await prisma.token.findFirst({
+    where: {
+      userId: user.id,
+      OR: [
+        { status: 'ACTIVE' },
+        { status: 'CANCELLED', expiresAt: { gt: now } },
+      ],
+    },
+    orderBy: { createdAt: 'desc' },
+    select: { plan: true },
+  })
+
+  const limits = getLimitsForPlan(activeToken?.plan ?? null)
   const currentUsage = user.usages[0]?.unificationsCount ?? 0
-  const unificationsLimit = user.role === 'PRO' ? 40 : 5
+  const unificationsLimit = limits.unificationsPerMonth
 
   return {
     id: user.id,
