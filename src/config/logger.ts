@@ -47,6 +47,16 @@ export const REDACT_PATHS: readonly string[] = [
   'req.headers["stripe-signature"]',
   'req.headers["x-api-key"]',
   'req.headers["x-refresh-token"]',
+  // F10 (@security Card 2.2): headers custom sensíveis — fecha gap SSOT
+  // antes que feature futura (CSRF double-submit, SSO, reverse proxy auth)
+  // introduza vazamento. REDACT_PATHS é SSOT para logger E sentry.
+  'req.headers["x-auth-token"]',
+  'req.headers["x-access-token"]',
+  'req.headers["x-session-token"]',
+  'req.headers["x-id-token"]',
+  'req.headers["x-csrf-token"]',
+  'req.headers["proxy-authorization"]',
+  'req.headers["x-forwarded-authorization"]',
   'res.headers["set-cookie"]',
   // Body paths comuns (nível raiz de req.body)
   'req.body.token',

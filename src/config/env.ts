@@ -49,6 +49,30 @@ const envSchema = z
     LOG_LEVEL: z
       .enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace'])
       .optional(),
+
+    // Sentry (Card 2.2) — error tracking + performance
+    SENTRY_DSN: z
+      .string()
+      .url()
+      .regex(
+        /^https:\/\/[a-f0-9]+@[a-z0-9.-]+\.ingest\.(us|de)\.sentry\.io\/\d+$/,
+        'SENTRY_DSN deve seguir o formato padrão https://<key>@<host>.ingest.<region>.sentry.io/<project_id>',
+      )
+      .optional()
+      .or(z.literal('')),
+    SENTRY_ENVIRONMENT: z
+      .enum(['development', 'staging', 'production'])
+      .default('development'),
+    SENTRY_RELEASE: z.string().optional().or(z.literal('')),
+    // F2 (@security): sample rates sem default fixo. Defaults seguros por
+    // NODE_ENV são aplicados na superRefine abaixo (prod=0.1 traces / 0.05
+    // profiles, staging=0.5 / 0.1, dev=1.0 / 1.0). 100% em prod = denial-of-
+    // wallet + superfície amplificada de PII em profiling stacks.
+    SENTRY_TRACES_SAMPLE_RATE: z.coerce.number().min(0).max(1).optional(),
+    SENTRY_PROFILES_SAMPLE_RATE: z.coerce.number().min(0).max(1).optional(),
+    SENTRY_AUTH_TOKEN: z.string().optional().or(z.literal('')),
+    SENTRY_ORG: z.string().optional(),
+    SENTRY_PROJECT: z.string().optional(),
   })
   .superRefine((data, ctx) => {
     // JWT_SECRET: rejeitar placeholders conhecidos
@@ -130,6 +154,16 @@ const envSchema = z
         })
       }
 
+      // Sentry obrigatório em produção (error tracking + alerting)
+      if (!data.SENTRY_DSN) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['SENTRY_DSN'],
+          message:
+            'SENTRY_DSN é obrigatório em produção (error tracking + LGPD)',
+        })
+      }
+
       // FRONTEND_URL deve ser HTTPS em produção (CORS seguro, sem localhost)
       const frontendHostname = (() => {
         try {
@@ -159,4 +193,27 @@ if (_env.success === false) {
   throw new Error('Invalid environment variables!')
 }
 
-export const env = _env.data
+// F2 (@security): aplica defaults prod-safe de sample rate por NODE_ENV.
+// Zod superRefine não pode mutar data; resolvemos pós-parse. Prod é
+// conservador (0.1 traces / 0.05 profiles) pra evitar denial-of-wallet e
+// reduzir superfície de PII em profiling stacks.
+function resolveSentryDefaults(nodeEnv: 'development' | 'production' | 'test') {
+  switch (nodeEnv) {
+    case 'production':
+      return { traces: 0.1, profiles: 0.05 }
+    case 'test':
+      return { traces: 0, profiles: 0 }
+    case 'development':
+      return { traces: 1.0, profiles: 1.0 }
+  }
+}
+
+const _sentryDefaults = resolveSentryDefaults(_env.data.NODE_ENV)
+
+export const env = {
+  ..._env.data,
+  SENTRY_TRACES_SAMPLE_RATE:
+    _env.data.SENTRY_TRACES_SAMPLE_RATE ?? _sentryDefaults.traces,
+  SENTRY_PROFILES_SAMPLE_RATE:
+    _env.data.SENTRY_PROFILES_SAMPLE_RATE ?? _sentryDefaults.profiles,
+}

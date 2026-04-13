@@ -12,6 +12,7 @@ import {
 } from 'fastify-type-provider-zod'
 import { env } from './config/env'
 import { buildLoggerOptions, genReqId } from './config/logger'
+import { captureException } from './config/sentry'
 import { registerRoutes } from './http/routes'
 import { AppError } from './errors/app-error'
 import { PRO_LIMITS } from './lib/spreadsheet'
@@ -170,6 +171,20 @@ export async function buildApp() {
 
       // Log de erros não tratados
       request.log.error(error)
+
+      // Card 2.2 — envia erro 5xx não tratado ao Sentry com contexto mínimo.
+      // `beforeSend` em config/sentry.ts já dropa eventos em `test` e scruba
+      // body/headers sensíveis. Nunca passar o objeto request inteiro aqui.
+      //
+      // F5 (@security): `route` é TEMPLATE (`/users/:id`), nunca URL raw com
+      // valores. `request.routeOptions?.url` é o template do Fastify; se
+      // ausente (erro antes do routing), fallback é `'unknown'` — NUNCA
+      // `request.url` cru, que vaza path params + query como tag cardinal no
+      // Sentry (violação LGPD + cardinality explosion).
+      captureException(error, {
+        reqId: request.id,
+        route: request.routeOptions?.url ?? 'unknown',
+      })
 
       // Só vaza mensagem real em development
       return reply.status(500).send({

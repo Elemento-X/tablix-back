@@ -1,3 +1,9 @@
+// Card 2.2 — Sentry DEVE ser inicializado antes de qualquer outro import.
+// `./instrument` é side-effect-only: importa e chama initSentry() no top-level
+// ANTES de `./app` carregar `fastify`/`http`. Imports ESM são hoisted, então
+// só garantimos ordem se a instrumentação está num módulo separado importado
+// primeiro. Padrão oficial do Sentry v10 para Node.
+import './instrument'
 import { buildApp } from './app'
 import { env } from './config/env'
 
