@@ -11,6 +11,7 @@ import {
   ZodTypeProvider,
 } from 'fastify-type-provider-zod'
 import { env } from './config/env'
+import { buildLoggerOptions, genReqId } from './config/logger'
 import { registerRoutes } from './http/routes'
 import { AppError } from './errors/app-error'
 import { PRO_LIMITS } from './lib/spreadsheet'
@@ -44,15 +45,20 @@ export function resolveTrustProxy(): number | string[] {
 }
 
 export async function buildApp() {
+  // Card 2.1 — logger e reqId centralizados em src/config/logger.ts.
+  // buildLoggerOptions() traz redact de PII/secrets, serializers que pulam
+  // body de /auth e /webhooks, e formatter JSON em prod / pretty em dev.
+  // genReqId aceita x-request-id incoming só se for UUID v4 válido (anti-spoof).
   const app = fastify({
-    logger: {
-      level: env.NODE_ENV === 'production' ? 'info' : 'debug',
-      ...(env.NODE_ENV === 'development' && {
-        transport: { target: 'pino-pretty' },
-      }),
-    },
+    logger: buildLoggerOptions(),
+    genReqId,
     trustProxy: resolveTrustProxy(),
   }).withTypeProvider<ZodTypeProvider>()
+
+  // Expõe o reqId ao cliente pra correlação em debug/incident response.
+  app.addHook('onRequest', async (request, reply) => {
+    reply.header('x-request-id', request.id)
+  })
 
   // Configura Zod como validador/serializador
   app.setValidatorCompiler(validatorCompiler)

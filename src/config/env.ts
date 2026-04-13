@@ -44,6 +44,11 @@ const envSchema = z
 
     // Frontend
     FRONTEND_URL: z.string().url().default('http://localhost:3000'),
+
+    // Logging (Card 2.1) — override opcional do nível default por NODE_ENV
+    LOG_LEVEL: z
+      .enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace'])
+      .optional(),
   })
   .superRefine((data, ctx) => {
     // JWT_SECRET: rejeitar placeholders conhecidos
