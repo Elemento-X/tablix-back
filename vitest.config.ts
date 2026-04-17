@@ -25,6 +25,13 @@ export default defineConfig({
         'src/lib/spreadsheet/merger.ts',
         'src/lib/spreadsheet/parser.ts',
         'src/modules/process/process.service.ts',
+        // Card 2.3 — health check modules (libs críticas, sujeitas ao threshold)
+        'src/lib/health/check-db.ts',
+        'src/lib/health/check-redis.ts',
+        'src/lib/health/orchestrator.ts',
+        'src/lib/health/types.ts',
+        'src/modules/health/health.schema.ts',
+        'src/http/routes/health.routes.ts',
       ],
       thresholds: {
         lines: 90,

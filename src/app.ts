@@ -199,10 +199,9 @@ export async function buildApp() {
     },
   )
 
-  // Health check
-  app.get('/health', async () => {
-    return { status: 'ok', timestamp: new Date().toISOString() }
-  })
+  // Health check (Card 2.3) — registrado via registerRoutes em src/http/routes/health.routes.ts
+  // Substituiu o /health inline trivial por /health, /health/live, /health/ready
+  // com checks profundos de DB e Redis, cache stale-while-revalidate e contratos Zod.
 
   // Registra todas as rotas
   await registerRoutes(app)

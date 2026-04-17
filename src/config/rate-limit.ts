@@ -26,6 +26,8 @@ const createLimiter = (requests: number, window: Duration, prefix: string) => {
  * - checkout: /billing/create-checkout (5 req/min) - dispara chamada Stripe, anti denial-of-wallet
  * - billing: /billing/* exceto checkout (20 req/min)
  * - process: /process/* (10 req/min) - futuro
+ * - health: /health e /health/ready (60/min) - Card 2.3, anti-abuse de probes externos
+ *           /health/live é exclusão total (sem rate limit, ver health.routes.ts)
  */
 export const rateLimiters = {
   global: createLimiter(100, '1m', 'global'),
@@ -35,6 +37,7 @@ export const rateLimiters = {
   checkout: createLimiter(5, '1m', 'checkout'),
   billing: createLimiter(20, '1m', 'billing'),
   process: createLimiter(10, '1m', 'process'),
+  health: createLimiter(60, '1m', 'health'),
 } as const
 
 export type RateLimiterType = keyof typeof rateLimiters

@@ -103,6 +103,7 @@ describe('rateLimitMiddleware — export shape', () => {
     'checkout',
     'billing',
     'process',
+    'health', // Card 2.3 — health check rate limiter (/health/ready, /health/)
   ] as const
 
   it('deve exportar todas as chaves esperadas', () => {
@@ -232,13 +233,14 @@ describe('createRateLimitMiddleware — success (rate limit não atingido)', () 
     expect(reply.header).toHaveBeenCalledWith('X-RateLimit-Remaining', 4)
   })
 
-  it('deve setar X-RateLimit-Reset no header', async () => {
+  it('deve setar X-RateLimit-Reset como Unix timestamp em SEGUNDOS (api-contract.md)', async () => {
     const mw = createRateLimitMiddleware('checkout')
     const reply = makeReply()
 
     await mw(makeRequest(), reply)
 
-    expect(reply.header).toHaveBeenCalledWith('X-RateLimit-Reset', NOW + 60_000)
+    // @upstash/ratelimit retorna reset em ms; middleware converte para seconds
+    expect(reply.header).toHaveBeenCalledWith('X-RateLimit-Reset', Math.ceil((NOW + 60_000) / 1000))
   })
 
   it('deve resolver sem erro quando success=true', async () => {

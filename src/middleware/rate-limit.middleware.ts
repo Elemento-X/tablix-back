@@ -57,9 +57,11 @@ export function createRateLimitMiddleware(type: RateLimiterType) {
     const identifier = getRateLimitIdentifier(request)
     const { success, limit, remaining, reset } = await limiter.limit(identifier)
 
+    // api-contract.md: X-RateLimit-Reset é Unix timestamp em SEGUNDOS
+    // (padrão Stripe/GitHub). @upstash/ratelimit retorna `reset` em ms.
     reply.header('X-RateLimit-Limit', limit)
     reply.header('X-RateLimit-Remaining', remaining)
-    reply.header('X-RateLimit-Reset', reset)
+    reply.header('X-RateLimit-Reset', Math.ceil(reset / 1000))
 
     if (!success) {
       const retryAfter = Math.ceil((reset - Date.now()) / 1000)
@@ -77,4 +79,5 @@ export const rateLimitMiddleware = {
   checkout: createRateLimitMiddleware('checkout'),
   billing: createRateLimitMiddleware('billing'),
   process: createRateLimitMiddleware('process'),
+  health: createRateLimitMiddleware('health'),
 }

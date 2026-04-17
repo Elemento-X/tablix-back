@@ -45,6 +45,13 @@ const envSchema = z
     // Frontend
     FRONTEND_URL: z.string().url().default('http://localhost:3000'),
 
+    // Health checks (Card 2.3) — timeouts e cache tunable sem rebuild
+    // Defaults seguros; override em prod via env var se Supabase/Upstash
+    // em região distante ou com cold start atípico.
+    HEALTH_TIMEOUT_DB_MS: z.coerce.number().int().positive().default(1000),
+    HEALTH_TIMEOUT_REDIS_MS: z.coerce.number().int().positive().default(500),
+    HEALTH_CACHE_TTL_MS: z.coerce.number().int().positive().default(2000),
+
     // Logging (Card 2.1) — override opcional do nível default por NODE_ENV
     LOG_LEVEL: z
       .enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace'])
