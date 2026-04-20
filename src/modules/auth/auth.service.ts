@@ -8,6 +8,8 @@ import {
 import { isValidTokenFormat } from '../../lib/token-generator'
 import { getLimitsForPlan } from '../../config/plan-limits'
 import { Errors } from '../../errors/app-error'
+import { emitAuditEvent } from '../../lib/audit/audit.service'
+import { AuditAction } from '../../lib/audit/audit.types'
 import { createHmac, timingSafeEqual } from 'crypto'
 
 export interface ValidateTokenResult {
@@ -77,6 +79,18 @@ export async function validateProToken(
       sessionInfo.fingerprint,
     )
     if (!fingerprintMatch) {
+      // Evento forense dedicado: preserva o motivo real (mismatch) antes do
+      // controller logar TOKEN_VALIDATE_FAILURE com reason genérico. Permite
+      // ao analista diferenciar compartilhamento de token (FINGERPRINT_MISMATCH)
+      // de token inválido/expirado (TOKEN_VALIDATE_FAILURE com code INVALID_TOKEN).
+      emitAuditEvent({
+        action: AuditAction.FINGERPRINT_MISMATCH,
+        actor: tokenRecord.userId,
+        ip: sessionInfo.ipAddress ?? null,
+        userAgent: sessionInfo.userAgent ?? null,
+        success: false,
+        metadata: { tokenId: tokenRecord.id },
+      })
       throw Errors.tokenAlreadyUsed('Token inválido ou expirado')
     }
   } else {
@@ -88,6 +102,18 @@ export async function validateProToken(
         activatedAt: new Date(),
       },
     })
+
+    // Audita o bind: primeiro uso do token, associa device→usuário.
+    // Recurring bind mismatch (token já tinha fingerprint) gera
+    // TOKEN_VALIDATE_FAILURE no controller, não FINGERPRINT_BOUND aqui.
+    emitAuditEvent({
+      action: AuditAction.FINGERPRINT_BOUND,
+      actor: tokenRecord.userId,
+      ip: sessionInfo.ipAddress ?? null,
+      userAgent: sessionInfo.userAgent ?? null,
+      success: true,
+      metadata: { tokenId: tokenRecord.id },
+    })
   }
 
   // User já existe (criado pelo webhook) — atualiza role se necessário
@@ -96,6 +122,21 @@ export async function validateProToken(
     await prisma.user.update({
       where: { id: user.id },
       data: { role: 'PRO' },
+    })
+    // ASVS V7.1: escalada de privilégio auditada no momento da efetivação.
+    // Caminho possível se o webhook de checkout não rodou ainda (race) e
+    // o user ativou o token diretamente — raro mas possível.
+    emitAuditEvent({
+      action: AuditAction.ROLE_CHANGED,
+      actor: user.id,
+      ip: sessionInfo.ipAddress ?? null,
+      userAgent: sessionInfo.userAgent ?? null,
+      success: true,
+      metadata: {
+        from: user.role,
+        to: 'PRO',
+        reason: 'token_validate',
+      },
     })
   }
 

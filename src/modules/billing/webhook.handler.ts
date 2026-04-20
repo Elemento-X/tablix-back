@@ -8,6 +8,8 @@ import {
   sendCancellationEmail,
   sendPaymentFailedEmail,
 } from '../../lib/email'
+import { emitAuditEvent } from '../../lib/audit/audit.service'
+import { AuditAction } from '../../lib/audit/audit.types'
 
 /**
  * Handler para checkout.session.completed
@@ -43,6 +45,14 @@ export async function handleCheckoutCompleted(
     throw Errors.webhookFailed()
   }
 
+  // Captura o estado anterior pra discriminar ACCOUNT_CREATED vs ROLE_CHANGED
+  // na auditoria (ASVS V7.1 exige diferenciar criação de mudança de privilégio).
+  // Uma read extra (~1ms) é aceitável diante do valor forense.
+  const existingUser = await prisma.user.findUnique({
+    where: { email },
+    select: { id: true, role: true },
+  })
+
   // Cria ou encontra User (upsert por email - atomico)
   const user = await prisma.user.upsert({
     where: { email },
@@ -56,6 +66,30 @@ export async function handleCheckoutCompleted(
       role: 'PRO',
     },
   })
+
+  if (!existingUser) {
+    emitAuditEvent({
+      action: AuditAction.ACCOUNT_CREATED,
+      actor: user.id,
+      ip: null,
+      userAgent: null,
+      success: true,
+      metadata: { stripeCustomerId: customerId, reason: 'checkout_completed' },
+    })
+  } else if (existingUser.role !== 'PRO') {
+    emitAuditEvent({
+      action: AuditAction.ROLE_CHANGED,
+      actor: user.id,
+      ip: null,
+      userAgent: null,
+      success: true,
+      metadata: {
+        from: existingUser.role,
+        to: 'PRO',
+        reason: 'checkout_completed',
+      },
+    })
+  }
 
   // Upsert do Token usando unique compound (userId + stripeSubscriptionId).
   // Se ja existe token para este user+subscription, apenas atualiza status.
@@ -202,6 +236,23 @@ export async function handleSubscriptionUpdated(
       data: { role: userRole },
     }),
   ])
+
+  // ASVS V7.1: auditar mudança de privilégio só quando houve mudança real
+  // (idempotente em caso de webhook retentado com mesmo status).
+  if (user.role !== userRole) {
+    emitAuditEvent({
+      action: AuditAction.ROLE_CHANGED,
+      actor: user.id,
+      ip: null,
+      userAgent: null,
+      success: true,
+      metadata: {
+        from: user.role,
+        to: userRole,
+        reason: `subscription_${subscription.status}`,
+      },
+    })
+  }
 }
 
 /**
@@ -284,6 +335,22 @@ export async function handlePaymentFailed(invoice: Stripe.Invoice) {
   if (!user) {
     throw Errors.webhookFailed()
   }
+
+  // Audita o evento de cobrança recusada ANTES do envio de email.
+  // `success: false` marca a falha de pagamento (não a falha de gravação);
+  // `actor` usa userId pois já resolvido aqui. Metadata registra o
+  // invoice.id para correlação forense com o dashboard Stripe.
+  emitAuditEvent({
+    action: AuditAction.PAYMENT_FAILED,
+    actor: user.id,
+    ip: null,
+    userAgent: null,
+    success: false,
+    metadata: {
+      invoiceId: invoice.id,
+      customerId,
+    },
+  })
 
   // Envia email de falha (fire-and-forget)
   try {

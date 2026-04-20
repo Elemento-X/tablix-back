@@ -16,6 +16,7 @@ import {
   getUserInfo,
 } from '../../src/modules/auth/auth.service'
 import { isValidTokenFormat } from '../../src/lib/token-generator'
+import { AuditAction } from '../../src/lib/audit/audit.types'
 
 // --- vi.hoisted: shared mock state accessible inside vi.mock factories ---
 const { prismaMock } = vi.hoisted(() => {
@@ -74,12 +75,24 @@ vi.mock('../../src/lib/jwt', () => ({
   }),
   hashRefreshToken: vi
     .fn()
-    .mockReturnValue('hashed-refresh-token-value-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'),
-  getRefreshTokenExpiresAt: vi.fn().mockReturnValue(new Date('2026-02-15T12:00:00Z')),
+    .mockReturnValue(
+      'hashed-refresh-token-value-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+    ),
+  getRefreshTokenExpiresAt: vi
+    .fn()
+    .mockReturnValue(new Date('2026-02-15T12:00:00Z')),
 }))
 
 vi.mock('../../src/lib/token-generator', () => ({
   isValidTokenFormat: vi.fn().mockReturnValue(true),
+}))
+
+// Mock do audit service — capturamos `emitAuditEvent` para smoke tests que
+// asseguram os pontos de emissão forense (Card 2.4). Não reimplementamos o
+// serviço aqui; o comportamento real é testado em audit-service.test.ts.
+const emitAuditEventMock = vi.fn()
+vi.mock('../../src/lib/audit/audit.service', () => ({
+  emitAuditEvent: (...args: unknown[]) => emitAuditEventMock(...args),
 }))
 
 // --- Test data factories ---
@@ -123,7 +136,8 @@ function buildSession(overrides = {}) {
     fingerprint: 'fp-abc123',
     userAgent: 'TestAgent/1.0',
     ipAddress: '127.0.0.1',
-    refreshTokenHash: 'hashed-refresh-token-value-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+    refreshTokenHash:
+      'hashed-refresh-token-value-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
     createdAt: NOW,
     lastActivityAt: NOW,
     expiresAt: FUTURE,
@@ -175,14 +189,19 @@ describe('auth.service.ts', () => {
     it('deve rejeitar token com formato invalido', async () => {
       vi.mocked(isValidTokenFormat).mockReturnValueOnce(false)
 
-      await expect(validateProToken('invalid-format', SESSION_INFO)).rejects.toThrow(AppError)
+      await expect(
+        validateProToken('invalid-format', SESSION_INFO),
+      ).rejects.toThrow(AppError)
     })
 
     it('deve rejeitar token inexistente no banco', async () => {
       prismaMock.token.findUnique.mockResolvedValue(null)
 
       await expect(
-        validateProToken('tbx_pro_validtokenvalue01234567890123456789012', SESSION_INFO),
+        validateProToken(
+          'tbx_pro_validtokenvalue01234567890123456789012',
+          SESSION_INFO,
+        ),
       ).rejects.toMatchObject({
         code: 'INVALID_TOKEN',
         message: 'Token inválido ou expirado',
@@ -190,10 +209,15 @@ describe('auth.service.ts', () => {
     })
 
     it('deve rejeitar token com status EXPIRED', async () => {
-      prismaMock.token.findUnique.mockResolvedValue(buildToken({ status: 'EXPIRED' }))
+      prismaMock.token.findUnique.mockResolvedValue(
+        buildToken({ status: 'EXPIRED' }),
+      )
 
       await expect(
-        validateProToken('tbx_pro_validtokenvalue01234567890123456789012', SESSION_INFO),
+        validateProToken(
+          'tbx_pro_validtokenvalue01234567890123456789012',
+          SESSION_INFO,
+        ),
       ).rejects.toMatchObject({
         code: 'SUBSCRIPTION_EXPIRED',
         message: 'Token inválido ou expirado',
@@ -206,7 +230,10 @@ describe('auth.service.ts', () => {
       )
 
       await expect(
-        validateProToken('tbx_pro_validtokenvalue01234567890123456789012', SESSION_INFO),
+        validateProToken(
+          'tbx_pro_validtokenvalue01234567890123456789012',
+          SESSION_INFO,
+        ),
       ).rejects.toMatchObject({
         code: 'SUBSCRIPTION_EXPIRED',
       })
@@ -234,19 +261,27 @@ describe('auth.service.ts', () => {
       )
 
       await expect(
-        validateProToken('tbx_pro_validtokenvalue01234567890123456789012', SESSION_INFO),
+        validateProToken(
+          'tbx_pro_validtokenvalue01234567890123456789012',
+          SESSION_INFO,
+        ),
       ).rejects.toMatchObject({
         code: 'SUBSCRIPTION_EXPIRED',
       })
     })
 
     it('deve vincular fingerprint no primeiro uso (fingerprint null)', async () => {
-      prismaMock.token.findUnique.mockResolvedValue(buildToken({ fingerprint: null }))
+      prismaMock.token.findUnique.mockResolvedValue(
+        buildToken({ fingerprint: null }),
+      )
       prismaMock.token.update.mockResolvedValue(buildToken())
       prismaMock.user.update.mockResolvedValue(buildUser())
       prismaMock.session.create.mockResolvedValue(buildSession())
 
-      await validateProToken('tbx_pro_validtokenvalue01234567890123456789012', SESSION_INFO)
+      await validateProToken(
+        'tbx_pro_validtokenvalue01234567890123456789012',
+        SESSION_INFO,
+      )
 
       expect(prismaMock.token.update).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -274,7 +309,9 @@ describe('auth.service.ts', () => {
     })
 
     it('deve aceitar mesmo fingerprint (timing-safe via safeCompare)', async () => {
-      prismaMock.token.findUnique.mockResolvedValue(buildToken({ fingerprint: 'fp-abc123' }))
+      prismaMock.token.findUnique.mockResolvedValue(
+        buildToken({ fingerprint: 'fp-abc123' }),
+      )
       prismaMock.user.update.mockResolvedValue(buildUser())
       prismaMock.session.create.mockResolvedValue(buildSession())
 
@@ -296,7 +333,10 @@ describe('auth.service.ts', () => {
       prismaMock.user.update.mockResolvedValue(buildUser({ role: 'PRO' }))
       prismaMock.session.create.mockResolvedValue(buildSession())
 
-      await validateProToken('tbx_pro_validtokenvalue01234567890123456789012', SESSION_INFO)
+      await validateProToken(
+        'tbx_pro_validtokenvalue01234567890123456789012',
+        SESSION_INFO,
+      )
 
       expect(prismaMock.user.update).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -314,7 +354,10 @@ describe('auth.service.ts', () => {
       )
       prismaMock.session.create.mockResolvedValue(buildSession())
 
-      await validateProToken('tbx_pro_validtokenvalue01234567890123456789012', SESSION_INFO)
+      await validateProToken(
+        'tbx_pro_validtokenvalue01234567890123456789012',
+        SESSION_INFO,
+      )
 
       expect(prismaMock.user.update).not.toHaveBeenCalled()
     })
@@ -323,7 +366,10 @@ describe('auth.service.ts', () => {
       prismaMock.token.findUnique.mockResolvedValue(null)
 
       try {
-        await validateProToken('tbx_pro_validtokenvalue01234567890123456789012', SESSION_INFO)
+        await validateProToken(
+          'tbx_pro_validtokenvalue01234567890123456789012',
+          SESSION_INFO,
+        )
         expect.unreachable('Deveria ter lancado erro')
       } catch (err) {
         const appErr = err as AppError
@@ -359,7 +405,9 @@ describe('auth.service.ts', () => {
     })
 
     it('deve rejeitar sessao revogada', async () => {
-      prismaMock.session.findUnique.mockResolvedValue(buildSession({ revokedAt: NOW }))
+      prismaMock.session.findUnique.mockResolvedValue(
+        buildSession({ revokedAt: NOW }),
+      )
 
       await expect(refreshSession('some-token')).rejects.toMatchObject({
         code: 'UNAUTHORIZED',
@@ -368,7 +416,9 @@ describe('auth.service.ts', () => {
     })
 
     it('deve rejeitar sessao expirada', async () => {
-      prismaMock.session.findUnique.mockResolvedValue(buildSession({ expiresAt: PAST }))
+      prismaMock.session.findUnique.mockResolvedValue(
+        buildSession({ expiresAt: PAST }),
+      )
 
       await expect(refreshSession('some-token')).rejects.toMatchObject({
         code: 'UNAUTHORIZED',
@@ -379,7 +429,9 @@ describe('auth.service.ts', () => {
     it('deve revogar sessao e rejeitar se usuario nao tem token ativo', async () => {
       prismaMock.session.findUnique.mockResolvedValue(buildSession())
       prismaMock.token.findFirst.mockResolvedValue(null)
-      prismaMock.session.update.mockResolvedValue(buildSession({ revokedAt: NOW }))
+      prismaMock.session.update.mockResolvedValue(
+        buildSession({ revokedAt: NOW }),
+      )
 
       await expect(refreshSession('some-token')).rejects.toMatchObject({
         code: 'SUBSCRIPTION_EXPIRED',
@@ -397,7 +449,9 @@ describe('auth.service.ts', () => {
       prismaMock.token.findFirst.mockResolvedValue(
         buildToken({ status: 'CANCELLED', expiresAt: PAST }),
       )
-      prismaMock.session.update.mockResolvedValue(buildSession({ revokedAt: NOW }))
+      prismaMock.session.update.mockResolvedValue(
+        buildSession({ revokedAt: NOW }),
+      )
 
       await expect(refreshSession('some-token')).rejects.toMatchObject({
         code: 'SUBSCRIPTION_EXPIRED',
@@ -409,7 +463,9 @@ describe('auth.service.ts', () => {
       prismaMock.token.findFirst.mockResolvedValue(
         buildToken({ status: 'CANCELLED', expiresAt: null }),
       )
-      prismaMock.session.update.mockResolvedValue(buildSession({ revokedAt: NOW }))
+      prismaMock.session.update.mockResolvedValue(
+        buildSession({ revokedAt: NOW }),
+      )
 
       await expect(refreshSession('some-token')).rejects.toMatchObject({
         code: 'SUBSCRIPTION_EXPIRED',
@@ -463,7 +519,9 @@ describe('auth.service.ts', () => {
   // =============================================
   describe('revokeSession', () => {
     it('deve setar revokedAt na sessao', async () => {
-      prismaMock.session.update.mockResolvedValue(buildSession({ revokedAt: NOW }))
+      prismaMock.session.update.mockResolvedValue(
+        buildSession({ revokedAt: NOW }),
+      )
 
       await revokeSession('session-001')
 
@@ -476,7 +534,9 @@ describe('auth.service.ts', () => {
     it('deve propagar erro do Prisma se session nao existe', async () => {
       prismaMock.session.update.mockRejectedValue(new Error('Record not found'))
 
-      await expect(revokeSession('nonexistent')).rejects.toThrow('Record not found')
+      await expect(revokeSession('nonexistent')).rejects.toThrow(
+        'Record not found',
+      )
     })
   })
 
@@ -684,7 +744,9 @@ describe('auth.service.ts', () => {
       // Mutation guard: a query DEVE conter o filtro OR exato, nunca EXPIRED
       const call = prismaMock.token.findFirst.mock.calls[0]?.[0]
       expect(call.where.OR).toBeDefined()
-      const statusValues = call.where.OR.map((o: { status: string }) => o.status)
+      const statusValues = call.where.OR.map(
+        (o: { status: string }) => o.status,
+      )
       expect(statusValues).toContain('ACTIVE')
       expect(statusValues).toContain('CANCELLED')
       expect(statusValues).not.toContain('EXPIRED')
@@ -753,6 +815,108 @@ describe('auth.service.ts', () => {
 
       expect(info.usage.period).toMatch(/^\d{4}-\d{2}$/)
       expect(info.usage.period).toBe('2026-01')
+    })
+  })
+
+  // =============================================
+  // Smoke tests — pontos de emissão de audit (Card 2.4)
+  // =============================================
+  // Garantia de que o auth.service chama emitAuditEvent nos momentos
+  // corretos, com a AuditAction certa. Não validamos payload completo (isso é
+  // escopo do audit-service.test.ts); só o contrato "esse caminho emite esse
+  // evento". Protege contra regressão silenciosa — alguém removendo um
+  // emitAuditEvent deixa de derrubar nada funcional mas quebra observability.
+  describe('audit emissions', () => {
+    it('emite FINGERPRINT_BOUND no primeiro uso do token', async () => {
+      prismaMock.token.findUnique.mockResolvedValue(
+        buildToken({ fingerprint: null }),
+      )
+      prismaMock.token.update.mockResolvedValue(buildToken())
+      prismaMock.session.create.mockResolvedValue(buildSession())
+
+      await validateProToken(
+        'tbx_pro_validtokenvalue01234567890123456789012',
+        SESSION_INFO,
+      )
+
+      const actions = emitAuditEventMock.mock.calls.map(
+        (c) => (c[0] as { action: string }).action,
+      )
+      expect(actions).toContain(AuditAction.FINGERPRINT_BOUND)
+    })
+
+    it('emite FINGERPRINT_MISMATCH quando fingerprint apresentado difere', async () => {
+      prismaMock.token.findUnique.mockResolvedValue(
+        buildToken({ fingerprint: 'fp-original-device' }),
+      )
+
+      await expect(
+        validateProToken('tbx_pro_validtokenvalue01234567890123456789012', {
+          ...SESSION_INFO,
+          fingerprint: 'fp-attacker-device',
+        }),
+      ).rejects.toThrow()
+
+      const call = emitAuditEventMock.mock.calls.find(
+        (c) =>
+          (c[0] as { action: string }).action ===
+          AuditAction.FINGERPRINT_MISMATCH,
+      )
+      expect(call).toBeDefined()
+      // Metadata forense DEVE carregar tokenId pra correlação posterior
+      const input = call![0] as {
+        metadata?: Record<string, unknown>
+        success: boolean
+      }
+      expect(input.success).toBe(false)
+      expect(input.metadata?.tokenId).toBe('token-001')
+    })
+
+    it('emite ROLE_CHANGED quando user FREE é promovido a PRO via token', async () => {
+      prismaMock.token.findUnique.mockResolvedValue(
+        buildToken({
+          fingerprint: 'fp-abc123',
+          user: buildUser({ role: 'FREE' }),
+        }),
+      )
+      prismaMock.user.update.mockResolvedValue(buildUser({ role: 'PRO' }))
+      prismaMock.session.create.mockResolvedValue(buildSession())
+
+      await validateProToken(
+        'tbx_pro_validtokenvalue01234567890123456789012',
+        SESSION_INFO,
+      )
+
+      const call = emitAuditEventMock.mock.calls.find(
+        (c) => (c[0] as { action: string }).action === AuditAction.ROLE_CHANGED,
+      )
+      expect(call).toBeDefined()
+      const input = call![0] as { metadata?: Record<string, unknown> }
+      expect(input.metadata).toMatchObject({
+        from: 'FREE',
+        to: 'PRO',
+        reason: 'token_validate',
+      })
+    })
+
+    it('NÃO emite ROLE_CHANGED quando user já é PRO (idempotência)', async () => {
+      prismaMock.token.findUnique.mockResolvedValue(
+        buildToken({
+          fingerprint: 'fp-abc123',
+          user: buildUser({ role: 'PRO' }),
+        }),
+      )
+      prismaMock.session.create.mockResolvedValue(buildSession())
+
+      await validateProToken(
+        'tbx_pro_validtokenvalue01234567890123456789012',
+        SESSION_INFO,
+      )
+
+      const actions = emitAuditEventMock.mock.calls.map(
+        (c) => (c[0] as { action: string }).action,
+      )
+      expect(actions).not.toContain(AuditAction.ROLE_CHANGED)
     })
   })
 })

@@ -11,6 +11,19 @@ import {
   revokeAllSessions,
 } from '../../modules/auth/auth.service'
 import { Errors } from '../../errors/app-error'
+import { emitAuditEvent } from '../../lib/audit/audit.service'
+import { AuditAction } from '../../lib/audit/audit.types'
+
+/**
+ * Extrai o campo `code` de um AppError para uso em metadata do audit.
+ * Retorna 'unknown' para erros sem `code` — escapa PII por design: só
+ * aceita string enum-like, nunca a mensagem bruta do erro.
+ */
+function errorCode(err: unknown): string {
+  if (!(err instanceof Error)) return 'unknown'
+  const code = (err as { code?: unknown }).code
+  return typeof code === 'string' ? code : 'unknown'
+}
 
 /**
  * POST /auth/validate-token
@@ -29,18 +42,44 @@ export async function validateToken(
   }
 
   const { token, fingerprint } = validation.data
+  const ip = request.ip
+  const userAgent = request.headers['user-agent'] ?? null
 
-  const result = await validateProToken(token, {
-    fingerprint,
-    userAgent: request.headers['user-agent'],
-    ipAddress: request.ip,
-  })
+  try {
+    const result = await validateProToken(token, {
+      fingerprint,
+      userAgent: userAgent ?? undefined,
+      ipAddress: ip,
+    })
 
-  return reply.send({
-    accessToken: result.accessToken,
-    refreshToken: result.refreshToken,
-    user: result.user,
-  })
+    emitAuditEvent({
+      action: AuditAction.TOKEN_VALIDATE_SUCCESS,
+      actor: result.user.id,
+      ip,
+      userAgent,
+      success: true,
+    })
+
+    return reply.send({
+      accessToken: result.accessToken,
+      refreshToken: result.refreshToken,
+      user: result.user,
+    })
+  } catch (err) {
+    // Audita falha sem vazar o token em claro: `actor` fica null pois user
+    // não foi autenticado; motivo vai em `metadata.reason` derivado do
+    // código do AppError (escapa PII por design — só enum-like strings).
+    const reason = errorCode(err)
+    emitAuditEvent({
+      action: AuditAction.TOKEN_VALIDATE_FAILURE,
+      actor: null,
+      ip,
+      userAgent,
+      success: false,
+      metadata: { reason },
+    })
+    throw err
+  }
 }
 
 /**
@@ -60,12 +99,36 @@ export async function refresh(
   }
 
   const { refreshToken } = validation.data
-  const result = await refreshSession(refreshToken)
+  const ip = request.ip
+  const userAgent = request.headers['user-agent'] ?? null
 
-  return reply.send({
-    accessToken: result.accessToken,
-    refreshToken: result.refreshToken,
-  })
+  try {
+    const result = await refreshSession(refreshToken)
+
+    emitAuditEvent({
+      action: AuditAction.SESSION_REFRESH,
+      actor: null,
+      ip,
+      userAgent,
+      success: true,
+    })
+
+    return reply.send({
+      accessToken: result.accessToken,
+      refreshToken: result.refreshToken,
+    })
+  } catch (err) {
+    const reason = errorCode(err)
+    emitAuditEvent({
+      action: AuditAction.SESSION_REFRESH_FAILURE,
+      actor: null,
+      ip,
+      userAgent,
+      success: false,
+      metadata: { reason },
+    })
+    throw err
+  }
 }
 
 /**
@@ -93,6 +156,15 @@ export async function logout(request: FastifyRequest, reply: FastifyReply) {
 
   await revokeSession(request.user.sub)
 
+  emitAuditEvent({
+    action: AuditAction.LOGOUT,
+    actor: request.user.userId,
+    ip: request.ip,
+    userAgent: request.headers['user-agent'] ?? null,
+    success: true,
+    metadata: { sessionId: request.user.sub },
+  })
+
   return reply.send({ success: true })
 }
 
@@ -106,6 +178,15 @@ export async function logoutAll(request: FastifyRequest, reply: FastifyReply) {
   }
 
   const count = await revokeAllSessions(request.user.userId)
+
+  emitAuditEvent({
+    action: AuditAction.LOGOUT_ALL,
+    actor: request.user.userId,
+    ip: request.ip,
+    userAgent: request.headers['user-agent'] ?? null,
+    success: true,
+    metadata: { sessionsRevoked: count },
+  })
 
   return reply.send({ success: true, sessionsRevoked: count })
 }

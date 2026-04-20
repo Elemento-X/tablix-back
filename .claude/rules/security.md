@@ -95,7 +95,7 @@ paths:
 - **Camadas de rate limit**: (1) global por IP (proteção DDoS básica), (2) por rota (config específica em `src/config/rate-limit.ts`), (3) por usuário autenticado (evita abuso com conta válida). As três camadas são complementares.
 - Toda rota pública passa por `rateLimitMiddleware` com limiter específico de `src/config/rate-limit.ts`.
 - `/auth/validate-token` com limite agressivo (5/min) contra brute force.
-- Webhooks Stripe ficam sem rate limit, mas a verificação de assinatura é a barreira.
+- **Webhooks Stripe**: sem rate limit uniforme (Stripe legítimo pode burstar eventos), mas com **circuit breaker por IP em falhas de assinatura** em `src/lib/security/webhook-circuit-breaker.ts`. Stripe real nunca dispara signature failure — atacante forjando assinatura atinge o limite (5 falhas/60s) e é banido (15min/429). Barreira necessária pós-Card 2.4: auditoria forense + Sentry breadcrumb + pino log por request amplificam DoS se deixados sem proteção.
 
 ## Content-Type enforcement
 

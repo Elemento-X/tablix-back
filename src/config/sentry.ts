@@ -103,14 +103,25 @@ function safePathname(url: string): string | null {
  * com SENSITIVE_FIELD_NAMES. Trata instâncias especiais (Error, Map, Set,
  * Buffer) para evitar perda de dados silenciosa ou recursão em bytes.
  * Profundidade limitada a 5 (DoS protection) + WeakSet anti-circular.
+ *
+ * Exportado para reuso pelo `audit.service.ts` (Card 2.4) — o audit_log
+ * persiste metadata de caller, e scrub no momento da persistência é defense
+ * in depth contra PII/segredo vazado por engano (caller esqueceu de filtrar).
  */
-function scrubObject(
+export function scrubObject(
   value: unknown,
   depth = 0,
   seen: WeakSet<object> = new WeakSet(),
 ): unknown {
   if (depth > 5) return '[DEPTH_LIMIT]'
-  if (value === null || typeof value !== 'object') return value
+  if (value === null || typeof value !== 'object') {
+    // Strings passam por scrubString (regex de PII: JWT, email, CPF, Stripe,
+    // Tablix). Defense in depth: scrubObject checa nome da chave, scrubString
+    // checa o conteúdo. Caller que vaza `{ emailUsed: "a@b.com" }` em metadata
+    // é capturado aqui mesmo — chave benigna, valor com PII.
+    if (typeof value === 'string') return scrubString(value)
+    return value
+  }
   if (seen.has(value as object)) return '[CIRCULAR]'
   seen.add(value as object)
 
