@@ -15,6 +15,15 @@
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
+import { PRO_LIMITS } from '../../src/lib/spreadsheet/types'
+import {
+  validateProLimits,
+  processSpreadsheets,
+} from '../../src/modules/process/process.service'
+import { processSyncInputSchema } from '../../src/modules/process/process.schema'
+import { AppError } from '../../src/errors/app-error'
+import { parseSpreadsheet, validateColumns } from '../../src/lib/spreadsheet'
+
 // --- vi.hoisted: shared mock state ---
 const { prismaMock } = vi.hoisted(() => {
   function createModelMock() {
@@ -74,19 +83,16 @@ vi.mock('../../src/lib/spreadsheet', async (importOriginal) => {
   }
 })
 
-import { PRO_LIMITS } from '../../src/lib/spreadsheet/types'
-import { validateProLimits, processSpreadsheets } from '../../src/modules/process/process.service'
-import { processSyncInputSchema } from '../../src/modules/process/process.schema'
-import { AppError } from '../../src/errors/app-error'
-import { parseSpreadsheet, validateColumns } from '../../src/lib/spreadsheet'
-
 // Helper: cria buffer de tamanho exato
 function makeBuffer(sizeBytes: number): Buffer {
   return Buffer.alloc(sizeBytes)
 }
 
 // Helper: cria FileData
-function makeFile(fileName: string, sizeBytes: number): { buffer: Buffer; fileName: string } {
+function makeFile(
+  fileName: string,
+  sizeBytes: number,
+): { buffer: Buffer; fileName: string } {
   return { buffer: makeBuffer(sizeBytes), fileName }
 }
 
@@ -137,9 +143,13 @@ describe('validateProLimits — per-file size (2 MB)', () => {
   it('rejects file exceeding 2 MB', async () => {
     const oversizedFile = makeFile('big.csv', 2 * 1024 * 1024 + 1) // 2 MB + 1 byte
 
-    await expect(validateProLimits('user-123', [oversizedFile])).rejects.toThrow(AppError)
+    await expect(
+      validateProLimits('user-123', [oversizedFile]),
+    ).rejects.toThrow(AppError)
 
-    await expect(validateProLimits('user-123', [oversizedFile])).rejects.toMatchObject({
+    await expect(
+      validateProLimits('user-123', [oversizedFile]),
+    ).rejects.toMatchObject({
       code: 'LIMIT_EXCEEDED',
       details: expect.objectContaining({
         limit: '2MB por arquivo',
@@ -150,20 +160,26 @@ describe('validateProLimits — per-file size (2 MB)', () => {
   it('accepts file exactly at 2 MB', async () => {
     const exactFile = makeFile('exact.csv', 2 * 1024 * 1024) // Exactly 2 MB
 
-    await expect(validateProLimits('user-123', [exactFile])).resolves.toBeUndefined()
+    await expect(
+      validateProLimits('user-123', [exactFile]),
+    ).resolves.toBeUndefined()
   })
 
   it('accepts file under 2 MB', async () => {
     const smallFile = makeFile('small.csv', 1 * 1024 * 1024) // 1 MB
 
-    await expect(validateProLimits('user-123', [smallFile])).resolves.toBeUndefined()
+    await expect(
+      validateProLimits('user-123', [smallFile]),
+    ).resolves.toBeUndefined()
   })
 
   it('rejects when second file exceeds limit', async () => {
     const okFile = makeFile('ok.csv', 1 * 1024 * 1024)
     const bigFile = makeFile('big.xlsx', 2 * 1024 * 1024 + 1)
 
-    await expect(validateProLimits('user-123', [okFile, bigFile])).rejects.toMatchObject({
+    await expect(
+      validateProLimits('user-123', [okFile, bigFile]),
+    ).rejects.toMatchObject({
       code: 'LIMIT_EXCEEDED',
       details: expect.objectContaining({
         limit: '2MB por arquivo',
@@ -178,7 +194,9 @@ describe('validateProLimits — per-file size (2 MB)', () => {
 // ===========================================
 describe('validateProLimits — total size (30 MB)', () => {
   it('accepts exactly 30 MB total', async () => {
-    const files = Array.from({ length: 15 }, (_, i) => makeFile(`file${i}.csv`, 2 * 1024 * 1024))
+    const files = Array.from({ length: 15 }, (_, i) =>
+      makeFile(`file${i}.csv`, 2 * 1024 * 1024),
+    )
     await expect(validateProLimits('user-123', files)).resolves.toBeUndefined()
   })
 
@@ -193,7 +211,10 @@ describe('validateProLimits — total size (30 MB)', () => {
 
     try {
       // 2 files of 2MB each = 4MB > 3MB temporary limit
-      const files = [makeFile('a.csv', 2 * 1024 * 1024), makeFile('b.csv', 2 * 1024 * 1024)]
+      const files = [
+        makeFile('a.csv', 2 * 1024 * 1024),
+        makeFile('b.csv', 2 * 1024 * 1024),
+      ]
 
       await expect(validateProLimits('user-123', files)).rejects.toMatchObject({
         code: 'LIMIT_EXCEEDED',
@@ -215,7 +236,9 @@ describe('validateProLimits — total size (30 MB)', () => {
 // ===========================================
 describe('validateProLimits — file count (15 max)', () => {
   it('rejects more than 15 files', async () => {
-    const files = Array.from({ length: 16 }, (_, i) => makeFile(`file${i}.csv`, 1024))
+    const files = Array.from({ length: 16 }, (_, i) =>
+      makeFile(`file${i}.csv`, 1024),
+    )
 
     await expect(validateProLimits('user-123', files)).rejects.toMatchObject({
       code: 'LIMIT_EXCEEDED',
@@ -227,7 +250,9 @@ describe('validateProLimits — file count (15 max)', () => {
   })
 
   it('accepts exactly 15 files', async () => {
-    const files = Array.from({ length: 15 }, (_, i) => makeFile(`file${i}.csv`, 1024))
+    const files = Array.from({ length: 15 }, (_, i) =>
+      makeFile(`file${i}.csv`, 1024),
+    )
 
     await expect(validateProLimits('user-123', files)).resolves.toBeUndefined()
   })
@@ -242,7 +267,9 @@ describe('validateProLimits — unifications (30/month — D.1)', () => {
       unificationsCount: 30,
     })
 
-    await expect(validateProLimits('user-123', [makeFile('f.csv', 1024)])).rejects.toMatchObject({
+    await expect(
+      validateProLimits('user-123', [makeFile('f.csv', 1024)]),
+    ).rejects.toMatchObject({
       code: 'LIMIT_EXCEEDED',
       details: expect.objectContaining({
         limit: '30 unificações/mês',
@@ -255,7 +282,9 @@ describe('validateProLimits — unifications (30/month — D.1)', () => {
       unificationsCount: 29,
     })
 
-    await expect(validateProLimits('user-123', [makeFile('f.csv', 1024)])).resolves.toBeUndefined()
+    await expect(
+      validateProLimits('user-123', [makeFile('f.csv', 1024)]),
+    ).resolves.toBeUndefined()
   })
 })
 
@@ -425,7 +454,9 @@ describe('processSpreadsheets — total row limit (75.000)', () => {
   })
 
   it('accepts exactly 75.000 total rows', async () => {
-    const files = Array.from({ length: 15 }, (_, i) => makeFile(`file${i}.csv`, 1024))
+    const files = Array.from({ length: 15 }, (_, i) =>
+      makeFile(`file${i}.csv`, 1024),
+    )
 
     let callIndex = 0
     mockParseSpreadsheet.mockImplementation(() => {

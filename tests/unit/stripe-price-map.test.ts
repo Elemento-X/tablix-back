@@ -11,6 +11,11 @@
  */
 import { describe, it, expect, vi } from 'vitest'
 
+import {
+  getPriceId,
+  getAllPrices,
+} from '../../src/modules/billing/stripe.service'
+
 // Mock env with only BRL configured (USD/EUR absent)
 vi.mock('../../src/config/env', () => ({
   env: {
@@ -38,8 +43,6 @@ vi.mock('stripe', () => {
   )
   return { default: StripeMock, Stripe: StripeMock }
 })
-
-import { getPriceId, getAllPrices } from '../../src/modules/billing/stripe.service'
 
 describe('stripe.service.ts — PRICE_MAP com env parcial (Card 1.20)', () => {
   describe('getPriceId com env parcial', () => {

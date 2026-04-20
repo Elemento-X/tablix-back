@@ -13,7 +13,7 @@
  *
  * @owner: @tester
  */
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect } from 'vitest'
 import { z } from 'zod'
 
 // We replicate the schema here because env.ts executes on import (parses process.env).
@@ -25,7 +25,9 @@ function buildEnvSchema(isProd: boolean) {
   return z
     .object({
       PORT: z.coerce.number().default(3333),
-      NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
+      NODE_ENV: z
+        .enum(['development', 'production', 'test'])
+        .default('development'),
       API_URL: z.string().url().optional(),
       DATABASE_URL: z.string().url(),
       DIRECT_URL: z.string().url().optional(),
@@ -83,14 +85,16 @@ function buildEnvSchema(isProd: boolean) {
           ctx.addIssue({
             code: z.ZodIssueCode.custom,
             path: ['UPSTASH_REDIS_REST_URL'],
-            message: 'UPSTASH_REDIS_REST_URL é obrigatório em produção (rate limiting)',
+            message:
+              'UPSTASH_REDIS_REST_URL é obrigatório em produção (rate limiting)',
           })
         }
         if (!data.UPSTASH_REDIS_REST_TOKEN) {
           ctx.addIssue({
             code: z.ZodIssueCode.custom,
             path: ['UPSTASH_REDIS_REST_TOKEN'],
-            message: 'UPSTASH_REDIS_REST_TOKEN é obrigatório em produção (rate limiting)',
+            message:
+              'UPSTASH_REDIS_REST_TOKEN é obrigatório em produção (rate limiting)',
           })
         }
         // Multi-currency price IDs — Card 1.20
@@ -125,11 +129,15 @@ function buildEnvSchema(isProd: boolean) {
             return ''
           }
         })()
-        if (frontendHostname === 'localhost' || !data.FRONTEND_URL.startsWith('https://')) {
+        if (
+          frontendHostname === 'localhost' ||
+          !data.FRONTEND_URL.startsWith('https://')
+        ) {
           ctx.addIssue({
             code: z.ZodIssueCode.custom,
             path: ['FRONTEND_URL'],
-            message: 'FRONTEND_URL deve ser HTTPS em produção (não pode ser localhost)',
+            message:
+              'FRONTEND_URL deve ser HTTPS em produção (não pode ser localhost)',
           })
         }
       }
@@ -178,7 +186,9 @@ describe('env.ts validation (Cards 1.9 + 1.10)', () => {
 
       expect(result.success).toBe(false)
       if (!result.success) {
-        const resendIssues = result.error.issues.filter((i) => i.path.includes('RESEND_API_KEY'))
+        const resendIssues = result.error.issues.filter((i) =>
+          i.path.includes('RESEND_API_KEY'),
+        )
         expect(resendIssues.length).toBeGreaterThan(0)
         expect(resendIssues[0].message).toContain('RESEND_API_KEY')
         expect(resendIssues[0].message).toContain('obrigatório em produção')
@@ -209,7 +219,9 @@ describe('env.ts validation (Cards 1.9 + 1.10)', () => {
 
       expect(result.success).toBe(false)
       if (!result.success) {
-        const urlIssues = result.error.issues.filter((i) => i.path.includes('FRONTEND_URL'))
+        const urlIssues = result.error.issues.filter((i) =>
+          i.path.includes('FRONTEND_URL'),
+        )
         expect(urlIssues.length).toBeGreaterThan(0)
         expect(urlIssues[0].message).toContain('HTTPS')
       }
@@ -224,7 +236,9 @@ describe('env.ts validation (Cards 1.9 + 1.10)', () => {
 
       expect(result.success).toBe(false)
       if (!result.success) {
-        const urlIssues = result.error.issues.filter((i) => i.path.includes('FRONTEND_URL'))
+        const urlIssues = result.error.issues.filter((i) =>
+          i.path.includes('FRONTEND_URL'),
+        )
         expect(urlIssues.length).toBeGreaterThan(0)
         expect(urlIssues[0].message).toContain('localhost')
       }
@@ -239,7 +253,9 @@ describe('env.ts validation (Cards 1.9 + 1.10)', () => {
 
       expect(result.success).toBe(false)
       if (!result.success) {
-        const urlIssues = result.error.issues.filter((i) => i.path.includes('FRONTEND_URL'))
+        const urlIssues = result.error.issues.filter((i) =>
+          i.path.includes('FRONTEND_URL'),
+        )
         expect(urlIssues.length).toBeGreaterThan(0)
         expect(urlIssues[0].message).toContain('localhost')
       }
@@ -354,7 +370,9 @@ describe('env.ts validation (Cards 1.9 + 1.10)', () => {
 
       expect(result.success).toBe(false)
       if (!result.success) {
-        const jwtIssues = result.error.issues.filter((i) => i.path.includes('JWT_SECRET'))
+        const jwtIssues = result.error.issues.filter((i) =>
+          i.path.includes('JWT_SECRET'),
+        )
         expect(jwtIssues.length).toBeGreaterThan(0)
         expect(jwtIssues[0].message).toContain('placeholder')
       }
@@ -413,7 +431,9 @@ describe('env.ts validation (Cards 1.9 + 1.10)', () => {
         // Garantia: erros acumulados individualmente, não agrupados em mensagem genérica
         expect(
           result.error.issues.filter((i) =>
-            ALL_PRICE_ID_VARS.includes(i.path[0] as (typeof ALL_PRICE_ID_VARS)[number]),
+            ALL_PRICE_ID_VARS.includes(
+              i.path[0] as (typeof ALL_PRICE_ID_VARS)[number],
+            ),
           ).length,
         ).toBe(6)
       }
@@ -427,15 +447,18 @@ describe('env.ts validation (Cards 1.9 + 1.10)', () => {
 
         expect(result.success).toBe(false)
         if (!result.success) {
-          const relevantIssues = result.error.issues.filter((i) => i.path[0] === missingVar)
+          const relevantIssues = result.error.issues.filter(
+            (i) => i.path[0] === missingVar,
+          )
           expect(relevantIssues.length).toBeGreaterThan(0)
           expect(relevantIssues[0].message).toContain(missingVar)
           expect(relevantIssues[0].message).toContain('obrigatório em produção')
           // Não deve ter erro nas outras 5 vars que estão presentes
           const otherPriceVarErrors = result.error.issues.filter(
             (i) =>
-              ALL_PRICE_ID_VARS.includes(i.path[0] as (typeof ALL_PRICE_ID_VARS)[number]) &&
-              i.path[0] !== missingVar,
+              ALL_PRICE_ID_VARS.includes(
+                i.path[0] as (typeof ALL_PRICE_ID_VARS)[number],
+              ) && i.path[0] !== missingVar,
           )
           expect(otherPriceVarErrors.length).toBe(0)
         }
@@ -460,7 +483,10 @@ describe('env.ts validation (Cards 1.9 + 1.10)', () => {
     })
 
     it('deve reportar mensagem de erro contendo o nome da var ausente', () => {
-      const env = { ...validProdEnv, STRIPE_PRO_MONTHLY_EUR_PRICE_ID: undefined }
+      const env = {
+        ...validProdEnv,
+        STRIPE_PRO_MONTHLY_EUR_PRICE_ID: undefined,
+      }
       const result = schema.safeParse(env)
 
       expect(result.success).toBe(false)

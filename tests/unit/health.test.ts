@@ -42,11 +42,32 @@
  *
  * @owner: @tester
  */
-import { describe, it, expect, vi, beforeEach, afterEach, beforeAll } from 'vitest'
+import {
+  describe,
+  it,
+  expect,
+  vi,
+  beforeEach,
+  afterEach,
+  beforeAll,
+} from 'vitest'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import fastify from 'fastify'
-import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod'
+import {
+  serializerCompiler,
+  validatorCompiler,
+} from 'fastify-type-provider-zod'
+
+// Imports DEPOIS dos mocks
+import { checkDb } from '../../src/lib/health/check-db'
+import { checkRedis } from '../../src/lib/health/check-redis'
+import {
+  getReadinessSnapshot,
+  setShutdownRequested,
+  _resetHealthCache,
+} from '../../src/lib/health/orchestrator'
+import { TIMEOUTS, CACHE_TTL_MS } from '../../src/lib/health/types'
 
 // --- Mocks (hoisted via vi.hoisted) ---
 const { envMock, prismaMock, redisRefHolder } = vi.hoisted(() => ({
@@ -79,16 +100,6 @@ vi.mock('../../src/config/redis', () => ({
     return redisRefHolder.current
   },
 }))
-
-// Imports DEPOIS dos mocks
-import { checkDb } from '../../src/lib/health/check-db'
-import { checkRedis } from '../../src/lib/health/check-redis'
-import {
-  getReadinessSnapshot,
-  setShutdownRequested,
-  _resetHealthCache,
-} from '../../src/lib/health/orchestrator'
-import { TIMEOUTS, CACHE_TTL_MS } from '../../src/lib/health/types'
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -193,7 +204,9 @@ describe('checkRedis', () => {
 
   it('NÃO vaza message do erro original (anti-leak)', async () => {
     redisRefHolder.current = {
-      ping: vi.fn().mockRejectedValue(new Error('Auth failed: token=AaBbCc12345')),
+      ping: vi
+        .fn()
+        .mockRejectedValue(new Error('Auth failed: token=AaBbCc12345')),
     }
     const result = await checkRedis()
     expect(JSON.stringify(result)).not.toContain('AaBbCc12345')
@@ -275,7 +288,9 @@ describe('orchestrator (getReadinessSnapshot)', () => {
   })
 
   it('agrega status=degraded quando redis down', async () => {
-    redisRefHolder.current = { ping: vi.fn().mockRejectedValue(new Error('boom')) }
+    redisRefHolder.current = {
+      ping: vi.fn().mockRejectedValue(new Error('boom')),
+    }
     const snap = await getReadinessSnapshot()
     expect(snap.status).toBe('degraded')
     expect(snap.checks.redis.status).toBe('down')
@@ -467,7 +482,10 @@ describe('health.routes.ts (source-based wiring)', () => {
   let routesSource: string
 
   beforeAll(() => {
-    routesSource = readFileSync(resolve('src/http/routes/health.routes.ts'), 'utf-8')
+    routesSource = readFileSync(
+      resolve('src/http/routes/health.routes.ts'),
+      'utf-8',
+    )
   })
 
   it('declara as 3 rotas: /live, /ready, /', () => {
@@ -477,13 +495,17 @@ describe('health.routes.ts (source-based wiring)', () => {
   })
 
   it('/live NÃO declara preHandler de rate limit', () => {
-    const liveBlock = routesSource.match(/server\.get\(['"]\/live['"][\s\S]*?server\.get/)
+    const liveBlock = routesSource.match(
+      /server\.get\(['"]\/live['"][\s\S]*?server\.get/,
+    )
     expect(liveBlock).not.toBeNull()
     expect(liveBlock![0]).not.toContain('rateLimitMiddleware')
   })
 
   it('/ready usa rateLimitMiddleware.health no preHandler', () => {
-    const readyBlock = routesSource.match(/server\.get\(['"]\/ready['"][\s\S]*?server\.get/)
+    const readyBlock = routesSource.match(
+      /server\.get\(['"]\/ready['"][\s\S]*?server\.get/,
+    )
     expect(readyBlock).not.toBeNull()
     expect(readyBlock![0]).toContain('rateLimitMiddleware.health')
   })
@@ -521,7 +543,9 @@ describe('health.routes.ts (source-based wiring)', () => {
   })
 
   it('/health/ retorna 503 quando degraded (mesmo critério do /ready)', () => {
-    const occurrences = routesSource.match(/snapshot\.status === 'ok' \? 200 : 503/g)
+    const occurrences = routesSource.match(
+      /snapshot\.status === 'ok' \? 200 : 503/g,
+    )
     expect(occurrences).not.toBeNull()
     expect(occurrences!.length).toBe(2)
   })
@@ -584,7 +608,11 @@ const okSnapshot = {
 const degradedSnapshot = {
   status: 'degraded' as const,
   checks: {
-    db: { status: 'down' as const, latencyMs: 1001, code: 'DB_TIMEOUT' as const },
+    db: {
+      status: 'down' as const,
+      latencyMs: 1001,
+      code: 'DB_TIMEOUT' as const,
+    },
     redis: { status: 'up' as const, latencyMs: 3 },
   },
   generatedAt: new Date().toISOString(),
@@ -672,7 +700,10 @@ describe('health.routes.ts (fastify.inject — execução real dos handlers)', (
       const appWithLogger = fastify({
         logger: {
           level: 'warn',
-          transport: { target: 'pino/file', options: { destination: '/dev/null' } },
+          transport: {
+            target: 'pino/file',
+            options: { destination: '/dev/null' },
+          },
         },
       })
       appWithLogger.setValidatorCompiler(validatorCompiler)
@@ -683,7 +714,8 @@ describe('health.routes.ts (fastify.inject — execução real dos handlers)', (
         request.log.warn = warnSpy
       })
 
-      const { healthRoutes } = await import('../../src/http/routes/health.routes')
+      const { healthRoutes } =
+        await import('../../src/http/routes/health.routes')
       await appWithLogger.register(healthRoutes, { prefix: '/health' })
       await appWithLogger.ready()
 
@@ -711,7 +743,9 @@ describe('health.routes.ts (fastify.inject — execução real dos handlers)', (
     it('retorna 200 com uptimeSeconds quando status=ok (sem version)', async () => {
       const res = await app.inject({ method: 'GET', url: '/health/' })
       expect(res.statusCode).toBe(200)
-      const body = res.json<{ data: { uptimeSeconds: number; status: string } }>()
+      const body = res.json<{
+        data: { uptimeSeconds: number; status: string }
+      }>()
       expect(body.data.status).toBe('ok')
       expect(typeof body.data.uptimeSeconds).toBe('number')
       // version removido por segurança (@security finding a7f3c2e1b9d4)
@@ -729,7 +763,9 @@ describe('health.routes.ts (fastify.inject — execução real dos handlers)', (
       snapshotMock.getReadinessSnapshot.mockResolvedValue(degradedSnapshot)
       const res = await app.inject({ method: 'GET', url: '/health/' })
       expect(res.statusCode).toBe(503)
-      const body = res.json<{ data: { status: string; uptimeSeconds: number } }>()
+      const body = res.json<{
+        data: { status: string; uptimeSeconds: number }
+      }>()
       expect(body.data.status).toBe('degraded')
       expect(typeof body.data.uptimeSeconds).toBe('number')
     })

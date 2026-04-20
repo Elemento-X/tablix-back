@@ -8,7 +8,20 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import jwt from 'jsonwebtoken'
-import { testEnv, TEST_JWT_FAKE_KEY } from '../helpers/env-stub'
+import { TEST_JWT_FAKE_KEY } from '../helpers/env-stub'
+
+// Import AFTER mock
+import {
+  generateAccessToken,
+  verifyAccessToken,
+  verifyAccessTokenOrThrow,
+  generateRefreshToken,
+  hashRefreshToken,
+  decodeJwt,
+  extractBearerToken,
+  getRefreshTokenExpiresAt,
+} from '../../src/lib/jwt'
+import { AppError } from '../../src/errors/app-error'
 
 // Mock env BEFORE importing jwt module
 vi.mock('../../src/config/env', () => ({
@@ -26,19 +39,6 @@ vi.mock('../../src/config/env', () => ({
     },
   },
 }))
-
-// Import AFTER mock
-import {
-  generateAccessToken,
-  verifyAccessToken,
-  verifyAccessTokenOrThrow,
-  generateRefreshToken,
-  hashRefreshToken,
-  decodeJwt,
-  extractBearerToken,
-  getRefreshTokenExpiresAt,
-} from '../../src/lib/jwt'
-import { AppError } from '../../src/errors/app-error'
 
 const VALID_PAYLOAD = {
   sub: 'session-id-123',
@@ -69,7 +69,9 @@ describe('jwt.ts', () => {
       expect(token.split('.')).toHaveLength(3)
 
       // Decode header to verify algorithm
-      const header = JSON.parse(Buffer.from(token.split('.')[0], 'base64url').toString())
+      const header = JSON.parse(
+        Buffer.from(token.split('.')[0], 'base64url').toString(),
+      )
       expect(header.alg).toBe('HS256')
       expect(header.typ).toBe('JWT')
     })
@@ -145,9 +147,13 @@ describe('jwt.ts', () => {
     })
 
     it('deve retornar error:invalid para token com assinatura errada', () => {
-      const forgedToken = jwt.sign(VALID_PAYLOAD, 'wrong-key-that-is-long-enough-32chars!!', {
-        algorithm: 'HS256',
-      })
+      const forgedToken = jwt.sign(
+        VALID_PAYLOAD,
+        'wrong-key-that-is-long-enough-32chars!!',
+        {
+          algorithm: 'HS256',
+        },
+      )
 
       const result = verifyAccessToken(forgedToken)
 
@@ -159,8 +165,12 @@ describe('jwt.ts', () => {
 
     it('deve rejeitar token com algorithm none (alg:none attack)', () => {
       // Craft a token with alg: none manually
-      const header = Buffer.from(JSON.stringify({ alg: 'none', typ: 'JWT' })).toString('base64url')
-      const payload = Buffer.from(JSON.stringify(VALID_PAYLOAD)).toString('base64url')
+      const header = Buffer.from(
+        JSON.stringify({ alg: 'none', typ: 'JWT' }),
+      ).toString('base64url')
+      const payload = Buffer.from(JSON.stringify(VALID_PAYLOAD)).toString(
+        'base64url',
+      )
       const algNoneToken = `${header}.${payload}.`
 
       const result = verifyAccessToken(algNoneToken)
@@ -259,8 +269,12 @@ describe('jwt.ts', () => {
     })
 
     it('deve lancar AppError INVALID_TOKEN para alg:none', () => {
-      const header = Buffer.from(JSON.stringify({ alg: 'none', typ: 'JWT' })).toString('base64url')
-      const payload = Buffer.from(JSON.stringify(VALID_PAYLOAD)).toString('base64url')
+      const header = Buffer.from(
+        JSON.stringify({ alg: 'none', typ: 'JWT' }),
+      ).toString('base64url')
+      const payload = Buffer.from(JSON.stringify(VALID_PAYLOAD)).toString(
+        'base64url',
+      )
       const algNoneToken = `${header}.${payload}.`
 
       expect(() => verifyAccessTokenOrThrow(algNoneToken)).toThrow(AppError)
@@ -369,9 +383,13 @@ describe('jwt.ts', () => {
     })
 
     it('deve decodificar token com assinatura errada (decode nao verifica)', () => {
-      const forgedToken = jwt.sign(VALID_PAYLOAD, 'completely-different-key-at-least-32-chars', {
-        algorithm: 'HS256',
-      })
+      const forgedToken = jwt.sign(
+        VALID_PAYLOAD,
+        'completely-different-key-at-least-32-chars',
+        {
+          algorithm: 'HS256',
+        },
+      )
       const decoded = decodeJwt(forgedToken)
 
       expect(decoded).not.toBeNull()
@@ -417,7 +435,8 @@ describe('jwt.ts', () => {
     })
 
     it('deve preservar token longo com caracteres especiais', () => {
-      const longToken = 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.abc-_123'
+      const longToken =
+        'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.abc-_123'
       const result = extractBearerToken(`Bearer ${longToken}`)
 
       expect(result).toBe(longToken)

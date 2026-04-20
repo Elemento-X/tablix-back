@@ -31,7 +31,12 @@ describe('app-error.ts', () => {
 
     it('deve incluir details quando fornecido', () => {
       const details = { field: 'email', reason: 'duplicated' }
-      const err = new AppError(ErrorCodes.VALIDATION_ERROR, 'Erro de validacao', 400, details)
+      const err = new AppError(
+        ErrorCodes.VALIDATION_ERROR,
+        'Erro de validacao',
+        400,
+        details,
+      )
 
       expect(err.details).toEqual(details)
     })
@@ -51,7 +56,11 @@ describe('app-error.ts', () => {
 
     describe('toJSON', () => {
       it('deve serializar com envelope error contendo code e message', () => {
-        const err = new AppError(ErrorCodes.NOT_FOUND, 'Recurso nao encontrado', 404)
+        const err = new AppError(
+          ErrorCodes.NOT_FOUND,
+          'Recurso nao encontrado',
+          404,
+        )
         const json = err.toJSON()
 
         expect(json).toEqual({
@@ -63,10 +72,15 @@ describe('app-error.ts', () => {
       })
 
       it('deve incluir details no JSON quando presente', () => {
-        const err = new AppError(ErrorCodes.LIMIT_EXCEEDED, 'Limite excedido', 400, {
-          limit: '5',
-          actual: '6',
-        })
+        const err = new AppError(
+          ErrorCodes.LIMIT_EXCEEDED,
+          'Limite excedido',
+          400,
+          {
+            limit: '5',
+            actual: '6',
+          },
+        )
         const json = err.toJSON()
 
         expect(json.error.details).toEqual({ limit: '5', actual: '6' })
@@ -286,7 +300,10 @@ describe('app-error.ts', () => {
       const json = err.toJSON()
 
       expect(json.error.code).toBe('CURRENCY_UNAVAILABLE')
-      expect(json.error.details).toEqual({ currency: 'BRL', interval: 'yearly' })
+      expect(json.error.details).toEqual({
+        currency: 'BRL',
+        interval: 'yearly',
+      })
     })
 
     it('nao deve expor stack trace no toJSON', () => {

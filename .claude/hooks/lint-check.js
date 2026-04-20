@@ -23,7 +23,9 @@ parseInput().then(({ filePath }) => {
   } catch (err) {
     const output = (err.stdout || '').trim()
     if (output) {
-      process.stderr.write(`Lint errors em ${filePath}:\n${output}\n\nCorrija antes de continuar.`)
+      process.stderr.write(
+        `Lint errors em ${filePath}:\n${output}\n\nCorrija antes de continuar.`,
+      )
       process.exit(2)
     }
   }

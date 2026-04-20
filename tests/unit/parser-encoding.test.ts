@@ -16,7 +16,10 @@
  * @owner: @tester
  */
 import { describe, it, expect } from 'vitest'
-import { decodeTextBuffer, parseSpreadsheet } from '../../src/lib/spreadsheet/parser'
+import {
+  decodeTextBuffer,
+  parseSpreadsheet,
+} from '../../src/lib/spreadsheet/parser'
 
 // Helper: monta buffer a partir de hex bytes (clareza nos testes)
 function hex(...bytes: number[]): Buffer {
@@ -141,13 +144,35 @@ describe('decodeTextBuffer — Card 1.14', () => {
   describe('UTF-16 com BOM', () => {
     it('UTF-16 LE (BOM FF FE) decodifica corretamente', () => {
       // "Nome" em UTF-16 LE: FF FE 4E 00 6F 00 6D 00 65 00
-      const buf = hex(0xff, 0xfe, 0x4e, 0x00, 0x6f, 0x00, 0x6d, 0x00, 0x65, 0x00)
+      const buf = hex(
+        0xff,
+        0xfe,
+        0x4e,
+        0x00,
+        0x6f,
+        0x00,
+        0x6d,
+        0x00,
+        0x65,
+        0x00,
+      )
       expect(decodeTextBuffer(buf)).toBe('Nome')
     })
 
     it('UTF-16 BE (BOM FE FF) decodifica corretamente', () => {
       // "Nome" em UTF-16 BE: FE FF 00 4E 00 6F 00 6D 00 65
-      const buf = hex(0xfe, 0xff, 0x00, 0x4e, 0x00, 0x6f, 0x00, 0x6d, 0x00, 0x65)
+      const buf = hex(
+        0xfe,
+        0xff,
+        0x00,
+        0x4e,
+        0x00,
+        0x6f,
+        0x00,
+        0x6d,
+        0x00,
+        0x65,
+      )
       expect(decodeTextBuffer(buf)).toBe('Nome')
     })
 
