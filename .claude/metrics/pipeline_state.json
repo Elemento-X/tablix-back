@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "updated_at": "2026-04-20T17:45:00Z",
+  "updated_at": "2026-04-20T19:20:00Z",
   "current": {
     "status": "idle",
     "card_id": null,
@@ -17,7 +17,7 @@
     "decision": "APPROVED_FAST_PATH",
     "cycles": 1,
     "done_at": "2026-04-20T17:45:00Z",
-    "commit": null,
+    "commit": "5f6df3a",
     "lead_time_hours": 1.75,
     "mttr_hours": null,
     "cost_usd": 0,
@@ -31,13 +31,19 @@
         "phase": "Fase 1 — Segurança & Hardening",
         "period": "2026-04-09 → 2026-04-19",
         "cards_delivered": 14,
-        "hist_card": "Cce9ClE8"
+        "hist_card": "Cce9ClE8",
+        "status": "CLOSED_WITH_OPEN_DEBT",
+        "debt_list_id": "69e6761d693aef53496559b2",
+        "debt_cards": 3
       },
       {
         "phase": "Fase 2 — Observabilidade & Auditoria",
         "period": "2026-04-13 → 2026-04-20",
         "cards_delivered": 4,
-        "hist_card": "xVoSXmfy"
+        "hist_card": "xVoSXmfy",
+        "status": "CLOSED_WITH_OPEN_DEBT",
+        "debt_list_id": "69e6761e9b57377f349b5081",
+        "debt_cards": 6
       }
     ],
     "next": {
@@ -50,29 +56,53 @@
         "3.4 dunning + retry logic",
         "3.5 customer portal"
       ]
-    }
+    },
+    "new_debt_phases_created_2026-04-20": [
+      {
+        "phase": "Fase 11 — Cleanup técnico",
+        "list_id": "69e6761ecd18f2c64020cfa1",
+        "cards": 3,
+        "purpose": "findings BAIXO de pipeline-discovery sem fase natural (instrument.ts, scrubString, Sentry frames.vars)"
+      },
+      {
+        "phase": "Fase 12 — Docs & revisão final",
+        "list_id": "69e6761e0f0f087f0f51c842",
+        "cards": 2,
+        "purpose": "wontfix documentados + doc drift de schema"
+      }
+    ]
   },
   "active_waivers": [
     {
-      "id": "WV-2026-001",
-      "subject": "Webhook replay protection",
-      "expires": "2026-07-10"
-    },
-    {
       "id": "WV-2026-002",
       "subject": "Quota TOCTOU (INCR+EXPIRE race)",
-      "expires": "2026-07-10"
+      "expires": "2026-07-10",
+      "follow_up_card": "EAwV6A7O (#68)",
+      "follow_up_due": "2026-06-30"
     },
     {
       "id": "WV-2026-003",
       "subject": "XLSX ReDoS catastrophic",
-      "expires": "2026-07-10"
+      "expires": "2026-07-10",
+      "follow_up_card": "jqusnIPj (#69)",
+      "follow_up_due": "2026-06-30"
     },
     {
       "id": "WV-2026-004",
       "subject": "Multi-currency price arbitrage (F-HIGH-01) — Card 8.7 Fase 8",
-      "expires": "2026-05-15"
+      "expires": "2026-05-15",
+      "follow_up_card": "ufMAjDlV (8.7)",
+      "follow_up_due": "2026-05-15"
     }
   ],
-  "notes": "Snapshot atualizado em 2026-04-20T17:45 após fast-path do patch F-HIGH-02 (cap global anti denial-of-wallet em /billing/create-checkout). Waiver WV-2026-004 ativo até 2026-05-15 cobrindo F-HIGH-01 (price arbitrage) cuja correção foi movida para Card 8.7 na Fase 8 (geo-lock via Cloudflare)."
+  "closed_waivers": [
+    {
+      "id": "WV-2026-001",
+      "subject": "Webhook replay protection",
+      "closed_at": "2026-04-20T18:00:00Z",
+      "closed_reason": "resolved_upstream",
+      "evidence": "registerStripeEvent() + StripeEvent model unique + Stripe SDK tolerance 300s já presentes antes do waiver"
+    }
+  ],
+  "notes": "Snapshot atualizado em 2026-04-20T19:20 após consolidação em 7 blocos do Trello (pós-Fase 2). Bloco 1: WV-2026-001 fechado como resolved_upstream + card #67 arquivado. Bloco 2: [HIST] Fase 1/2 receberam checklists nativos + dueComplete + descrições 'ENCERRADA COM DÉBITO ABERTO'. Bloco 3: criadas Fase 11 (Cleanup) + Fase 12 (Docs) + listas 'Débito' para Fase 1/2 + 3 labels novos (fase-1-debt, fase-2-debt, waiver-deadline-alert). Bloco 4: 25 cards realocados do Backlog para fases de destino. Bloco 5: kill criteria (due + label waiver-deadline-alert) em #68/#69 (2026-06-30) e #74 (2026-05-05). Bloco 6: renames de 4 cards desalinhados (1.21→3.4, 10.X→10.3, 2.5→10.4, 1.19→10.5). Backlog agora mantém apenas cards não-priorizados ou aguardando decisão."
 }
