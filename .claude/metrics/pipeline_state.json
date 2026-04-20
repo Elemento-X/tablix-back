@@ -1,0 +1,78 @@
+{
+  "schema_version": 1,
+  "updated_at": "2026-04-20T17:45:00Z",
+  "current": {
+    "status": "idle",
+    "card_id": null,
+    "card_title": null,
+    "phase": null,
+    "stage": null,
+    "agents_running": [],
+    "started_at": null
+  },
+  "last_completed": {
+    "card_id": "69e664d3e78db75e8b137f46",
+    "card_title": "Patch — F-HIGH-02: cap global anti denial-of-wallet em /billing/create-checkout",
+    "phase": "Fase 2 (post-2.4 patch)",
+    "decision": "APPROVED_FAST_PATH",
+    "cycles": 1,
+    "done_at": "2026-04-20T17:45:00Z",
+    "commit": null,
+    "lead_time_hours": 1.75,
+    "mttr_hours": null,
+    "cost_usd": 0,
+    "fast_path": true,
+    "waivers_applied": ["WV-2026-004"],
+    "cards_discovered": 1
+  },
+  "phases": {
+    "completed": [
+      {
+        "phase": "Fase 1 — Segurança & Hardening",
+        "period": "2026-04-09 → 2026-04-19",
+        "cards_delivered": 14,
+        "hist_card": "Cce9ClE8"
+      },
+      {
+        "phase": "Fase 2 — Observabilidade & Auditoria",
+        "period": "2026-04-13 → 2026-04-20",
+        "cards_delivered": 4,
+        "hist_card": "xVoSXmfy"
+      }
+    ],
+    "next": {
+      "phase": "Fase 3 — Billing & Subscriptions (Stripe)",
+      "planned_start": "2026-04-21",
+      "cards_planned": [
+        "3.1 setup Stripe client",
+        "3.2 webhook outbound — eventos de billing",
+        "3.3 subscription state machine",
+        "3.4 dunning + retry logic",
+        "3.5 customer portal"
+      ]
+    }
+  },
+  "active_waivers": [
+    {
+      "id": "WV-2026-001",
+      "subject": "Webhook replay protection",
+      "expires": "2026-07-10"
+    },
+    {
+      "id": "WV-2026-002",
+      "subject": "Quota TOCTOU (INCR+EXPIRE race)",
+      "expires": "2026-07-10"
+    },
+    {
+      "id": "WV-2026-003",
+      "subject": "XLSX ReDoS catastrophic",
+      "expires": "2026-07-10"
+    },
+    {
+      "id": "WV-2026-004",
+      "subject": "Multi-currency price arbitrage (F-HIGH-01) — Card 8.7 Fase 8",
+      "expires": "2026-05-15"
+    }
+  ],
+  "notes": "Snapshot atualizado em 2026-04-20T17:45 após fast-path do patch F-HIGH-02 (cap global anti denial-of-wallet em /billing/create-checkout). Waiver WV-2026-004 ativo até 2026-05-15 cobrindo F-HIGH-01 (price arbitrage) cuja correção foi movida para Card 8.7 na Fase 8 (geo-lock via Cloudflare)."
+}

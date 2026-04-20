@@ -71,12 +71,61 @@ export function createRateLimitMiddleware(type: RateLimiterType) {
   }
 }
 
+/**
+ * Factory para middleware de rate limit com identifier FIXO ('global:all') —
+ * soma todas as requisições do endpoint independente de IP/usuário.
+ *
+ * Uso: barreira anti denial-of-wallet em rotas que disparam chamada externa
+ * paga (Stripe, Resend, provider de email). O limiter per-IP (5/min) sozinho
+ * permite 1000 IPs × 5 req = 5000 chamadas Stripe/minuto — custo real na
+ * fatura. Este cap global é o teto absoluto do endpoint.
+ *
+ * Ordem de aplicação (em `preHandler: [...]`):
+ *   1. cap global primeiro — se estourou, nem consulta Redis per-IP
+ *   2. limiter per-IP depois — este sim seta X-RateLimit-* (info do bucket
+ *      do cliente, não do cap global que não é contrato com ele)
+ *
+ * Headers:
+ *   - NÃO seta X-RateLimit-Limit/Remaining/Reset (o middleware per-IP é dono).
+ *   - Seta Retry-After em caso de block — dá dica de quanto esperar.
+ */
+export function createGlobalCapMiddleware(type: RateLimiterType) {
+  return async (request: FastifyRequest, reply: FastifyReply) => {
+    if (!isRateLimitEnabled()) {
+      return
+    }
+
+    const limiter = rateLimiters[type]
+    if (!limiter) {
+      return
+    }
+
+    const { success, reset } = await limiter.limit('global:all')
+
+    if (!success) {
+      const retryAfter = Math.ceil((reset - Date.now()) / 1000)
+      reply.header('Retry-After', retryAfter)
+      request.log.warn(
+        {
+          url: request.url,
+          method: request.method,
+          limiter: type,
+          retryAfter,
+        },
+        '[rate-limit] global cap atingido — denial-of-wallet guard',
+      )
+      throw Errors.rateLimited()
+    }
+  }
+}
+
 export const rateLimitMiddleware = {
   global: createRateLimitMiddleware('global'),
   validateToken: createRateLimitMiddleware('validateToken'),
   authRefresh: createRateLimitMiddleware('authRefresh'),
   authMe: createRateLimitMiddleware('authMe'),
   checkout: createRateLimitMiddleware('checkout'),
+  checkoutGlobalCap: createGlobalCapMiddleware('checkoutGlobalCap'),
   billing: createRateLimitMiddleware('billing'),
   process: createRateLimitMiddleware('process'),
   health: createRateLimitMiddleware('health'),

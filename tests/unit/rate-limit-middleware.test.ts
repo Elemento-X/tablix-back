@@ -21,6 +21,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 
 import {
   createRateLimitMiddleware,
+  createGlobalCapMiddleware,
   rateLimitMiddleware,
 } from '../../src/middleware/rate-limit.middleware'
 import { AppError, ErrorCodes } from '../../src/errors/app-error'
@@ -37,6 +38,7 @@ const { mockIsRateLimitEnabled, mockRateLimiters } = vi.hoisted(() => {
     authRefresh: mockLimiter,
     authMe: mockLimiter,
     checkout: mockLimiter,
+    checkoutGlobalCap: mockLimiter,
     billing: mockLimiter,
     process: mockLimiter,
   } as const
@@ -55,7 +57,9 @@ vi.mock('../../src/config/rate-limit', () => ({
 // Helpers
 // ---------------------------------------------------------------------------
 
-type DeepPartial<T> = T extends object ? { [P in keyof T]?: DeepPartial<T[P]> } : T
+type DeepPartial<T> = T extends object
+  ? { [P in keyof T]?: DeepPartial<T[P]> }
+  : T
 
 function makeRequest(
   overrides: DeepPartial<{
@@ -101,6 +105,7 @@ describe('rateLimitMiddleware — export shape', () => {
     'authRefresh',
     'authMe',
     'checkout',
+    'checkoutGlobalCap', // F-HIGH-02 — anti denial-of-wallet em /billing/create-checkout
     'billing',
     'process',
     'health', // Card 2.3 — health check rate limiter (/health/ready, /health/)
@@ -240,7 +245,10 @@ describe('createRateLimitMiddleware — success (rate limit não atingido)', () 
     await mw(makeRequest(), reply)
 
     // @upstash/ratelimit retorna reset em ms; middleware converte para seconds
-    expect(reply.header).toHaveBeenCalledWith('X-RateLimit-Reset', Math.ceil((NOW + 60_000) / 1000))
+    expect(reply.header).toHaveBeenCalledWith(
+      'X-RateLimit-Reset',
+      Math.ceil((NOW + 60_000) / 1000),
+    )
   })
 
   it('deve resolver sem erro quando success=true', async () => {
@@ -369,7 +377,9 @@ describe('createRateLimitMiddleware — resolução de identifier', () => {
 
     await mw(request, makeReply())
 
-    expect((mockRateLimiters as any).checkout.limit).toHaveBeenCalledWith('user:usr_abc123')
+    expect((mockRateLimiters as any).checkout.limit).toHaveBeenCalledWith(
+      'user:usr_abc123',
+    )
   })
 
   it('deve usar ip:request.ip quando sem usuario (Fastify resolve XFF via trustProxy)', async () => {
@@ -378,7 +388,9 @@ describe('createRateLimitMiddleware — resolução de identifier', () => {
 
     await mw(request, makeReply())
 
-    expect((mockRateLimiters as any).checkout.limit).toHaveBeenCalledWith('ip:192.168.1.1')
+    expect((mockRateLimiters as any).checkout.limit).toHaveBeenCalledWith(
+      'ip:192.168.1.1',
+    )
   })
 
   it('deve lançar IP_UNRESOLVABLE (400) quando request.ip ausente (fail-closed)', async () => {
@@ -405,7 +417,9 @@ describe('createRateLimitMiddleware — resolução de identifier', () => {
 
     await mw(request, makeReply())
 
-    expect((mockRateLimiters as any).checkout.limit).toHaveBeenCalledWith('user:usr_priority')
+    expect((mockRateLimiters as any).checkout.limit).toHaveBeenCalledWith(
+      'user:usr_priority',
+    )
   })
 
   // =========================================================================
@@ -429,7 +443,9 @@ describe('createRateLimitMiddleware — resolução de identifier', () => {
     await expect(mw(request, makeReply())).rejects.toMatchObject({
       code: ErrorCodes.IP_UNRESOLVABLE,
     })
-    expect((mockRateLimiters as any).checkout.limit).not.toHaveBeenCalledWith('ip:1.2.3.4')
+    expect((mockRateLimiters as any).checkout.limit).not.toHaveBeenCalledWith(
+      'ip:1.2.3.4',
+    )
     expect((mockRateLimiters as any).checkout.limit).not.toHaveBeenCalled()
   })
 
@@ -443,7 +459,9 @@ describe('createRateLimitMiddleware — resolução de identifier', () => {
     await expect(mw(request, makeReply())).rejects.toMatchObject({
       code: ErrorCodes.IP_UNRESOLVABLE,
     })
-    expect((mockRateLimiters as any).checkout.limit).not.toHaveBeenCalledWith('ip:1.2.3.4')
+    expect((mockRateLimiters as any).checkout.limit).not.toHaveBeenCalledWith(
+      'ip:1.2.3.4',
+    )
   })
 
   it('Card 1.12: ignora cf-connecting-ip cru (Cloudflare header spoofável sem trustProxy)', async () => {
@@ -456,7 +474,9 @@ describe('createRateLimitMiddleware — resolução de identifier', () => {
     await expect(mw(request, makeReply())).rejects.toMatchObject({
       code: ErrorCodes.IP_UNRESOLVABLE,
     })
-    expect((mockRateLimiters as any).checkout.limit).not.toHaveBeenCalledWith('ip:1.2.3.4')
+    expect((mockRateLimiters as any).checkout.limit).not.toHaveBeenCalledWith(
+      'ip:1.2.3.4',
+    )
   })
 
   it('Card 1.12: ignora true-client-ip, forwarded, via — só confia em request.ip', async () => {
@@ -473,7 +493,9 @@ describe('createRateLimitMiddleware — resolução de identifier', () => {
     await mw(request, makeReply())
 
     // Qualquer que seja o header bruto, a resposta é sempre request.ip.
-    expect((mockRateLimiters as any).checkout.limit).toHaveBeenCalledWith('ip:203.0.113.50')
+    expect((mockRateLimiters as any).checkout.limit).toHaveBeenCalledWith(
+      'ip:203.0.113.50',
+    )
   })
 
   it('user autenticado NÃO é afetado por ip ausente (fail-closed é só pro branch de IP)', async () => {
@@ -488,7 +510,9 @@ describe('createRateLimitMiddleware — resolução de identifier', () => {
     })
 
     await expect(mw(request, makeReply())).resolves.toBeUndefined()
-    expect((mockRateLimiters as any).checkout.limit).toHaveBeenCalledWith('user:usr_no_ip')
+    expect((mockRateLimiters as any).checkout.limit).toHaveBeenCalledWith(
+      'user:usr_no_ip',
+    )
   })
 
   it('Card 1.12: ip=undefined também dispara fail-closed (não cai em bucket compartilhado)', async () => {
@@ -517,7 +541,253 @@ describe('createRateLimitMiddleware — resolução de identifier', () => {
 
     await mw(request, makeReply())
 
-    expect((mockRateLimiters as any).checkout.limit).toHaveBeenCalledWith('ip:203.0.113.99')
-    expect((mockRateLimiters as any).checkout.limit).not.toHaveBeenCalledWith('ip:1.2.3.4')
+    expect((mockRateLimiters as any).checkout.limit).toHaveBeenCalledWith(
+      'ip:203.0.113.99',
+    )
+    expect((mockRateLimiters as any).checkout.limit).not.toHaveBeenCalledWith(
+      'ip:1.2.3.4',
+    )
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 8. F-HIGH-02 — createGlobalCapMiddleware (anti denial-of-wallet)
+// ---------------------------------------------------------------------------
+// Cap agregado do endpoint: soma TODAS as requisições independente de IP/user.
+// Identifier fixo 'global:all'. Não seta X-RateLimit-* (middleware per-IP
+// downstream é dono desses headers). Seta Retry-After em caso de block.
+
+describe('createGlobalCapMiddleware — F-HIGH-02', () => {
+  describe('factory e fail-open', () => {
+    it('deve retornar uma função async', () => {
+      const mw = createGlobalCapMiddleware('checkoutGlobalCap')
+      expect(typeof mw).toBe('function')
+    })
+
+    it('deve retornar sem chamar limiter quando rate limit desabilitado', async () => {
+      mockIsRateLimitEnabled.mockReturnValue(false)
+      ;(mockRateLimiters as any).checkoutGlobalCap = { limit: vi.fn() }
+
+      const mw = createGlobalCapMiddleware('checkoutGlobalCap')
+      await mw(makeRequest(), makeReply())
+
+      expect(
+        (mockRateLimiters as any).checkoutGlobalCap.limit,
+      ).not.toHaveBeenCalled()
+    })
+
+    it('deve retornar sem lançar quando limiter é null', async () => {
+      mockIsRateLimitEnabled.mockReturnValue(true)
+      ;(mockRateLimiters as any).checkoutGlobalCap = null
+
+      const mw = createGlobalCapMiddleware('checkoutGlobalCap')
+      await expect(mw(makeRequest(), makeReply())).resolves.toBeUndefined()
+
+      // Restore
+      ;(mockRateLimiters as any).checkoutGlobalCap = { limit: vi.fn() }
+    })
+  })
+
+  describe('identifier fixo — não depende de user/IP/headers', () => {
+    const NOW = 1_700_000_000_000
+
+    beforeEach(() => {
+      vi.useFakeTimers()
+      vi.setSystemTime(NOW)
+      mockIsRateLimitEnabled.mockReturnValue(true)
+      ;(mockRateLimiters as any).checkoutGlobalCap = {
+        limit: vi.fn().mockResolvedValue({
+          success: true,
+          limit: 30,
+          remaining: 29,
+          reset: NOW + 60_000,
+        }),
+      }
+    })
+
+    afterEach(() => {
+      vi.useRealTimers()
+    })
+
+    it('deve chamar limiter com identifier fixo "global:all"', async () => {
+      const mw = createGlobalCapMiddleware('checkoutGlobalCap')
+      await mw(makeRequest({ user: { userId: 'usr_a' } }), makeReply())
+
+      expect(
+        (mockRateLimiters as any).checkoutGlobalCap.limit,
+      ).toHaveBeenCalledWith('global:all')
+    })
+
+    it('identifier "global:all" independe de usuário autenticado', async () => {
+      const mw = createGlobalCapMiddleware('checkoutGlobalCap')
+      await mw(makeRequest({ user: { userId: 'usr_xyz' } }), makeReply())
+
+      expect(
+        (mockRateLimiters as any).checkoutGlobalCap.limit,
+      ).not.toHaveBeenCalledWith('user:usr_xyz')
+      expect(
+        (mockRateLimiters as any).checkoutGlobalCap.limit,
+      ).toHaveBeenCalledWith('global:all')
+    })
+
+    it('identifier "global:all" independe de IP', async () => {
+      const mw = createGlobalCapMiddleware('checkoutGlobalCap')
+      await mw(makeRequest({ ip: '10.20.30.40' }), makeReply())
+
+      expect(
+        (mockRateLimiters as any).checkoutGlobalCap.limit,
+      ).not.toHaveBeenCalledWith('ip:10.20.30.40')
+      expect(
+        (mockRateLimiters as any).checkoutGlobalCap.limit,
+      ).toHaveBeenCalledWith('global:all')
+    })
+
+    it('não lança IP_UNRESOLVABLE mesmo com request.ip ausente (global não depende de IP)', async () => {
+      const mw = createGlobalCapMiddleware('checkoutGlobalCap')
+      const request = makeRequest({ ip: '' })
+
+      await expect(mw(request, makeReply())).resolves.toBeUndefined()
+    })
+  })
+
+  describe('headers — não compete com middleware per-IP', () => {
+    const NOW = 1_700_000_000_000
+
+    beforeEach(() => {
+      vi.useFakeTimers()
+      vi.setSystemTime(NOW)
+      mockIsRateLimitEnabled.mockReturnValue(true)
+      ;(mockRateLimiters as any).checkoutGlobalCap = {
+        limit: vi.fn().mockResolvedValue({
+          success: true,
+          limit: 30,
+          remaining: 29,
+          reset: NOW + 60_000,
+        }),
+      }
+    })
+
+    afterEach(() => {
+      vi.useRealTimers()
+    })
+
+    it('não deve setar X-RateLimit-Limit no success path', async () => {
+      const mw = createGlobalCapMiddleware('checkoutGlobalCap')
+      const reply = makeReply()
+      await mw(makeRequest(), reply)
+
+      const headerNames = reply.header.mock.calls.map(
+        ([name]: [string]) => name,
+      )
+      expect(headerNames).not.toContain('X-RateLimit-Limit')
+      expect(headerNames).not.toContain('X-RateLimit-Remaining')
+      expect(headerNames).not.toContain('X-RateLimit-Reset')
+    })
+
+    it('não deve setar nenhum header no success path', async () => {
+      const mw = createGlobalCapMiddleware('checkoutGlobalCap')
+      const reply = makeReply()
+      await mw(makeRequest(), reply)
+
+      expect(reply.header).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('block path — cap atingido (denial-of-wallet guard)', () => {
+    const NOW = 1_700_000_000_000
+    const RESET = NOW + 42_000
+
+    beforeEach(() => {
+      vi.useFakeTimers()
+      vi.setSystemTime(NOW)
+      mockIsRateLimitEnabled.mockReturnValue(true)
+      ;(mockRateLimiters as any).checkoutGlobalCap = {
+        limit: vi.fn().mockResolvedValue({
+          success: false,
+          limit: 30,
+          remaining: 0,
+          reset: RESET,
+        }),
+      }
+    })
+
+    afterEach(() => {
+      vi.useRealTimers()
+    })
+
+    it('deve lançar AppError RATE_LIMITED (429) quando cap global atingido', async () => {
+      const mw = createGlobalCapMiddleware('checkoutGlobalCap')
+
+      await expect(mw(makeRequest(), makeReply())).rejects.toMatchObject({
+        code: ErrorCodes.RATE_LIMITED,
+        statusCode: 429,
+      })
+    })
+
+    it('deve lançar instância de AppError', async () => {
+      const mw = createGlobalCapMiddleware('checkoutGlobalCap')
+
+      try {
+        await mw(makeRequest(), makeReply())
+        expect.fail('deveria ter lançado')
+      } catch (err) {
+        expect(err).toBeInstanceOf(AppError)
+      }
+    })
+
+    it('deve setar Retry-After em segundos inteiros positivos', async () => {
+      const mw = createGlobalCapMiddleware('checkoutGlobalCap')
+      const reply = makeReply()
+
+      try {
+        await mw(makeRequest(), reply)
+      } catch {
+        // expected
+      }
+
+      const retryAfterCall = reply.header.mock.calls.find(
+        ([name]: [string]) => name === 'Retry-After',
+      )
+      expect(retryAfterCall).toBeDefined()
+      const retryAfterValue = retryAfterCall![1] as number
+      expect(retryAfterValue).toBeGreaterThan(0)
+      expect(Number.isInteger(retryAfterValue)).toBe(true)
+    })
+
+    it('não deve setar X-RateLimit-* no block path (middleware per-IP é dono)', async () => {
+      const mw = createGlobalCapMiddleware('checkoutGlobalCap')
+      const reply = makeReply()
+
+      try {
+        await mw(makeRequest(), reply)
+      } catch {
+        // expected
+      }
+
+      const headerNames = reply.header.mock.calls.map(
+        ([name]: [string]) => name,
+      )
+      expect(headerNames).not.toContain('X-RateLimit-Limit')
+      expect(headerNames).not.toContain('X-RateLimit-Remaining')
+      expect(headerNames).not.toContain('X-RateLimit-Reset')
+    })
+
+    it('deve emitir log.warn com denial-of-wallet guard (observability)', async () => {
+      const mw = createGlobalCapMiddleware('checkoutGlobalCap')
+      const request = makeRequest()
+
+      try {
+        await mw(request, makeReply())
+      } catch {
+        // expected
+      }
+
+      expect(request.log.warn).toHaveBeenCalledTimes(1)
+      const [logPayload, logMessage] = request.log.warn.mock.calls[0]
+      expect(logMessage).toContain('denial-of-wallet')
+      expect(logPayload).toMatchObject({
+        limiter: 'checkoutGlobalCap',
+      })
+    })
   })
 })

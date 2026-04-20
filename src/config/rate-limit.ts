@@ -23,7 +23,10 @@ const createLimiter = (requests: number, window: Duration, prefix: string) => {
  * - validateToken: /auth/validate-token (5 req/min) - anti brute-force
  * - authRefresh: /auth/refresh (10 req/min)
  * - authMe: /auth/me (60 req/min) - frontend pode fazer polling
- * - checkout: /billing/create-checkout (5 req/min) - dispara chamada Stripe, anti denial-of-wallet
+ * - checkout: /billing/create-checkout (5 req/min POR IP/usuário) - anti brute-force
+ * - checkoutGlobalCap: /billing/create-checkout (30 req/min AGREGADO) - anti denial-of-wallet
+ *                     identifier fixo 'global:all'; soma todos os IPs/usuários.
+ *                     Sem esse cap, N IPs × 5 req vira N×5 chamadas à Stripe/minuto.
  * - billing: /billing/* exceto checkout (20 req/min)
  * - process: /process/* (10 req/min) - futuro
  * - health: /health e /health/ready (60/min) - Card 2.3, anti-abuse de probes externos
@@ -35,6 +38,7 @@ export const rateLimiters = {
   authRefresh: createLimiter(10, '1m', 'auth-refresh'),
   authMe: createLimiter(60, '1m', 'auth-me'),
   checkout: createLimiter(5, '1m', 'checkout'),
+  checkoutGlobalCap: createLimiter(30, '1m', 'checkout-global-cap'),
   billing: createLimiter(20, '1m', 'billing'),
   process: createLimiter(10, '1m', 'process'),
   health: createLimiter(60, '1m', 'health'),

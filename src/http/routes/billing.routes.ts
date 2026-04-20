@@ -16,8 +16,14 @@ export async function billingRoutes(app: FastifyInstance) {
   const server = app.withTypeProvider<ZodTypeProvider>()
 
   // POST /billing/create-checkout - Cria sessão de checkout Stripe
+  // Rate limit em 2 camadas (defesa em profundidade):
+  //   1. checkoutGlobalCap (30/min agregado) — anti denial-of-wallet
+  //   2. checkout (5/min por IP/usuário) — anti brute-force individual
   server.post('/create-checkout', {
-    preHandler: rateLimitMiddleware.checkout,
+    preHandler: [
+      rateLimitMiddleware.checkoutGlobalCap,
+      rateLimitMiddleware.checkout,
+    ],
     schema: {
       tags: ['Billing'],
       summary: 'Criar checkout',
