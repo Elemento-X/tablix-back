@@ -1,14 +1,40 @@
 {
   "schema_version": 1,
-  "updated_at": "2026-04-20T19:20:00Z",
+  "updated_at": "2026-04-20T22:00:00Z",
   "current": {
-    "status": "idle",
-    "card_id": null,
-    "card_title": null,
-    "phase": null,
-    "stage": null,
+    "status": "IN_PROGRESS_PAUSED",
+    "card_id": "69d7a8598f9aa68e7ac8d4fa",
+    "card_short_link": "InUJflEf",
+    "card_title": "3.1 (#30) — Scaffold de testes + helpers globais (vitest + supertest)",
+    "phase": "Fase 3 — Testes & Qualidade",
+    "stage": "partial-done-phase-A",
     "agents_running": [],
-    "started_at": null
+    "started_at": "2026-04-20T21:10:00Z",
+    "paused_at": "2026-04-20T22:00:00Z",
+    "pause_reason": "Docker Desktop não instalado — Phase B (Card 3.1b, Testcontainers) bloqueada. User vai instalar Docker e reiniciar a máquina. Pipeline QA formal roda após Card 3.1b fechar.",
+    "phase_a_done": [
+      "tests/helpers/env-stub.ts reescrito (multi-currency + Sentry + health + LOG_LEVEL + makeTestEnv; resolve legacy-vars finding 8.8)",
+      "tests/helpers/prisma-mock.ts reescrito (auditLog + findUniqueOrThrow/findFirstOrThrow/createMany/aggregate/groupBy + $executeRaw/$queryRaw)",
+      "tests/helpers/auth.ts NOVO (signTestJwt/signExpiredTestJwt/signWrongKeyTestJwt/authHeader)",
+      "tests/helpers/mocks.ts NOVO (Stripe+Resend+Upstash Redis+Ratelimit mocks com fixtures)",
+      "tests/helpers/app.ts NOVO (buildTestApp/closeTestApp factory Fastify)",
+      "tests/helpers/prisma.ts STUB (apontando Card 3.1b)",
+      "tests/integration/health-live.integration.test.ts (smoke 3 testes)",
+      "vitest.config.ts expandido (exclude + timeouts 30s/60s)",
+      "package.json scripts (test:unit + test:integration)"
+    ],
+    "phase_b_blocked": {
+      "card": "3.1b (a criar no Trello)",
+      "requires": "Docker Desktop instalado e rodando",
+      "scope": "Testcontainers setup: @testcontainers/postgresql, prisma migrate deploy no container, getTestPrisma(), truncateAll(), beforeAll/afterAll"
+    },
+    "validations_passed": {
+      "tsc": "0 erros",
+      "eslint_tests": "0 erros",
+      "test_unit": "880/880 passing (27 files)",
+      "test_integration": "3/3 passing (1 file)",
+      "total_tests": 883
+    }
   },
   "last_completed": {
     "card_id": "69e664d3e78db75e8b137f46",
@@ -46,16 +72,24 @@
         "debt_cards": 6
       }
     ],
-    "next": {
-      "phase": "Fase 3 — Billing & Subscriptions (Stripe)",
-      "planned_start": "2026-04-21",
-      "cards_planned": [
-        "3.1 setup Stripe client",
-        "3.2 webhook outbound — eventos de billing",
-        "3.3 subscription state machine",
-        "3.4 dunning + retry logic",
-        "3.5 customer portal"
-      ]
+    "active": {
+      "phase": "Fase 3 — Testes & Qualidade",
+      "list_id": "69d7a7dd73e7ce838f2b8d9c",
+      "started_at": "2026-04-20T21:10:00Z",
+      "in_progress": [
+        "3.1 (#30) scaffold de testes + helpers globais — PHASE A DONE (sem Docker); PHASE B (Card 3.1b) BLOCKED em Docker Desktop"
+      ],
+      "next_after_docker": [
+        "3.1b (a criar) Testcontainers setup + integration DB helpers — ALTO, desbloquea após Docker install",
+        "3.2 (#31) testes unitários de src/lib/ — ALTO (meta 90% coverage)",
+        "3.3 (#32) testes de integração dos módulos (auth/billing/process/usage) — ALTO; consome helpers do 3.1+3.1b",
+        "3.4 (#74) Idempotency-Key em POST /billing/create-checkout — ALTO + SEGURANÇA (due 2026-05-05)"
+      ],
+      "side_quests": [
+        "#63 INFRA — Instalar Stripe CLI (BAIXO, só quando for testar webhook)",
+        "#86 webhook-circuit-breaker TOCTOU Lua atomic (BAIXO, pipeline-discovery de 2.4)"
+      ],
+      "rationale": "Ordem definida pelo @planner: infra de testes → unit → integração → hardening de contrato (#74 testado com as integrações que acabaram de ser criadas). Card #30 foi split em 3.1 (sem Docker, scaffold + smoke) e 3.1b (Testcontainers) após constatação de que Docker não está instalado. Deadline do #74 (2026-05-05) é 15 dias a partir do planned_start — viável sem atalho mesmo com o split."
     },
     "new_debt_phases_created_2026-04-20": [
       {
@@ -104,5 +138,5 @@
       "evidence": "registerStripeEvent() + StripeEvent model unique + Stripe SDK tolerance 300s já presentes antes do waiver"
     }
   ],
-  "notes": "Snapshot atualizado em 2026-04-20T19:20 após consolidação em 7 blocos do Trello (pós-Fase 2). Bloco 1: WV-2026-001 fechado como resolved_upstream + card #67 arquivado. Bloco 2: [HIST] Fase 1/2 receberam checklists nativos + dueComplete + descrições 'ENCERRADA COM DÉBITO ABERTO'. Bloco 3: criadas Fase 11 (Cleanup) + Fase 12 (Docs) + listas 'Débito' para Fase 1/2 + 3 labels novos (fase-1-debt, fase-2-debt, waiver-deadline-alert). Bloco 4: 25 cards realocados do Backlog para fases de destino. Bloco 5: kill criteria (due + label waiver-deadline-alert) em #68/#69 (2026-06-30) e #74 (2026-05-05). Bloco 6: renames de 4 cards desalinhados (1.21→3.4, 10.X→10.3, 2.5→10.4, 1.19→10.5). Backlog agora mantém apenas cards não-priorizados ou aguardando decisão."
+  "notes": "Snapshot atualizado em 2026-04-20T22:00 — Card #30 (3.1) iniciado em 21:10 e pausado em 22:00 após entrega de Phase A (scaffold sem Docker). Phase B (Testcontainers) extraída como Card 3.1b, bloqueada em Docker Desktop não instalado. User vai instalar Docker e reiniciar máquina. Retomada: rodar Card 3.1b — setup Testcontainers + integration DB helpers. Pipeline QA formal roda quando 3.1b fechar (escopo combinado 3.1+3.1b). Entregas de Phase A validadas: tsc OK, eslint OK, 883 testes green (880 unit + 3 integration smoke). Histórico prévio: Snapshot atualizado em 2026-04-20T20:00 após correção de next (Fase 3). Correção: o commit 5f6df3a criou este arquivo com 'Fase 3 — Billing & Subscriptions (Stripe)' como next, mas isso foi chute do operador — não existe fase de Billing no roadmap do @planner. A Fase 3 real (Trello list 69d7a7dd73e7ce838f2b8d9c) é 'Testes & Qualidade' com 4 cards do planner + 2 side-quests BAIXOS. Consolidação 7 blocos pós-Fase 2: WV-2026-001 fechado resolved_upstream + #67 arquivado; [HIST] Fase 1/2 com checklists nativos + dueComplete; criadas Fase 11 (Cleanup) + Fase 12 (Docs) + listas Débito + 3 labels; 25 cards realocados do Backlog; kill criteria em #68/#69 (2026-06-30) e #74 (2026-05-05); renames 1.21→3.4, 10.X→10.3, 2.5→10.4, 1.19→10.5. Card #92 (fast-path chore/lint) concluído em 2026-04-20 — commit 4197652 merged em feat/Maclean via f3b6bcf."
 }
