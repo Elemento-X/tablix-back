@@ -76,7 +76,9 @@ describe('billing.schema.ts (Card 1.20)', () => {
 
       expect(result.success).toBe(false)
       if (!result.success) {
-        const currencyIssues = result.error.issues.filter((i) => i.path.includes('currency'))
+        const currencyIssues = result.error.issues.filter((i) =>
+          i.path.includes('currency'),
+        )
         expect(currencyIssues.length).toBeGreaterThan(0)
       }
     })
@@ -89,7 +91,9 @@ describe('billing.schema.ts (Card 1.20)', () => {
 
       expect(result.success).toBe(false)
       if (!result.success) {
-        const currencyIssues = result.error.issues.filter((i) => i.path.includes('currency'))
+        const currencyIssues = result.error.issues.filter((i) =>
+          i.path.includes('currency'),
+        )
         expect(currencyIssues.length).toBeGreaterThan(0)
       }
     })
@@ -171,7 +175,9 @@ describe('billing.schema.ts (Card 1.20)', () => {
 
       expect(result.success).toBe(false)
       if (!result.success) {
-        const emailIssues = result.error.issues.filter((i) => i.path.includes('email'))
+        const emailIssues = result.error.issues.filter((i) =>
+          i.path.includes('email'),
+        )
         expect(emailIssues.length).toBeGreaterThan(0)
       }
     })

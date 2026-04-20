@@ -30,7 +30,10 @@ import { AppError } from '../../src/errors/app-error'
 // ============================================
 describe('parseSelectedColumnsField — caminho feliz', () => {
   it('JSON array de strings válido', () => {
-    expect(parseSelectedColumnsField('["Nome","Email"]')).toEqual(['Nome', 'Email'])
+    expect(parseSelectedColumnsField('["Nome","Email"]')).toEqual([
+      'Nome',
+      'Email',
+    ])
   })
 
   it('JSON array com single item', () => {
@@ -38,10 +41,9 @@ describe('parseSelectedColumnsField — caminho feliz', () => {
   })
 
   it('JSON array com espaços nos nomes', () => {
-    expect(parseSelectedColumnsField('["Nome Completo","Data de Nascimento"]')).toEqual([
-      'Nome Completo',
-      'Data de Nascimento',
-    ])
+    expect(
+      parseSelectedColumnsField('["Nome Completo","Data de Nascimento"]'),
+    ).toEqual(['Nome Completo', 'Data de Nascimento'])
   })
 
   it('REGRESSION: unicode PT-BR preservado', () => {
@@ -100,8 +102,12 @@ describe('parseSelectedColumnsField — anti-DoS', () => {
     // Com Buffer.byteLength, 4096 emojis = 16384 bytes (rejeita corretamente).
     const emoji = '💥'
     const payload = JSON.stringify([emoji.repeat(4096)])
-    expect(payload.length).toBeLessThanOrEqual(MAX_SELECTED_COLUMNS_FIELD_BYTES + 10)
-    expect(Buffer.byteLength(payload, 'utf8')).toBeGreaterThan(MAX_SELECTED_COLUMNS_FIELD_BYTES)
+    expect(payload.length).toBeLessThanOrEqual(
+      MAX_SELECTED_COLUMNS_FIELD_BYTES + 10,
+    )
+    expect(Buffer.byteLength(payload, 'utf8')).toBeGreaterThan(
+      MAX_SELECTED_COLUMNS_FIELD_BYTES,
+    )
     expect(() => parseSelectedColumnsField(payload)).toThrow(/excede/)
   })
 })
@@ -111,11 +117,15 @@ describe('parseSelectedColumnsField — anti-DoS', () => {
 // ============================================
 describe('parseSelectedColumnsField — caracteres de controle', () => {
   it('rejeita null byte (U+0000) no nome', () => {
-    expect(() => parseSelectedColumnsField('["Nome\\u0000Evil"]')).toThrow(AppError)
+    expect(() => parseSelectedColumnsField('["Nome\\u0000Evil"]')).toThrow(
+      AppError,
+    )
   })
 
   it('rejeita zero-width space (U+200B)', () => {
-    expect(() => parseSelectedColumnsField('["Nome\\u200BInvisivel"]')).toThrow(AppError)
+    expect(() => parseSelectedColumnsField('["Nome\\u200BInvisivel"]')).toThrow(
+      AppError,
+    )
   })
 
   it('rejeita BOM (U+FEFF)', () => {
@@ -123,7 +133,9 @@ describe('parseSelectedColumnsField — caracteres de controle', () => {
   })
 
   it('rejeita RTL override (U+202E) — ataque homograph', () => {
-    expect(() => parseSelectedColumnsField('["Nome\\u202Eevil"]')).toThrow(AppError)
+    expect(() => parseSelectedColumnsField('["Nome\\u202Eevil"]')).toThrow(
+      AppError,
+    )
   })
 
   it('rejeita line separator (U+2028)', () => {
@@ -133,11 +145,15 @@ describe('parseSelectedColumnsField — caracteres de controle', () => {
   it('rejeita DEL (U+007F) — finding fa03c7e5d812', () => {
     // Cobre o range U+007F-U+009F do FORBIDDEN_CONTROL_CHARS explicitamente.
     // Mutation guard: remover a faixa não é detectado sem este teste.
-    expect(() => parseSelectedColumnsField('["Nome\\u007FCol"]')).toThrow(AppError)
+    expect(() => parseSelectedColumnsField('["Nome\\u007FCol"]')).toThrow(
+      AppError,
+    )
   })
 
   it('rejeita C1 control (U+0085 NEL)', () => {
-    expect(() => parseSelectedColumnsField('["Nome\\u0085Col"]')).toThrow(AppError)
+    expect(() => parseSelectedColumnsField('["Nome\\u0085Col"]')).toThrow(
+      AppError,
+    )
   })
 
   it('rejeita tab/newline ASCII em nome', () => {
@@ -146,7 +162,9 @@ describe('parseSelectedColumnsField — caracteres de controle', () => {
   })
 
   it('aceita espaço comum (U+0020) — não é control char', () => {
-    expect(parseSelectedColumnsField('["Nome Completo"]')).toEqual(['Nome Completo'])
+    expect(parseSelectedColumnsField('["Nome Completo"]')).toEqual([
+      'Nome Completo',
+    ])
   })
 })
 
@@ -155,17 +173,21 @@ describe('parseSelectedColumnsField — caracteres de controle', () => {
 // ============================================
 describe('parseSelectedColumnsField — prototype pollution', () => {
   it('rejeita {__proto__:...}', () => {
-    expect(() => parseSelectedColumnsField('{"__proto__":{"polluted":1}}')).toThrow(AppError)
+    expect(() =>
+      parseSelectedColumnsField('{"__proto__":{"polluted":1}}'),
+    ).toThrow(AppError)
   })
 
   it('rejeita {constructor:{prototype:...}}', () => {
-    expect(() => parseSelectedColumnsField('{"constructor":{"prototype":{"polluted":1}}}')).toThrow(
-      AppError,
-    )
+    expect(() =>
+      parseSelectedColumnsField('{"constructor":{"prototype":{"polluted":1}}}'),
+    ).toThrow(AppError)
   })
 
   it('rejeita object literal qualquer', () => {
-    expect(() => parseSelectedColumnsField('{"selectedColumns":["Nome"]}')).toThrow(AppError)
+    expect(() =>
+      parseSelectedColumnsField('{"selectedColumns":["Nome"]}'),
+    ).toThrow(AppError)
   })
 
   it('MUTATION GUARD: sem Zod shape, object pollution passaria silenciosa', () => {

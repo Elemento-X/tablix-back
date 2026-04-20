@@ -6,7 +6,9 @@
 module.exports = function parseHookInput() {
   return new Promise((resolve) => {
     let data = ''
-    process.stdin.on('data', (chunk) => { data += chunk })
+    process.stdin.on('data', (chunk) => {
+      data += chunk
+    })
     process.stdin.on('end', () => {
       try {
         const parsed = JSON.parse(data)

@@ -120,7 +120,9 @@ describe('plan-limits — invariantes estruturais', () => {
   })
 
   it('PRO: maxInputFiles * maxFileSize == maxTotalSize (alinhamento D.1)', () => {
-    expect(PRO_LIMITS.maxInputFiles * PRO_LIMITS.maxFileSize).toBe(PRO_LIMITS.maxTotalSize)
+    expect(PRO_LIMITS.maxInputFiles * PRO_LIMITS.maxFileSize).toBe(
+      PRO_LIMITS.maxTotalSize,
+    )
   })
 
   it('FREE: maxRows == maxTotalRows (colapso intencional)', () => {
@@ -132,7 +134,9 @@ describe('plan-limits — invariantes estruturais', () => {
   })
 
   it('FREE é estritamente mais restritivo que PRO em todos os campos', () => {
-    expect(FREE_LIMITS.unificationsPerMonth).toBeLessThan(PRO_LIMITS.unificationsPerMonth)
+    expect(FREE_LIMITS.unificationsPerMonth).toBeLessThan(
+      PRO_LIMITS.unificationsPerMonth,
+    )
     expect(FREE_LIMITS.maxInputFiles).toBeLessThan(PRO_LIMITS.maxInputFiles)
     expect(FREE_LIMITS.maxRows).toBeLessThan(PRO_LIMITS.maxRows)
     expect(FREE_LIMITS.maxTotalRows).toBeLessThan(PRO_LIMITS.maxTotalRows)

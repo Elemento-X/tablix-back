@@ -11,6 +11,14 @@
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
+// Import after mocks
+import {
+  sendTokenEmail,
+  sendCancellationEmail,
+  sendPaymentFailedEmail,
+} from '../../src/lib/email'
+import { AppError } from '../../src/errors/app-error'
+
 // --- Mocks (hoisted) ---
 const { mockResendClient } = vi.hoisted(() => {
   const mockResendClient = {
@@ -41,10 +49,6 @@ vi.mock('resend', () => {
   return { Resend: ResendMock }
 })
 
-// Import after mocks
-import { sendTokenEmail, sendCancellationEmail, sendPaymentFailedEmail } from '../../src/lib/email'
-import { AppError } from '../../src/errors/app-error'
-
 describe('email.ts — no-leak behavior (Card 1.10)', () => {
   let consoleSpy: ReturnType<typeof vi.spyOn>
   let consoleErrorSpy: ReturnType<typeof vi.spyOn>
@@ -62,7 +66,10 @@ describe('email.ts — no-leak behavior (Card 1.10)', () => {
   // =============================================
   describe('sendTokenEmail', () => {
     it('deve enviar email sem chamar console.log/error', async () => {
-      mockResendClient.emails.send.mockResolvedValue({ data: { id: 'email-1' }, error: null })
+      mockResendClient.emails.send.mockResolvedValue({
+        data: { id: 'email-1' },
+        error: null,
+      })
 
       await sendTokenEmail({ to: 'user@example.com', token: 'tbx_pro_test123' })
 
@@ -72,7 +79,10 @@ describe('email.ts — no-leak behavior (Card 1.10)', () => {
     })
 
     it('deve chamar Resend com parametros corretos', async () => {
-      mockResendClient.emails.send.mockResolvedValue({ data: { id: 'email-1' }, error: null })
+      mockResendClient.emails.send.mockResolvedValue({
+        data: { id: 'email-1' },
+        error: null,
+      })
 
       await sendTokenEmail({ to: 'user@example.com', token: 'tbx_pro_test123' })
 
@@ -90,7 +100,8 @@ describe('email.ts — no-leak behavior (Card 1.10)', () => {
         data: null,
         error: {
           statusCode: 422,
-          message: 'The "to" address is invalid: user@bad-domain.xyz. Resend internal detail.',
+          message:
+            'The "to" address is invalid: user@bad-domain.xyz. Resend internal detail.',
           name: 'validation_error',
         },
       })
@@ -100,7 +111,10 @@ describe('email.ts — no-leak behavior (Card 1.10)', () => {
       ).rejects.toThrow(AppError)
 
       try {
-        await sendTokenEmail({ to: 'user@bad-domain.xyz', token: 'tbx_pro_test123' })
+        await sendTokenEmail({
+          to: 'user@bad-domain.xyz',
+          token: 'tbx_pro_test123',
+        })
       } catch (error) {
         const appErr = error as AppError
         // Card 1.10: must NOT contain Resend-specific error details
@@ -122,7 +136,10 @@ describe('email.ts — no-leak behavior (Card 1.10)', () => {
   // =============================================
   describe('sendCancellationEmail', () => {
     it('deve enviar email de cancelamento sem console calls', async () => {
-      mockResendClient.emails.send.mockResolvedValue({ data: { id: 'email-2' }, error: null })
+      mockResendClient.emails.send.mockResolvedValue({
+        data: { id: 'email-2' },
+        error: null,
+      })
 
       await sendCancellationEmail({
         to: 'user@example.com',
@@ -134,7 +151,10 @@ describe('email.ts — no-leak behavior (Card 1.10)', () => {
     })
 
     it('deve aceitar expiresAt null (acesso encerrado imediato)', async () => {
-      mockResendClient.emails.send.mockResolvedValue({ data: { id: 'email-3' }, error: null })
+      mockResendClient.emails.send.mockResolvedValue({
+        data: { id: 'email-3' },
+        error: null,
+      })
 
       await sendCancellationEmail({
         to: 'user@example.com',
@@ -147,7 +167,10 @@ describe('email.ts — no-leak behavior (Card 1.10)', () => {
     })
 
     it('deve incluir data formatada quando expiresAt presente', async () => {
-      mockResendClient.emails.send.mockResolvedValue({ data: { id: 'email-4' }, error: null })
+      mockResendClient.emails.send.mockResolvedValue({
+        data: { id: 'email-4' },
+        error: null,
+      })
 
       const expiresAt = new Date('2026-05-01')
       await sendCancellationEmail({
@@ -163,7 +186,10 @@ describe('email.ts — no-leak behavior (Card 1.10)', () => {
     it('deve lançar erro generico na falha — sem vazar detalhes', async () => {
       mockResendClient.emails.send.mockResolvedValue({
         data: null,
-        error: { message: 'Rate limit exceeded for re_key_xxx', statusCode: 429 },
+        error: {
+          message: 'Rate limit exceeded for re_key_xxx',
+          statusCode: 429,
+        },
       })
 
       await expect(
@@ -189,7 +215,10 @@ describe('email.ts — no-leak behavior (Card 1.10)', () => {
   // =============================================
   describe('sendPaymentFailedEmail', () => {
     it('deve enviar email de falha de pagamento sem console calls', async () => {
-      mockResendClient.emails.send.mockResolvedValue({ data: { id: 'email-5' }, error: null })
+      mockResendClient.emails.send.mockResolvedValue({
+        data: { id: 'email-5' },
+        error: null,
+      })
 
       await sendPaymentFailedEmail({ to: 'user@example.com' })
 
@@ -203,7 +232,9 @@ describe('email.ts — no-leak behavior (Card 1.10)', () => {
         error: { message: 'API key is invalid: re_test_xxx', statusCode: 401 },
       })
 
-      await expect(sendPaymentFailedEmail({ to: 'user@example.com' })).rejects.toThrow(AppError)
+      await expect(
+        sendPaymentFailedEmail({ to: 'user@example.com' }),
+      ).rejects.toThrow(AppError)
 
       try {
         await sendPaymentFailedEmail({ to: 'user@example.com' })
@@ -219,7 +250,10 @@ describe('email.ts — no-leak behavior (Card 1.10)', () => {
     })
 
     it('deve conter conteudo correto no email de falha de pagamento', async () => {
-      mockResendClient.emails.send.mockResolvedValue({ data: { id: 'email-6' }, error: null })
+      mockResendClient.emails.send.mockResolvedValue({
+        data: { id: 'email-6' },
+        error: null,
+      })
 
       await sendPaymentFailedEmail({ to: 'user@example.com' })
 
@@ -240,7 +274,9 @@ describe('email.ts — no-leak behavior (Card 1.10)', () => {
       // by verifying the error factory produces the right message shape.
       // The actual getResend() guard is tested via the module init path.
       const { Errors } = await import('../../src/errors/app-error')
-      const err = Errors.internal('Resend não configurado. Verifique RESEND_API_KEY.')
+      const err = Errors.internal(
+        'Resend não configurado. Verifique RESEND_API_KEY.',
+      )
       expect(err.code).toBe('INTERNAL_ERROR')
       expect(err.statusCode).toBe(500)
       expect(err.message).not.toContain('re_')

@@ -13,6 +13,18 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import Stripe from 'stripe'
 
+// Import after mocks are set up
+import {
+  createCheckoutSession,
+  createPortalSession,
+  getCheckoutSession,
+  getSubscription,
+  constructWebhookEvent,
+  getPriceId,
+  getAllPrices,
+} from '../../src/modules/billing/stripe.service'
+import { AppError } from '../../src/errors/app-error'
+
 // --- Mocks (hoisted) ---
 const { mockStripeClient } = vi.hoisted(() => {
   const mockStripeClient = {
@@ -85,18 +97,6 @@ vi.mock('stripe', () => {
   return { default: StripeMock, Stripe: StripeMock }
 })
 
-// Import after mocks are set up
-import {
-  createCheckoutSession,
-  createPortalSession,
-  getCheckoutSession,
-  getSubscription,
-  constructWebhookEvent,
-  getPriceId,
-  getAllPrices,
-} from '../../src/modules/billing/stripe.service'
-import { AppError } from '../../src/errors/app-error'
-
 describe('stripe.service.ts — error sanitization (Card 1.10)', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -108,7 +108,9 @@ describe('stripe.service.ts — error sanitization (Card 1.10)', () => {
   describe('createCheckoutSession', () => {
     it('deve lançar checkoutFailed generico quando Stripe retorna StripeError', async () => {
       const stripeError = new (
-        Stripe as unknown as { errors: { StripeError: new (msg: string) => Error } }
+        Stripe as unknown as {
+          errors: { StripeError: new (msg: string) => Error }
+        }
       ).errors.StripeError('Your card was declined. Secret internal info here.')
       mockStripeClient.checkout.sessions.create.mockRejectedValue(stripeError)
 
@@ -199,9 +201,15 @@ describe('stripe.service.ts — error sanitization (Card 1.10)', () => {
   describe('createPortalSession', () => {
     it('deve lançar portalFailed generico quando Stripe retorna StripeError', async () => {
       const stripeError = new (
-        Stripe as unknown as { errors: { StripeError: new (msg: string) => Error } }
-      ).errors.StripeError('No such customer: cus_deleted. Internal Stripe detail.')
-      mockStripeClient.billingPortal.sessions.create.mockRejectedValue(stripeError)
+        Stripe as unknown as {
+          errors: { StripeError: new (msg: string) => Error }
+        }
+      ).errors.StripeError(
+        'No such customer: cus_deleted. Internal Stripe detail.',
+      )
+      mockStripeClient.billingPortal.sessions.create.mockRejectedValue(
+        stripeError,
+      )
 
       await expect(
         createPortalSession('cus_test_123', 'https://app.tablix.com.br'),
@@ -223,7 +231,10 @@ describe('stripe.service.ts — error sanitization (Card 1.10)', () => {
         url: 'https://billing.stripe.com/session/test',
       })
 
-      const url = await createPortalSession('cus_test_123', 'https://app.tablix.com.br')
+      const url = await createPortalSession(
+        'cus_test_123',
+        'https://app.tablix.com.br',
+      )
       expect(url).toBe('https://billing.stripe.com/session/test')
     })
   })
@@ -234,7 +245,9 @@ describe('stripe.service.ts — error sanitization (Card 1.10)', () => {
   describe('getCheckoutSession', () => {
     it('deve lançar internal generico quando Stripe retorna StripeError', async () => {
       const stripeError = new (
-        Stripe as unknown as { errors: { StripeError: new (msg: string) => Error } }
+        Stripe as unknown as {
+          errors: { StripeError: new (msg: string) => Error }
+        }
       ).errors.StripeError('No such checkout session: cs_expired_xyz')
       mockStripeClient.checkout.sessions.retrieve.mockRejectedValue(stripeError)
 
@@ -257,7 +270,9 @@ describe('stripe.service.ts — error sanitization (Card 1.10)', () => {
   describe('getSubscription', () => {
     it('deve lançar internal generico quando Stripe retorna StripeError', async () => {
       const stripeError = new (
-        Stripe as unknown as { errors: { StripeError: new (msg: string) => Error } }
+        Stripe as unknown as {
+          errors: { StripeError: new (msg: string) => Error }
+        }
       ).errors.StripeError('No such subscription: sub_cancelled_abc')
       mockStripeClient.subscriptions.retrieve.mockRejectedValue(stripeError)
 
@@ -281,7 +296,9 @@ describe('stripe.service.ts — error sanitization (Card 1.10)', () => {
     it('deve lançar webhookFailed com mensagem segura para assinatura invalida', () => {
       const sigError = new (
         Stripe as unknown as {
-          errors: { StripeSignatureVerificationError: new (msg: string) => Error }
+          errors: {
+            StripeSignatureVerificationError: new (msg: string) => Error
+          }
         }
       ).errors.StripeSignatureVerificationError(
         'Signature mismatch: expected whsec_xxx got whsec_yyy',
@@ -290,7 +307,9 @@ describe('stripe.service.ts — error sanitization (Card 1.10)', () => {
         throw sigError
       })
 
-      expect(() => constructWebhookEvent(Buffer.from('{}'), 'sig_invalid')).toThrow(AppError)
+      expect(() =>
+        constructWebhookEvent(Buffer.from('{}'), 'sig_invalid'),
+      ).toThrow(AppError)
 
       try {
         constructWebhookEvent(Buffer.from('{}'), 'sig_invalid')

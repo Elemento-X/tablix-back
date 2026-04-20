@@ -20,14 +20,22 @@ parseInput().then(({ filePath }) => {
       // Show only errors related to the edited file to reduce noise
       const relevantLines = output
         .split('\n')
-        .filter((line) => line.includes(filePath.replace(/\\/g, '/')) || line.includes(filePath))
+        .filter(
+          (line) =>
+            line.includes(filePath.replace(/\\/g, '/')) ||
+            line.includes(filePath),
+        )
         .join('\n')
 
       if (relevantLines) {
-        process.stderr.write(`TypeScript errors em ${filePath}:\n${relevantLines}`)
+        process.stderr.write(
+          `TypeScript errors em ${filePath}:\n${relevantLines}`,
+        )
       } else {
         // If there are errors but not in this file, warn but don't block
-        process.stderr.write(`TypeScript errors no projeto (não necessariamente neste arquivo). Rode 'npx tsc --noEmit' para ver todos.`)
+        process.stderr.write(
+          `TypeScript errors no projeto (não necessariamente neste arquivo). Rode 'npx tsc --noEmit' para ver todos.`,
+        )
       }
     }
   }

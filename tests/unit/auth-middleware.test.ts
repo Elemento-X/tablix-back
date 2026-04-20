@@ -7,38 +7,45 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { AppError } from '../../src/errors/app-error'
 
-// --- vi.hoisted: shared mock state accessible inside vi.mock factories ---
-const { prismaMock, mockVerifyAccessTokenOrThrow, mockExtractBearerToken } = vi.hoisted(() => {
-  function createModelMock() {
-    return {
-      findUnique: vi.fn(),
-      findFirst: vi.fn(),
-      findMany: vi.fn(),
-      create: vi.fn(),
-      update: vi.fn(),
-      updateMany: vi.fn(),
-      delete: vi.fn(),
-      deleteMany: vi.fn(),
-      upsert: vi.fn(),
-      count: vi.fn(),
-    }
-  }
+import {
+  authMiddleware,
+  optionalAuthMiddleware,
+  requireRole,
+} from '../../src/middleware/auth.middleware'
 
-  return {
-    prismaMock: {
-      user: createModelMock(),
-      session: createModelMock(),
-      token: createModelMock(),
-      usage: createModelMock(),
-      job: createModelMock(),
-      $transaction: vi.fn(),
-      $connect: vi.fn(),
-      $disconnect: vi.fn(),
-    },
-    mockVerifyAccessTokenOrThrow: vi.fn(),
-    mockExtractBearerToken: vi.fn(),
-  }
-})
+// --- vi.hoisted: shared mock state accessible inside vi.mock factories ---
+const { prismaMock, mockVerifyAccessTokenOrThrow, mockExtractBearerToken } =
+  vi.hoisted(() => {
+    function createModelMock() {
+      return {
+        findUnique: vi.fn(),
+        findFirst: vi.fn(),
+        findMany: vi.fn(),
+        create: vi.fn(),
+        update: vi.fn(),
+        updateMany: vi.fn(),
+        delete: vi.fn(),
+        deleteMany: vi.fn(),
+        upsert: vi.fn(),
+        count: vi.fn(),
+      }
+    }
+
+    return {
+      prismaMock: {
+        user: createModelMock(),
+        session: createModelMock(),
+        token: createModelMock(),
+        usage: createModelMock(),
+        job: createModelMock(),
+        $transaction: vi.fn(),
+        $connect: vi.fn(),
+        $disconnect: vi.fn(),
+      },
+      mockVerifyAccessTokenOrThrow: vi.fn(),
+      mockExtractBearerToken: vi.fn(),
+    }
+  })
 
 vi.mock('../../src/config/env', () => ({
   env: {
@@ -60,14 +67,9 @@ vi.mock('../../src/lib/prisma', () => ({
 
 vi.mock('../../src/lib/jwt', () => ({
   extractBearerToken: (...args: unknown[]) => mockExtractBearerToken(...args),
-  verifyAccessTokenOrThrow: (...args: unknown[]) => mockVerifyAccessTokenOrThrow(...args),
+  verifyAccessTokenOrThrow: (...args: unknown[]) =>
+    mockVerifyAccessTokenOrThrow(...args),
 }))
-
-import {
-  authMiddleware,
-  optionalAuthMiddleware,
-  requireRole,
-} from '../../src/middleware/auth.middleware'
 
 // --- Helpers ---
 const NOW = new Date('2026-01-15T12:00:00Z')
@@ -143,10 +145,12 @@ describe('auth.middleware.ts', () => {
 
       const request = buildRequest({ headers: {} })
 
-      await expect(authMiddleware(request, buildReply())).rejects.toMatchObject({
-        code: 'UNAUTHORIZED',
-        statusCode: 401,
-      })
+      await expect(authMiddleware(request, buildReply())).rejects.toMatchObject(
+        {
+          code: 'UNAUTHORIZED',
+          statusCode: 401,
+        },
+      )
     })
 
     it('deve lancar UNAUTHORIZED quando token Bearer ausente no header', async () => {
@@ -156,9 +160,11 @@ describe('auth.middleware.ts', () => {
         headers: { authorization: 'Basic abc' },
       })
 
-      await expect(authMiddleware(request, buildReply())).rejects.toMatchObject({
-        code: 'UNAUTHORIZED',
-      })
+      await expect(authMiddleware(request, buildReply())).rejects.toMatchObject(
+        {
+          code: 'UNAUTHORIZED',
+        },
+      )
     })
 
     it('deve propagar erro do verifyAccessTokenOrThrow para token invalido', async () => {
@@ -169,9 +175,11 @@ describe('auth.middleware.ts', () => {
 
       const request = buildRequest()
 
-      await expect(authMiddleware(request, buildReply())).rejects.toMatchObject({
-        code: 'INVALID_TOKEN',
-      })
+      await expect(authMiddleware(request, buildReply())).rejects.toMatchObject(
+        {
+          code: 'INVALID_TOKEN',
+        },
+      )
     })
 
     it('deve lancar UNAUTHORIZED quando sessao nao encontrada no DB', async () => {
@@ -181,36 +189,46 @@ describe('auth.middleware.ts', () => {
 
       const request = buildRequest()
 
-      await expect(authMiddleware(request, buildReply())).rejects.toMatchObject({
-        code: 'UNAUTHORIZED',
-        message: expect.stringContaining('não encontrada'),
-      })
+      await expect(authMiddleware(request, buildReply())).rejects.toMatchObject(
+        {
+          code: 'UNAUTHORIZED',
+          message: expect.stringContaining('não encontrada'),
+        },
+      )
     })
 
     it('deve lancar UNAUTHORIZED quando sessao esta revogada', async () => {
       mockExtractBearerToken.mockReturnValue('valid-token')
       mockVerifyAccessTokenOrThrow.mockReturnValue(VALID_JWT_PAYLOAD)
-      prismaMock.session.findUnique.mockResolvedValue(buildSession({ revokedAt: PAST }))
+      prismaMock.session.findUnique.mockResolvedValue(
+        buildSession({ revokedAt: PAST }),
+      )
 
       const request = buildRequest()
 
-      await expect(authMiddleware(request, buildReply())).rejects.toMatchObject({
-        code: 'UNAUTHORIZED',
-        message: expect.stringContaining('revogada'),
-      })
+      await expect(authMiddleware(request, buildReply())).rejects.toMatchObject(
+        {
+          code: 'UNAUTHORIZED',
+          message: expect.stringContaining('revogada'),
+        },
+      )
     })
 
     it('deve lancar UNAUTHORIZED quando sessao esta expirada', async () => {
       mockExtractBearerToken.mockReturnValue('valid-token')
       mockVerifyAccessTokenOrThrow.mockReturnValue(VALID_JWT_PAYLOAD)
-      prismaMock.session.findUnique.mockResolvedValue(buildSession({ expiresAt: PAST }))
+      prismaMock.session.findUnique.mockResolvedValue(
+        buildSession({ expiresAt: PAST }),
+      )
 
       const request = buildRequest()
 
-      await expect(authMiddleware(request, buildReply())).rejects.toMatchObject({
-        code: 'UNAUTHORIZED',
-        message: expect.stringContaining('expirada'),
-      })
+      await expect(authMiddleware(request, buildReply())).rejects.toMatchObject(
+        {
+          code: 'UNAUTHORIZED',
+          message: expect.stringContaining('expirada'),
+        },
+      )
     })
 
     it('deve atualizar lastActivityAt como fire-and-forget (nao bloqueia)', async () => {
@@ -285,7 +303,9 @@ describe('auth.middleware.ts', () => {
     it('deve setar user como undefined quando sessao revogada (sem throw)', async () => {
       mockExtractBearerToken.mockReturnValue('valid-token')
       mockVerifyAccessTokenOrThrow.mockReturnValue(VALID_JWT_PAYLOAD)
-      prismaMock.session.findUnique.mockResolvedValue(buildSession({ revokedAt: NOW }))
+      prismaMock.session.findUnique.mockResolvedValue(
+        buildSession({ revokedAt: NOW }),
+      )
 
       const request = buildRequest()
       await optionalAuthMiddleware(request, buildReply())

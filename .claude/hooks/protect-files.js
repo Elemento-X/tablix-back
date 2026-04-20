@@ -19,39 +19,35 @@ parseInput().then(({ filePath }) => {
   ]
 
   // Directory/path patterns (contains check)
-  const blockedPaths = [
-    '.git/',
-    'node_modules/',
-    'prisma/migrations/',
-  ]
+  const blockedPaths = ['.git/', 'node_modules/', 'prisma/migrations/']
 
   // Extension patterns
-  const blockedExtensions = [
-    '.pem',
-    '.key',
-    '.p12',
-    '.pfx',
-    '.jks',
-  ]
+  const blockedExtensions = ['.pem', '.key', '.p12', '.pfx', '.jks']
 
   // Exact filename match
   const fileMatch = blockedFiles.find((f) => basename === f)
   if (fileMatch) {
-    process.stderr.write(`BLOQUEADO: ${filePath} é arquivo protegido (${fileMatch}). Edição manual proibida.`)
+    process.stderr.write(
+      `BLOQUEADO: ${filePath} é arquivo protegido (${fileMatch}). Edição manual proibida.`,
+    )
     process.exit(2)
   }
 
   // Path contains match
   const pathMatch = blockedPaths.find((p) => normalized.includes(p))
   if (pathMatch) {
-    process.stderr.write(`BLOQUEADO: ${filePath} está em diretório protegido (${pathMatch}). Edição manual proibida.`)
+    process.stderr.write(
+      `BLOQUEADO: ${filePath} está em diretório protegido (${pathMatch}). Edição manual proibida.`,
+    )
     process.exit(2)
   }
 
   // Extension match
   const extMatch = blockedExtensions.find((ext) => basename.endsWith(ext))
   if (extMatch) {
-    process.stderr.write(`BLOQUEADO: ${filePath} é arquivo sensível (${extMatch}). Nunca editar certificados/chaves diretamente.`)
+    process.stderr.write(
+      `BLOQUEADO: ${filePath} é arquivo sensível (${extMatch}). Nunca editar certificados/chaves diretamente.`,
+    )
     process.exit(2)
   }
 

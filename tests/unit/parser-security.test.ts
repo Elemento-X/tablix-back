@@ -72,9 +72,12 @@ describe('sanitizeHeaderName — prototype pollution defense', () => {
     'toLocaleString',
   ]
 
-  it.each(dangerousNames)('prefixes dangerous header "%s" with _safe_', (name) => {
-    expect(sanitizeHeaderName(name)).toBe(`_safe_${name}`)
-  })
+  it.each(dangerousNames)(
+    'prefixes dangerous header "%s" with _safe_',
+    (name) => {
+      expect(sanitizeHeaderName(name)).toBe(`_safe_${name}`)
+    },
+  )
 
   it('passes safe header unchanged', () => {
     expect(sanitizeHeaderName('Name')).toBe('Name')
@@ -106,7 +109,7 @@ describe('parseSpreadsheet CSV — prototype pollution headers', () => {
 
     expect(result.headers).toContain('_safe___proto__')
     expect(result.headers).not.toContain('__proto__')
-    expect(result.rows[0]['_safe___proto__']).toBe('evil')
+    expect(result.rows[0]._safe___proto__).toBe('evil')
   })
 
   it('sanitizes constructor header in CSV', () => {
@@ -114,16 +117,19 @@ describe('parseSpreadsheet CSV — prototype pollution headers', () => {
     const result = parseSpreadsheet(csv, 'test.csv')
 
     expect(result.headers).toContain('_safe_constructor')
-    expect(result.rows[0]['_safe_constructor']).toBe('value')
+    expect(result.rows[0]._safe_constructor).toBe('value')
   })
 
   it('does not pollute Object.prototype after CSV parse', () => {
-    const csv = makeCsvBuffer(['__proto__', 'constructor'], [['polluted', 'polluted']])
+    const csv = makeCsvBuffer(
+      ['__proto__', 'constructor'],
+      [['polluted', 'polluted']],
+    )
     parseSpreadsheet(csv, 'test.csv')
 
     // Verificar que Object.prototype nao foi poluido
     const clean: Record<string, unknown> = {}
-    expect(clean['__proto__']).not.toBe('polluted')
+    expect(clean.__proto__).not.toBe('polluted')
     expect(Object.prototype.hasOwnProperty).toBeTypeOf('function')
   })
 
@@ -148,7 +154,7 @@ describe('parseSpreadsheet XLSX — prototype pollution headers', () => {
 
     expect(result.headers).toContain('_safe___proto__')
     expect(result.headers).not.toContain('__proto__')
-    expect(result.rows[0]['_safe___proto__']).toBe('evil')
+    expect(result.rows[0]._safe___proto__).toBe('evil')
   })
 
   it('sanitizes multiple dangerous headers in XLSX', () => {
@@ -174,7 +180,7 @@ describe('parseSpreadsheet XLSX — prototype pollution headers', () => {
     parseSpreadsheet(xlsx, 'test.xlsx')
 
     const clean: Record<string, unknown> = {}
-    expect(clean['__proto__']).not.toBe('polluted')
+    expect(clean.__proto__).not.toBe('polluted')
     expect({}.toString()).toBe('[object Object]')
   })
 
@@ -202,27 +208,37 @@ describe('validateMagicBytes', () => {
 
   it('rejects XLSX with wrong magic bytes', () => {
     const fake = Buffer.from('This is not a zip file at all')
-    expect(() => validateMagicBytes(fake, 'xlsx')).toThrow('Assinatura de arquivo invalida')
+    expect(() => validateMagicBytes(fake, 'xlsx')).toThrow(
+      'Assinatura de arquivo invalida',
+    )
   })
 
   it('rejects XLS with wrong magic bytes', () => {
     const fake = Buffer.from('This is not an OLE2 file')
-    expect(() => validateMagicBytes(fake, 'xls')).toThrow('Assinatura de arquivo invalida')
+    expect(() => validateMagicBytes(fake, 'xls')).toThrow(
+      'Assinatura de arquivo invalida',
+    )
   })
 
   it('rejects buffer too small for magic bytes', () => {
     const tiny = Buffer.from([0x50, 0x4b])
-    expect(() => validateMagicBytes(tiny, 'xlsx')).toThrow('Arquivo muito pequeno')
+    expect(() => validateMagicBytes(tiny, 'xlsx')).toThrow(
+      'Arquivo muito pequeno',
+    )
   })
 
   it('rejects empty buffer', () => {
     const empty = Buffer.alloc(0)
-    expect(() => validateMagicBytes(empty, 'xlsx')).toThrow('Arquivo muito pequeno')
+    expect(() => validateMagicBytes(empty, 'xlsx')).toThrow(
+      'Arquivo muito pequeno',
+    )
   })
 
   it('rejects CSV content disguised as XLSX', () => {
     const csv = Buffer.from('Name,Age\nAlice,30\n')
-    expect(() => validateMagicBytes(csv, 'xlsx')).toThrow('Assinatura de arquivo invalida')
+    expect(() => validateMagicBytes(csv, 'xlsx')).toThrow(
+      'Assinatura de arquivo invalida',
+    )
   })
 })
 
@@ -239,7 +255,9 @@ describe('parseSpreadsheet — magic bytes integration', () => {
 
   it('rejects XLS file with random bytes', () => {
     const random = Buffer.from([0x00, 0x01, 0x02, 0x03, 0x04, 0x05])
-    expect(() => parseSpreadsheet(random, 'fake.xls')).toThrow('Assinatura de arquivo invalida')
+    expect(() => parseSpreadsheet(random, 'fake.xls')).toThrow(
+      'Assinatura de arquivo invalida',
+    )
   })
 })
 
@@ -258,7 +276,9 @@ describe('checkZipBombRisk', () => {
 
   it('rejects non-ZIP buffer', () => {
     const notZip = Buffer.from('This is not a zip file at all, no EOCD here')
-    expect(() => checkZipBombRisk(notZip, 'bad.xlsx')).toThrow('nao e um ZIP/XLSX valido')
+    expect(() => checkZipBombRisk(notZip, 'bad.xlsx')).toThrow(
+      'nao e um ZIP/XLSX valido',
+    )
   })
 
   it('rejects crafted ZIP with extreme decompression ratio', () => {
@@ -287,7 +307,9 @@ describe('checkZipBombRisk', () => {
     // uncompressed size is at offset 24 in the CD file header
     tampered.writeUInt32LE(500 * 1024 * 1024, cdOffset + 24) // 500 MB
 
-    expect(() => checkZipBombRisk(tampered, 'bomb.xlsx')).toThrow('ratio de descompressao suspeito')
+    expect(() => checkZipBombRisk(tampered, 'bomb.xlsx')).toThrow(
+      'ratio de descompressao suspeito',
+    )
   })
 })
 
@@ -310,7 +332,9 @@ describe('parseSpreadsheet — zip bomb integration', () => {
     const cdOffset = tampered.readUInt32LE(eocdOffset + 16)
     tampered.writeUInt32LE(200 * 1024 * 1024, cdOffset + 24) // 200 MB
 
-    expect(() => parseSpreadsheet(tampered, 'bomb.xlsx')).toThrow('ratio de descompressao suspeito')
+    expect(() => parseSpreadsheet(tampered, 'bomb.xlsx')).toThrow(
+      'ratio de descompressao suspeito',
+    )
   })
 
   it('does NOT run zip bomb check on XLS (not ZIP-based)', () => {
@@ -362,11 +386,18 @@ describe('parseSpreadsheet — edge cases', () => {
   })
 
   it('handles CSV with only dangerous headers', () => {
-    const csv = makeCsvBuffer(['__proto__', 'constructor', 'prototype'], [['a', 'b', 'c']])
+    const csv = makeCsvBuffer(
+      ['__proto__', 'constructor', 'prototype'],
+      [['a', 'b', 'c']],
+    )
     const result = parseSpreadsheet(csv, 'evil.csv')
 
-    expect(result.headers).toEqual(['_safe___proto__', '_safe_constructor', '_safe_prototype'])
-    expect(result.rows[0]['_safe___proto__']).toBe('a')
+    expect(result.headers).toEqual([
+      '_safe___proto__',
+      '_safe_constructor',
+      '_safe_prototype',
+    ])
+    expect(result.rows[0]._safe___proto__).toBe('a')
   })
 
   it('normal XLSX parse still works end-to-end', () => {
@@ -403,7 +434,9 @@ describe('parseSpreadsheet — edge cases', () => {
 
   it('rejects unsupported file extension', () => {
     const buf = Buffer.from('data')
-    expect(() => parseSpreadsheet(buf, 'file.pdf')).toThrow('Formato de arquivo nao suportado')
+    expect(() => parseSpreadsheet(buf, 'file.pdf')).toThrow(
+      'Formato de arquivo nao suportado',
+    )
   })
 
   it('handles XLSX with empty sheet (no data rows)', () => {
@@ -471,21 +504,27 @@ describe('isValidExtension', () => {
 // ===========================================
 describe('validateColumns', () => {
   it('passes when all columns exist', () => {
-    expect(() => validateColumns(['Name', 'Age', 'Email'], ['Name', 'Age'], 'f.csv')).not.toThrow()
+    expect(() =>
+      validateColumns(['Name', 'Age', 'Email'], ['Name', 'Age'], 'f.csv'),
+    ).not.toThrow()
   })
 
   it('is case-insensitive', () => {
-    expect(() => validateColumns(['name', 'AGE'], ['Name', 'age'], 'f.csv')).not.toThrow()
+    expect(() =>
+      validateColumns(['name', 'AGE'], ['Name', 'age'], 'f.csv'),
+    ).not.toThrow()
   })
 
   it('throws when column is missing', () => {
-    expect(() => validateColumns(['Name'], ['Name', 'Missing'], 'f.csv')).toThrow(
-      'Colunas nao encontradas',
-    )
+    expect(() =>
+      validateColumns(['Name'], ['Name', 'Missing'], 'f.csv'),
+    ).toThrow('Colunas nao encontradas')
   })
 
   it('includes missing column names in error', () => {
-    expect(() => validateColumns(['Name'], ['Foo', 'Bar'], 'f.csv')).toThrow('Foo, Bar')
+    expect(() => validateColumns(['Name'], ['Foo', 'Bar'], 'f.csv')).toThrow(
+      'Foo, Bar',
+    )
   })
 })
 
@@ -514,12 +553,16 @@ describe('parseSpreadsheet CSV — malformed CSV error path', () => {
     // PapaParse detects trailing quote malformation and reports it as error.
     // This exercises the error path at line 218-222 of parser.ts.
     const malformed = Buffer.from('"Name","Age\n"Alice",30\n')
-    expect(() => parseSpreadsheet(malformed, 'bad.csv')).toThrow('Erro ao processar CSV')
+    expect(() => parseSpreadsheet(malformed, 'bad.csv')).toThrow(
+      'Erro ao processar CSV',
+    )
   })
 
   it('error message includes the file name', () => {
     const malformed = Buffer.from('"Name","Age\n"Alice",30\n')
-    expect(() => parseSpreadsheet(malformed, 'report.csv')).toThrow('report.csv')
+    expect(() => parseSpreadsheet(malformed, 'report.csv')).toThrow(
+      'report.csv',
+    )
   })
 })
 
@@ -618,18 +661,24 @@ describe('validateMagicBytes — mutation-resilient edge cases', () => {
   it('rejects buffer with correct first 3 bytes but wrong 4th (XLSX)', () => {
     // PK\x03\x05 instead of PK\x03\x04
     const almostPK = Buffer.from([0x50, 0x4b, 0x03, 0x05, 0x00, 0x00])
-    expect(() => validateMagicBytes(almostPK, 'xlsx')).toThrow('Assinatura de arquivo invalida')
+    expect(() => validateMagicBytes(almostPK, 'xlsx')).toThrow(
+      'Assinatura de arquivo invalida',
+    )
   })
 
   it('rejects buffer with correct first 3 bytes but wrong 4th (XLS)', () => {
     // 0xD0 0xCF 0x11 0xE1 instead of 0xD0 0xCF 0x11 0xE0
     const almostOLE = Buffer.from([0xd0, 0xcf, 0x11, 0xe1, 0x00, 0x00])
-    expect(() => validateMagicBytes(almostOLE, 'xls')).toThrow('Assinatura de arquivo invalida')
+    expect(() => validateMagicBytes(almostOLE, 'xls')).toThrow(
+      'Assinatura de arquivo invalida',
+    )
   })
 
   it('rejects buffer of exactly 3 bytes for XLSX (needs 4)', () => {
     const three = Buffer.from([0x50, 0x4b, 0x03])
-    expect(() => validateMagicBytes(three, 'xlsx')).toThrow('Arquivo muito pequeno')
+    expect(() => validateMagicBytes(three, 'xlsx')).toThrow(
+      'Arquivo muito pequeno',
+    )
   })
 
   it('accepts buffer of exactly 4 correct bytes for XLSX', () => {
@@ -670,7 +719,9 @@ describe('checkZipBombRisk — ratio boundary conditions', () => {
     // For a ~400 byte XLSX, 100MB exceeds both ratio and absolute limit
     tampered.writeUInt32LE(101 * 1024 * 1024, cdOffset + 24)
 
-    expect(() => checkZipBombRisk(tampered, 'bomb.xlsx')).toThrow('ratio de descompressao suspeito')
+    expect(() => checkZipBombRisk(tampered, 'bomb.xlsx')).toThrow(
+      'ratio de descompressao suspeito',
+    )
   })
 
   it('error message includes ratio value', () => {
@@ -720,7 +771,9 @@ describe('checkZipBombRisk — ZIP64 rejection', () => {
     // Set uncompressed size to 0xFFFFFFFF (ZIP64 marker)
     tampered.writeUInt32LE(0xffffffff, cdOffset + 24)
 
-    expect(() => checkZipBombRisk(tampered, 'zip64.xlsx')).toThrow('ZIP64 detectada')
+    expect(() => checkZipBombRisk(tampered, 'zip64.xlsx')).toThrow(
+      'ZIP64 detectada',
+    )
   })
 })
 
@@ -737,15 +790,15 @@ describe('parseSpreadsheet — prototype pollution attack scenario', () => {
 
     // Verify no global pollution
     const freshObj = {} as Record<string, unknown>
-    expect(freshObj['__proto__']).not.toBe('injected')
+    expect(freshObj.__proto__).not.toBe('injected')
     expect(typeof {}.toString).toBe('function')
     expect(typeof {}.constructor).toBe('function')
 
     // Verify data is accessible via sanitized keys
-    expect(result.rows[0]['_safe___proto__']).toBe('injected')
-    expect(result.rows[0]['_safe_constructor']).toBe('injected')
-    expect(result.rows[0]['_safe_toString']).toBe('injected')
-    expect(result.rows[0]['Name']).toBe('Alice')
+    expect(result.rows[0]._safe___proto__).toBe('injected')
+    expect(result.rows[0]._safe_constructor).toBe('injected')
+    expect(result.rows[0]._safe_toString).toBe('injected')
+    expect(result.rows[0].Name).toBe('Alice')
 
     // Verify row has null prototype (double defense)
     expect(Object.getPrototypeOf(result.rows[0])).toBeNull()

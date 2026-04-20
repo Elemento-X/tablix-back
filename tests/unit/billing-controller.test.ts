@@ -14,6 +14,13 @@
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
+import {
+  createCheckout,
+  portal,
+  prices,
+} from '../../src/http/controllers/billing.controller'
+import { AppError, ErrorCodes } from '../../src/errors/app-error'
+
 // ---------------------------------------------------------------------------
 // Hoisted mocks
 // ---------------------------------------------------------------------------
@@ -74,9 +81,6 @@ vi.mock('../../src/modules/billing/stripe.service', () => ({
   createPortalSession: mockCreatePortalSession,
 }))
 
-import { createCheckout, portal, prices } from '../../src/http/controllers/billing.controller'
-import { AppError, ErrorCodes } from '../../src/errors/app-error'
-
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -131,7 +135,10 @@ describe('billing.controller.ts — createCheckout (Card 1.20)', () => {
       expect.fail('deveria ter lançado')
     } catch (err) {
       const appErr = err as AppError
-      expect(appErr.details).toMatchObject({ currency: 'EUR', interval: 'yearly' })
+      expect(appErr.details).toMatchObject({
+        currency: 'EUR',
+        interval: 'yearly',
+      })
     }
   })
 
@@ -311,7 +318,9 @@ describe('billing.controller.ts — portal (Card 1.20)', () => {
       id: 'usr_abc123',
       stripeCustomerId: 'cus_test_123',
     })
-    mockCreatePortalSession.mockResolvedValue('https://billing.stripe.com/session/test')
+    mockCreatePortalSession.mockResolvedValue(
+      'https://billing.stripe.com/session/test',
+    )
 
     const request: any = {
       user: { userId: 'usr_abc123' },
@@ -331,7 +340,9 @@ describe('billing.controller.ts — portal (Card 1.20)', () => {
       id: 'usr_abc123',
       stripeCustomerId: 'cus_test_123',
     })
-    mockCreatePortalSession.mockResolvedValue('https://billing.stripe.com/session/test')
+    mockCreatePortalSession.mockResolvedValue(
+      'https://billing.stripe.com/session/test',
+    )
 
     const request: any = {
       user: { userId: 'usr_abc123' },
@@ -340,7 +351,10 @@ describe('billing.controller.ts — portal (Card 1.20)', () => {
 
     await portal(request, makeReply())
 
-    expect(mockCreatePortalSession).toHaveBeenCalledWith('cus_test_123', 'http://localhost:3000')
+    expect(mockCreatePortalSession).toHaveBeenCalledWith(
+      'cus_test_123',
+      'http://localhost:3000',
+    )
   })
 })
 
@@ -385,7 +399,10 @@ describe('billing.controller.ts — prices (Card 1.20)', () => {
 
     await prices(request, reply)
 
-    expect(reply.header).toHaveBeenCalledWith('Cache-Control', 'public, max-age=300')
+    expect(reply.header).toHaveBeenCalledWith(
+      'Cache-Control',
+      'public, max-age=300',
+    )
   })
 
   it('deve retornar array vazio em currencies quando nenhuma moeda configurada', async () => {
