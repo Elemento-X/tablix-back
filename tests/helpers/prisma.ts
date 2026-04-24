@@ -1,53 +1,102 @@
 /**
- * Prisma helper para testes de integração com DB REAL.
+ * Prisma helper para testes de INTEGRAÇÃO com DB REAL (Card 3.1b).
  *
- * STATUS: STUB — bloqueado até Card 3.1b (Testcontainers + Postgres efêmero).
+ * Contrato:
+ * - `getTestPrisma()` retorna singleton PrismaClient vinculado ao
+ *   DATABASE_URL apontando para o container Postgres efêmero (setado pelo
+ *   globalSetup em `tests/helpers/global-setup.ts`).
+ * - `truncateAll()` limpa todas as tabelas do schema `public`
+ *   (dinamicamente via information_schema — sem lista hardcoded que vira
+ *   drift quando o schema evolui). Usa `RESTART IDENTITY CASCADE` para
+ *   zerar sequences e respeitar FKs.
+ * - `disconnectTestPrisma()` fecha a conexão — útil em `afterAll` por
+ *   suíte pra evitar warnings de handle pendente no Vitest.
  *
- * O plano (Card 3.1b):
- * - Usar `@testcontainers/postgresql` para subir Postgres 17 em container efêmero
- *   por suíte (não por teste — custo de startup é alto).
- * - Aplicar migrations com `prisma migrate deploy` apontando para o DATABASE_URL
- *   do container.
- * - Expor `getTestPrisma()` que retorna um PrismaClient vinculado ao container
- *   atual, e `truncateAll()` para reset rápido entre testes da mesma suíte.
- * - `beforeAll` sobe o container e aplica schema; `afterAll` derruba.
- * - Pré-requisito: Docker Desktop instalado e rodando na máquina do dev + no CI.
+ * **Guard:** se chamado fora de modo integração (ex: unit test importou
+ * sem querer, ou rodou antes do globalSetup rodar), lança erro explícito.
+ * Usa `TABLIX_TEST_MODE=integration` como sinal, setado pelo globalSetup.
  *
- * Até lá, testes de integração que dependam de Prisma REAL devem ser marcados
- * com `describe.skip` ou gated por env flag. Unit tests continuam usando
- * `tests/helpers/prisma-mock.ts` (vi.fn por método), que NÃO atinge banco.
- *
- * Referências:
- * - Card #30 (3.1a): scaffold sem Docker, esta stub
- * - Card 3.1b: Testcontainers setup (bloqueado até Docker ser instalado)
- * - Card 3.3 (#32): testes de integração consomem este helper
+ * **Para unit tests:** continue usando `tests/helpers/prisma-mock.ts` —
+ * nunca atinge banco, rápido, isolado.
  *
  * @owner: @tester
+ * @card: 3.1b
  */
+import { PrismaClient } from '@prisma/client'
 
-const CARD_3_1B_MSG = [
-  'tests/helpers/prisma.ts é um STUB.',
-  'Integração com DB real exige Testcontainers — ver Card 3.1b.',
-  'Pré-requisito: Docker Desktop instalado e rodando.',
-  'Até lá, use tests/helpers/prisma-mock.ts (createPrismaMock) em unit tests.',
-].join(' ')
+let singleton: PrismaClient | null = null
+
+function assertIntegrationMode() {
+  if (process.env.TABLIX_TEST_MODE !== 'integration') {
+    throw new Error(
+      '[prisma-test-helper] Chamado fora de modo integração. ' +
+        'Use "npm run test:integration" (carrega globalSetup) ou, em unit tests, ' +
+        'importe createPrismaMock de tests/helpers/prisma-mock.ts.',
+    )
+  }
+  if (!process.env.DATABASE_URL) {
+    throw new Error(
+      '[prisma-test-helper] DATABASE_URL não setado. globalSetup deveria ter populado — verificar ordem de execução.',
+    )
+  }
+}
+
+export function getTestPrisma(): PrismaClient {
+  assertIntegrationMode()
+  if (!singleton) {
+    singleton = new PrismaClient({
+      datasources: { db: { url: process.env.DATABASE_URL } },
+      log: ['warn', 'error'],
+    })
+  }
+  return singleton
+}
+
+// Identifiers Postgres aceitos em schema.public sem quoting especial.
+// Vale a pena validar mesmo os rows vindo de `pg_tables` — é defesa em
+// profundidade: se algum dia um migration criar tabela com nome estranho
+// (acentos, aspas, null-byte), TRUNCATE com identifier não-sanitizado
+// vira vetor de injection dentro do teste. Custo zero, segurança real.
+const SAFE_IDENTIFIER = /^[a-zA-Z_][a-zA-Z0-9_]*$/
 
 /**
- * Lança erro explícito para qualquer teste que importar este helper antes do
- * Card 3.1b estar pronto. Fail-loud é melhor que fail-silent com mock acidental.
+ * Trunca todas as tabelas base do schema `public` (exclui tabelas de
+ * extensão, views, etc). Descoberta dinâmica — mesmo que schema evolua,
+ * truncateAll continua correto sem manutenção manual.
+ *
+ * `RESTART IDENTITY` zera sequences; `CASCADE` respeita FKs truncando em
+ * cadeia — importante porque users é referenciado por sessions/tokens/etc.
  */
-export function getTestPrisma(): never {
-  throw new Error(CARD_3_1B_MSG)
+export async function truncateAll(): Promise<void> {
+  const prisma = getTestPrisma()
+  const rows = await prisma.$queryRaw<{ tablename: string }[]>`
+    SELECT tablename
+    FROM pg_tables
+    WHERE schemaname = 'public'
+  `
+  if (rows.length === 0) return
+  const identifiers = rows
+    .map((r) => {
+      if (!SAFE_IDENTIFIER.test(r.tablename)) {
+        throw new Error(
+          `[truncateAll] Nome de tabela inesperado: ${JSON.stringify(r.tablename)}. ` +
+            'Identifier não passou pela regex de segurança — aborta pra evitar injection.',
+        )
+      }
+      return `"public"."${r.tablename}"`
+    })
+    .join(', ')
+  await prisma.$executeRawUnsafe(
+    `TRUNCATE TABLE ${identifiers} RESTART IDENTITY CASCADE`,
+  )
 }
 
-export function truncateAll(): never {
-  throw new Error(CARD_3_1B_MSG)
-}
-
-export function setupTestDatabase(): never {
-  throw new Error(CARD_3_1B_MSG)
-}
-
-export function teardownTestDatabase(): never {
-  throw new Error(CARD_3_1B_MSG)
+/**
+ * Fecha a conexão do singleton. Safe to call multiple times.
+ */
+export async function disconnectTestPrisma(): Promise<void> {
+  if (singleton) {
+    await singleton.$disconnect()
+    singleton = null
+  }
 }

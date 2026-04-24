@@ -25,7 +25,13 @@ export default defineConfig({
     globals: true,
     root: '.',
     include: ['tests/**/*.test.ts'],
-    exclude: ['node_modules', 'dist'],
+    exclude: [
+      'node_modules',
+      'dist',
+      // Integration tests rodam em config próprio (vitest.integration.config.ts)
+      // com globalSetup de Testcontainers. Excluir aqui evita dupla execução.
+      'tests/**/*.integration.test.ts',
+    ],
     coverage: {
       provider: 'istanbul',
       reporter: ['text', 'text-summary', 'lcov', 'html'],

@@ -9,3 +9,6 @@ coverage/
 .env
 .env.local
 .env.*.local
+
+# Test fixtures — stamp de regeneração do schema snapshot
+tests/fixtures/*.stamp

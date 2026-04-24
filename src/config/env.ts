@@ -88,6 +88,10 @@ const envSchema = z
       'change-in-production',
       'CHANGE_ME',
       'GENERATE_ME',
+      // Marcador de test-only usado em helpers (ex: tests/helpers/jwt-mock).
+      // Vazar esse valor pra prod = JWT forjável por qualquer um com acesso
+      // ao repo. Rejeita no boot independente de NODE_ENV.
+      'FAKE_TEST_KEY',
     ]
     if (jwtPlaceholders.some((p) => data.JWT_SECRET.includes(p))) {
       ctx.addIssue({
