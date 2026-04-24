@@ -9,6 +9,7 @@ import {
   validatorCompiler,
   jsonSchemaTransform,
   ZodTypeProvider,
+  hasZodFastifySchemaValidationErrors,
 } from 'fastify-type-provider-zod'
 import { env } from './config/env'
 import { buildLoggerOptions, genReqId } from './config/logger'
@@ -136,13 +137,33 @@ export async function buildApp() {
         return reply.status(error.statusCode).send(error.toJSON())
       }
 
-      // Erro de validação do Fastify
+      // Erro de validação do fastify-type-provider-zod (Card #32a).
+      // ZodError não tem o campo `.validation` do AJV — se não for tratado
+      // aqui, cai no catch genérico abaixo e vira 500 (bug @reviewer/@security
+      // revelado pelo Card #32). `hasZodFastifySchemaValidationErrors` é o
+      // type guard oficial exportado pela lib.
+      //
+      // `details` precisa bater com `z.record(z.unknown())` do
+      // errorDetailSchema (common.schema.ts) — o array `error.validation`
+      // do fastify-type-provider-zod é wrapado em `{ errors: [...] }` pra
+      // passar na validação do response schema da rota (que declara 400).
+      if (hasZodFastifySchemaValidationErrors(error)) {
+        return reply.status(400).send({
+          error: {
+            code: 'VALIDATION_ERROR',
+            message: 'Erro de validação',
+            details: { errors: error.validation },
+          },
+        })
+      }
+
+      // Erro de validação do Fastify/AJV (schemas não-Zod)
       if ('validation' in error && error.validation) {
         return reply.status(400).send({
           error: {
             code: 'VALIDATION_ERROR',
             message: 'Erro de validação',
-            details: error.validation,
+            details: { errors: error.validation },
           },
         })
       }

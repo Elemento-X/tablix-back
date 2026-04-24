@@ -171,6 +171,7 @@ describe('auth.service.ts', () => {
     it('deve autenticar com token valido e criar sessao', async () => {
       prismaMock.token.findUnique.mockResolvedValue(buildToken())
       prismaMock.token.update.mockResolvedValue(buildToken())
+      prismaMock.token.updateMany.mockResolvedValue({ count: 1 })
       prismaMock.user.update.mockResolvedValue(buildUser())
       prismaMock.session.create.mockResolvedValue(buildSession())
 
@@ -219,7 +220,7 @@ describe('auth.service.ts', () => {
           SESSION_INFO,
         ),
       ).rejects.toMatchObject({
-        code: 'SUBSCRIPTION_EXPIRED',
+        code: 'INVALID_TOKEN',
         message: 'Token inválido ou expirado',
       })
     })
@@ -235,7 +236,7 @@ describe('auth.service.ts', () => {
           SESSION_INFO,
         ),
       ).rejects.toMatchObject({
-        code: 'SUBSCRIPTION_EXPIRED',
+        code: 'INVALID_TOKEN',
       })
     })
 
@@ -244,6 +245,7 @@ describe('auth.service.ts', () => {
         buildToken({ status: 'CANCELLED', expiresAt: FUTURE }),
       )
       prismaMock.token.update.mockResolvedValue(buildToken())
+      prismaMock.token.updateMany.mockResolvedValue({ count: 1 })
       prismaMock.user.update.mockResolvedValue(buildUser())
       prismaMock.session.create.mockResolvedValue(buildSession())
 
@@ -266,15 +268,15 @@ describe('auth.service.ts', () => {
           SESSION_INFO,
         ),
       ).rejects.toMatchObject({
-        code: 'SUBSCRIPTION_EXPIRED',
+        code: 'INVALID_TOKEN',
       })
     })
 
-    it('deve vincular fingerprint no primeiro uso (fingerprint null)', async () => {
+    it('deve vincular fingerprint no primeiro uso via updateMany atômico (Card #32c)', async () => {
       prismaMock.token.findUnique.mockResolvedValue(
         buildToken({ fingerprint: null }),
       )
-      prismaMock.token.update.mockResolvedValue(buildToken())
+      prismaMock.token.updateMany.mockResolvedValue({ count: 1 })
       prismaMock.user.update.mockResolvedValue(buildUser())
       prismaMock.session.create.mockResolvedValue(buildSession())
 
@@ -283,8 +285,13 @@ describe('auth.service.ts', () => {
         SESSION_INFO,
       )
 
-      expect(prismaMock.token.update).toHaveBeenCalledWith(
+      // Card #32c — usa updateMany com WHERE fingerprint: null (previne
+      // TOCTOU race) em vez de update direto.
+      expect(prismaMock.token.updateMany).toHaveBeenCalledWith(
         expect.objectContaining({
+          where: expect.objectContaining({
+            fingerprint: null,
+          }),
           data: expect.objectContaining({
             fingerprint: 'fp-abc123',
           }),
@@ -303,7 +310,7 @@ describe('auth.service.ts', () => {
           fingerprint: 'fp-attacker-device',
         }),
       ).rejects.toMatchObject({
-        code: 'TOKEN_ALREADY_USED',
+        code: 'INVALID_TOKEN',
         message: 'Token inválido ou expirado',
       })
     })
@@ -330,6 +337,7 @@ describe('auth.service.ts', () => {
         buildToken({ user: buildUser({ role: 'FREE' }) }),
       )
       prismaMock.token.update.mockResolvedValue(buildToken())
+      prismaMock.token.updateMany.mockResolvedValue({ count: 1 })
       prismaMock.user.update.mockResolvedValue(buildUser({ role: 'PRO' }))
       prismaMock.session.create.mockResolvedValue(buildSession())
 
@@ -433,6 +441,9 @@ describe('auth.service.ts', () => {
         buildSession({ revokedAt: NOW }),
       )
 
+      // refreshSession ainda usa Errors.subscriptionExpired (Card #32b só
+      // unificou validateProToken — refresh tem UX justificada: session
+      // autenticada pode ver discriminação, diferente de endpoint pre-auth).
       await expect(refreshSession('some-token')).rejects.toMatchObject({
         code: 'SUBSCRIPTION_EXPIRED',
       })

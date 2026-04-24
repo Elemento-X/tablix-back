@@ -209,14 +209,13 @@ describe('POST /billing/create-checkout (integration)', () => {
     expect(res.status).toBe(500)
   })
 
-  it('5xx com email mal-formado (Zod schema da route — finding já documentado em auth)', async () => {
+  it('400 VALIDATION_ERROR com email mal-formado (pós Card #32a fix)', async () => {
     const res = await request(app.server)
       .post('/billing/create-checkout')
       .send({ email: 'not-an-email' })
 
-    // MESMO FINDING descoberto em auth.integration: Zod via
-    // fastify-type-provider-zod retorna 500 em vez de 400 pra input inválido.
-    expect(res.status).toBe(500)
+    expect(res.status).toBe(400)
+    expect(res.body.error?.code).toBe('VALIDATION_ERROR')
     expect(sessionCreateMock).not.toHaveBeenCalled()
   })
 

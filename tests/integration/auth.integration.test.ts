@@ -181,21 +181,15 @@ describe('POST /auth/validate-token (integration)', () => {
     expect(updated?.activatedAt).not.toBeNull()
   })
 
-  it('500 com formato de token inválido (Zod via fastify-type-provider retorna 500 — finding @security/@reviewer)', async () => {
+  it('400 VALIDATION_ERROR com formato de token inválido (pós Card #32a fix)', async () => {
     const res = await request(app.server)
       .post('/auth/validate-token')
       .send({ token: 'not-a-tablix-token', fingerprint: 'fp-x' })
 
-    // FINDING ALTO: validação do Zod schema declarado na route (body:
-    // validateTokenBodySchema) retorna 500 em vez de 400. O setErrorHandler
-    // trata `'validation' in error` mas fastify-type-provider-zod dispara
-    // erro no compile step com shape diferente — cai no catch genérico.
-    // Cliente recebe 5xx por input mal-formado, violando api-contract.md
-    // (validation = 400). Registrado aqui; correção em card separado do
-    // Backlog após pipeline QA.
-    expect(res.status).toBe(500)
-    // Body do 500 pode variar (Fastify serializa de forma diferente do
-    // error handler padrão quando o schema validator lança antes do handler).
+    // Card #32a — error handler agora trata ZodError via
+    // `hasZodFastifySchemaValidationErrors` antes do fallback 500.
+    expect(res.status).toBe(400)
+    expect(res.body.error?.code).toBe('VALIDATION_ERROR')
   })
 
   it('401 com token não existente no DB (formato válido mas desconhecido)', async () => {
@@ -208,7 +202,7 @@ describe('POST /auth/validate-token (integration)', () => {
     expect(res.body.error).toBeDefined()
   })
 
-  it('403 TOKEN_ALREADY_USED com fingerprint mismatch (error discrimination — finding @security)', async () => {
+  it('401 INVALID_TOKEN com fingerprint mismatch (pós Card #32b unify)', async () => {
     const tokenValue = generateProToken()
     await seedUserWithActiveToken('fp-mismatch@tablix.test', tokenValue, {
       fingerprint: 'fp-original',
@@ -218,15 +212,15 @@ describe('POST /auth/validate-token (integration)', () => {
       .post('/auth/validate-token')
       .send({ token: tokenValue, fingerprint: 'fp-attacker' })
 
-    // FINDING: security.md proíbe error discrimination; status 403 + code
-    // TOKEN_ALREADY_USED expõe ao atacante que o token existe mas foi
-    // usado em outro device (vs 401 + INVALID_TOKEN genérico). Resposta
-    // real do código atual — registrado pro @security revisar.
-    expect(res.status).toBe(403)
-    expect(res.body.error?.code).toBe('TOKEN_ALREADY_USED')
+    // Card #32b — resposta unificada: todos os ramos de falha retornam
+    // 401 + INVALID_TOKEN + mensagem neutra (security.md "não diferenciar").
+    // Audit interno preserva AuditAction.FINGERPRINT_MISMATCH pra forense.
+    expect(res.status).toBe(401)
+    expect(res.body.error?.code).toBe('INVALID_TOKEN')
+    expect(res.body.error?.message).toBe('Token inválido ou expirado')
   })
 
-  it('403 SUBSCRIPTION_EXPIRED com token status EXPIRED (error discrimination — finding @security)', async () => {
+  it('401 INVALID_TOKEN com token status EXPIRED (pós Card #32b unify)', async () => {
     const tokenValue = generateProToken()
     await seedUserWithActiveToken('expired@tablix.test', tokenValue, {
       status: 'EXPIRED',
@@ -236,13 +230,11 @@ describe('POST /auth/validate-token (integration)', () => {
       .post('/auth/validate-token')
       .send({ token: tokenValue, fingerprint: 'fp-x' })
 
-    // FINDING: idem acima — 403 + SUBSCRIPTION_EXPIRED diferencia de
-    // 401 + INVALID_TOKEN, expondo estado interno do token.
-    expect(res.status).toBe(403)
-    expect(res.body.error?.code).toBe('SUBSCRIPTION_EXPIRED')
+    expect(res.status).toBe(401)
+    expect(res.body.error?.code).toBe('INVALID_TOKEN')
   })
 
-  it('403 SUBSCRIPTION_EXPIRED com CANCELLED fora do grace period', async () => {
+  it('401 INVALID_TOKEN com CANCELLED fora do grace period (pós Card #32b unify)', async () => {
     const tokenValue = generateProToken()
     await seedUserWithActiveToken('cancelled@tablix.test', tokenValue, {
       status: 'CANCELLED',
@@ -253,8 +245,37 @@ describe('POST /auth/validate-token (integration)', () => {
       .post('/auth/validate-token')
       .send({ token: tokenValue, fingerprint: 'fp-x' })
 
-    expect(res.status).toBe(403)
-    expect(res.body.error?.code).toBe('SUBSCRIPTION_EXPIRED')
+    expect(res.status).toBe(401)
+    expect(res.body.error?.code).toBe('INVALID_TOKEN')
+  })
+
+  it('Card #32c race TOCTOU: 2 POSTs paralelos com fingerprints distintos não duplicam bind', async () => {
+    // Valida que updateMany condicional (WHERE fingerprint IS NULL) previne
+    // rebind silencioso quando 2 requests simultâneos passam o check linha 75.
+    const tokenValue = generateProToken()
+    await seedUserWithActiveToken('race@tablix.test', tokenValue, {
+      fingerprint: null,
+    })
+
+    const [resA, resB] = await Promise.all([
+      request(app.server)
+        .post('/auth/validate-token')
+        .send({ token: tokenValue, fingerprint: 'fp-device-A' }),
+      request(app.server)
+        .post('/auth/validate-token')
+        .send({ token: tokenValue, fingerprint: 'fp-device-B' }),
+    ])
+
+    const statuses = [resA.status, resB.status].sort()
+    // Exatamente 1 sucesso + 1 falha (não 2 sucessos silenciosos)
+    expect(statuses).toEqual([200, 401])
+
+    // Token no DB ficou com EXATAMENTE UM dos fingerprints (não sobrescrito)
+    const prisma = getTestPrisma()
+    const token = await prisma.token.findUnique({
+      where: { token: tokenValue },
+    })
+    expect(['fp-device-A', 'fp-device-B']).toContain(token?.fingerprint)
   })
 
   it('200 com token CANCELLED ainda dentro do grace period', async () => {
@@ -323,13 +344,10 @@ describe('POST /auth/refresh (integration)', () => {
     expect(res.status).toBe(401)
   })
 
-  it('500 com body inválido (Zod via fastify-type-provider retorna 500 — finding @security/@reviewer)', async () => {
+  it('400 VALIDATION_ERROR com body inválido (pós Card #32a fix)', async () => {
     const res = await request(app.server).post('/auth/refresh').send({})
-    // FINDING ALTO: idem ao `/auth/validate-token` com formato inválido
-    // acima. Schema Zod falha no compile e error handler global não pega
-    // corretamente — retorna 5xx por bug de cliente. Contradiz
-    // api-contract.md e expõe 500 pra input error.
-    expect(res.status).toBe(500)
+    expect(res.status).toBe(400)
+    expect(res.body.error?.code).toBe('VALIDATION_ERROR')
   })
 
   it('401 com session revogada (revokedAt setado)', async () => {

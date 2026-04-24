@@ -48,8 +48,14 @@ export async function validateProToken(
   token: string,
   sessionInfo: SessionInfo,
 ): Promise<ValidateTokenResult> {
+  // Card #32b — RESPOSTA UNIFICADA: todos os ramos de falha retornam
+  // 401 INVALID_TOKEN + "Token inválido ou expirado". security.md proíbe
+  // error discrimination em token errors (oracle de reconhecimento).
+  // Motivo real preservado via AuditAction.* para análise forense interna.
+  const GENERIC_ERROR = () => Errors.invalidToken('Token inválido ou expirado')
+
   if (!isValidTokenFormat(token)) {
-    throw Errors.invalidToken('Formato de token inválido')
+    throw GENERIC_ERROR()
   }
 
   const tokenRecord = await prisma.token.findUnique({
@@ -58,16 +64,16 @@ export async function validateProToken(
   })
 
   if (!tokenRecord) {
-    throw Errors.invalidToken('Token inválido ou expirado')
+    throw GENERIC_ERROR()
   }
 
   if (tokenRecord.status === 'EXPIRED') {
-    throw Errors.subscriptionExpired('Token inválido ou expirado')
+    throw GENERIC_ERROR() // antes: subscriptionExpired (403 SUBSCRIPTION_EXPIRED)
   }
 
   if (tokenRecord.status === 'CANCELLED') {
     if (!tokenRecord.expiresAt || tokenRecord.expiresAt < new Date()) {
-      throw Errors.subscriptionExpired('Token inválido ou expirado')
+      throw GENERIC_ERROR() // antes: subscriptionExpired (403 SUBSCRIPTION_EXPIRED)
     }
   }
 
@@ -82,7 +88,7 @@ export async function validateProToken(
       // Evento forense dedicado: preserva o motivo real (mismatch) antes do
       // controller logar TOKEN_VALIDATE_FAILURE com reason genérico. Permite
       // ao analista diferenciar compartilhamento de token (FINGERPRINT_MISMATCH)
-      // de token inválido/expirado (TOKEN_VALIDATE_FAILURE com code INVALID_TOKEN).
+      // de token inválido/expirado via audit log — sem expor ao cliente.
       emitAuditEvent({
         action: AuditAction.FINGERPRINT_MISMATCH,
         actor: tokenRecord.userId,
@@ -91,29 +97,64 @@ export async function validateProToken(
         success: false,
         metadata: { tokenId: tokenRecord.id },
       })
-      throw Errors.tokenAlreadyUsed('Token inválido ou expirado')
+      throw GENERIC_ERROR() // antes: tokenAlreadyUsed (403 TOKEN_ALREADY_USED)
     }
   } else {
-    // Primeiro uso — vincula fingerprint e ativa
-    await prisma.token.update({
-      where: { id: tokenRecord.id },
+    // Card #32c — PRIMEIRA VINCULAÇÃO ATÔMICA: updateMany com WHERE
+    // fingerprint=null previne race TOCTOU. Se 2 POSTs paralelos com
+    // fingerprints distintos entram: ambos lêem fingerprint=null, mas
+    // apenas UM consegue count=1 no updateMany (garantia atômica do
+    // PostgreSQL no single statement). O outro recebe count=0 e recarrega
+    // o registro pra comparar timing-safe com o fingerprint que venceu.
+    // security.md: "Nunca permitir rebind silencioso".
+    const updated = await prisma.token.updateMany({
+      where: {
+        id: tokenRecord.id,
+        fingerprint: null,
+      },
       data: {
         fingerprint: sessionInfo.fingerprint,
         activatedAt: new Date(),
       },
     })
 
-    // Audita o bind: primeiro uso do token, associa device→usuário.
-    // Recurring bind mismatch (token já tinha fingerprint) gera
-    // TOKEN_VALIDATE_FAILURE no controller, não FINGERPRINT_BOUND aqui.
-    emitAuditEvent({
-      action: AuditAction.FINGERPRINT_BOUND,
-      actor: tokenRecord.userId,
-      ip: sessionInfo.ipAddress ?? null,
-      userAgent: sessionInfo.userAgent ?? null,
-      success: true,
-      metadata: { tokenId: tokenRecord.id },
-    })
+    if (updated.count === 0) {
+      // Race perdida — outra request já vinculou. Recarrega e verifica se
+      // é o mesmo fingerprint (caso benigno: mesmo device 2x) ou diferente
+      // (caso adversarial: 2 devices tentando simultâneo).
+      const fresh = await prisma.token.findUnique({
+        where: { id: tokenRecord.id },
+      })
+      if (!fresh?.fingerprint) {
+        throw GENERIC_ERROR()
+      }
+      const match = safeCompare(fresh.fingerprint, sessionInfo.fingerprint)
+      if (!match) {
+        emitAuditEvent({
+          action: AuditAction.FINGERPRINT_MISMATCH,
+          actor: tokenRecord.userId,
+          ip: sessionInfo.ipAddress ?? null,
+          userAgent: sessionInfo.userAgent ?? null,
+          success: false,
+          metadata: {
+            tokenId: tokenRecord.id,
+            reason: 'race_lost_different_fingerprint',
+          },
+        })
+        throw GENERIC_ERROR()
+      }
+      // Race benigna: mesmo device, request duplicada — prossegue
+    } else {
+      // Vencedor da race (ou primeiro sem concorrência): audita o bind.
+      emitAuditEvent({
+        action: AuditAction.FINGERPRINT_BOUND,
+        actor: tokenRecord.userId,
+        ip: sessionInfo.ipAddress ?? null,
+        userAgent: sessionInfo.userAgent ?? null,
+        success: true,
+        metadata: { tokenId: tokenRecord.id },
+      })
+    }
   }
 
   // User já existe (criado pelo webhook) — atualiza role se necessário
