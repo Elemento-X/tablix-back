@@ -16,34 +16,12 @@ import { captureException } from './config/sentry'
 import { registerRoutes } from './http/routes'
 import { AppError } from './errors/app-error'
 import { PRO_LIMITS } from './lib/spreadsheet'
+import { resolveTrustProxy } from './lib/trust-proxy'
 
-/**
- * Card 1.12 — Resolve configuração de trustProxy de forma fail-closed.
- *
- * trustProxy controla como Fastify resolve `request.ip` a partir de
- * X-Forwarded-For. Ler XFF cru é spoofável; só devemos confiar em XFF
- * vindo de hops comprovadamente nossos.
- *
- * NODE_ENV é enum fechado `['development','production','test']` (ver env.ts).
- * Exaustividade garantida pelo `switch` — qualquer valor novo vira erro de
- * compilação, prevenindo fail-open silencioso (ex: staging novo sem trust
- * explícito).
- *
- * - `production`: 1 hop (load balancer da plataforma — Fly.io/Render).
- *   TODO (Fase 8): trocar por allowlist explícita de IPs do Fly.io.
- * - `development` / `test`: loopback CIDRs explícitos. Curl/integração
- *   local continua funcionando, mas XFF spoofado de 1.2.3.4 não é
- *   honrado — `request.ip` permanece como o hop loopback real.
- */
-export function resolveTrustProxy(): number | string[] {
-  switch (env.NODE_ENV) {
-    case 'production':
-      return 1
-    case 'development':
-    case 'test':
-      return ['127.0.0.0/8', '::1/128']
-  }
-}
+// resolveTrustProxy re-exportado para preservar consumers de teste históricos.
+// Implementação real em ./lib/trust-proxy.ts — extraído no Card 3.2 (#31) pra
+// permitir unit test sob coverage sem re-instrumentar todo o app.
+export { resolveTrustProxy }
 
 export async function buildApp() {
   // Card 2.1 — logger e reqId centralizados em src/config/logger.ts.

@@ -472,4 +472,107 @@ describe('jwt.ts', () => {
       expect(result.getTime()).toBeGreaterThan(now.getTime())
     })
   })
+
+  // =============================================
+  // Edge cases defensivos (Card 3.2 — coverage gap fill)
+  // =============================================
+  describe('verifyAccessToken — defensivo', () => {
+    it('retorna error:malformed quando jwt.verify lança erro inesperado (não Expired/JsonWebToken)', () => {
+      // Força o catch a cair no branch que retorna 'malformed' (jwt.ts:77).
+      // Na prática a jsonwebtoken só lança TokenExpiredError ou
+      // JsonWebTokenError, mas o defensivo existe para proteção contra
+      // upgrade de lib que introduza novo Error class.
+      const spy = vi.spyOn(jwt, 'verify').mockImplementationOnce(() => {
+        throw new Error('unexpected low-level failure')
+      })
+      const result = verifyAccessToken('any-token')
+      expect(result.valid).toBe(false)
+      if (!result.valid) {
+        expect(result.error).toBe('malformed')
+      }
+      spy.mockRestore()
+    })
+  })
+
+  describe('verifyAccessTokenOrThrow — malformed', () => {
+    it('lança AppError INVALID_TOKEN com mensagem específica "Token malformado"', () => {
+      // Cobre jwt.ts:122-123 (case 'malformed' do switch).
+      const spy = vi.spyOn(jwt, 'verify').mockImplementationOnce(() => {
+        throw new Error('unexpected low-level failure')
+      })
+      try {
+        verifyAccessTokenOrThrow('any-token')
+        expect.unreachable('deveria ter lançado AppError')
+      } catch (err) {
+        expect(err).toBeInstanceOf(AppError)
+        const appErr = err as AppError
+        expect(appErr.code).toBe('INVALID_TOKEN')
+        expect(appErr.message).toBe('Token malformado')
+      }
+      spy.mockRestore()
+    })
+  })
+
+  describe('decodeJwt — defensivo', () => {
+    it('retorna null quando jwt.decode lança (guard defensivo)', () => {
+      // Cobre jwt.ts:92-93. jwt.decode não lança na versão atual, mas o
+      // catch existe para blindar contra upgrade da lib.
+      const spy = vi.spyOn(jwt, 'decode').mockImplementationOnce(() => {
+        throw new Error('forced decode error')
+      })
+      expect(decodeJwt('any-token')).toBeNull()
+      spy.mockRestore()
+    })
+
+    it('retorna null quando jwt.decode retorna string (caso raro: token sem claims)', () => {
+      // Cobre o `typeof decoded === 'object'` do jwt.ts:88 — se decoded
+      // não for object (pode ser string em tokens minimalistas), retorna
+      // null em vez de castar incorretamente.
+      const spy = vi
+        .spyOn(jwt, 'decode')
+        .mockImplementationOnce(
+          () => 'stringy-decoded-value' as unknown as null,
+        )
+      expect(decodeJwt('any-token')).toBeNull()
+      spy.mockRestore()
+    })
+  })
+})
+
+// =============================================
+// getRefreshTokenExpiresAt — fallback de formato inválido
+// =============================================
+describe('getRefreshTokenExpiresAt — fallback 30d', () => {
+  afterEach(() => {
+    vi.resetModules()
+    vi.doUnmock('../../src/config/env')
+  })
+
+  it('retorna 30 dias no futuro quando JWT_REFRESH_TOKEN_EXPIRES_IN tem formato inválido', async () => {
+    // Cobre jwt.ts:137-140 — regex `/^(\d+)([smhd])$/` falha para formato
+    // malformado. Default seguro: 30 dias.
+    vi.resetModules()
+    vi.doMock('../../src/config/env', () => ({
+      env: {
+        PORT: 3333,
+        NODE_ENV: 'test',
+        DATABASE_URL: 'postgresql://fake:fake@localhost:5432/fakedb',
+        JWT_SECRET: 'FAKE_TEST_KEY_aaaaaaaaaaaabbbbbbbbbbbbcccccccccccc',
+        JWT_ACCESS_TOKEN_EXPIRES_IN: '15m',
+        JWT_REFRESH_TOKEN_EXPIRES_IN: 'malformed-format', // ← força fallback
+        FRONTEND_URL: 'http://localhost:3000',
+        EMAIL_PROVIDER: 'resend',
+        FROM_EMAIL: 'Tablix <noreply@tablix.com.br>',
+      },
+    }))
+    const mod = await import('../../src/lib/jwt')
+    const before = Date.now()
+    const result = mod.getRefreshTokenExpiresAt()
+    const thirtyDaysMs = 30 * 24 * 60 * 60 * 1000
+    // Tolerância de 5s pra execução do teste
+    expect(result.getTime()).toBeGreaterThanOrEqual(
+      before + thirtyDaysMs - 5000,
+    )
+    expect(result.getTime()).toBeLessThanOrEqual(before + thirtyDaysMs + 5000)
+  })
 })

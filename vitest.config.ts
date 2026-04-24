@@ -56,6 +56,15 @@ export default defineConfig({
         'src/lib/health/check-redis.ts',
         'src/lib/health/orchestrator.ts',
         'src/http/routes/health.routes.ts',
+        // Card 3.2 (#31) — libs puras de src/lib/ incluídas na whitelist
+        // quando têm testes unitários maduros (≥90% target).
+        'src/lib/token-generator.ts',
+        'src/lib/trust-proxy.ts',
+        'src/lib/email.ts',
+        'src/lib/logger.ts',
+        'src/lib/parse-selected-columns.ts',
+        'src/lib/security/webhook-circuit-breaker.ts',
+        'src/lib/audit/audit.service.ts',
       ],
       exclude: [
         // Entrypoints — testados via smoke/integration, não unitários

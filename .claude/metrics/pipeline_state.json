@@ -1,27 +1,36 @@
 {
   "schema_version": 1,
-  "updated_at": "2026-04-24T17:00:00Z",
+  "updated_at": "2026-04-24T18:30:00Z",
   "current": null,
   "last_completed": {
-    "card_id": "69d7a8598f9aa68e7ac8d4fa",
-    "card_short_link": "InUJflEf",
-    "card_title": "3.1 (#30) + 3.1b (#97) — Scaffold de testes + helpers globais + Testcontainers + drift detection (consolidado)",
+    "card_id": "69d7a85e4f98b64cb676e2c3",
+    "card_short_link": "18W31IOe",
+    "card_id_short": 31,
+    "card_title": "3.2 — Testes unitários de src/lib/",
+    "phase": "Fase 3 — Testes & Qualidade",
+    "decision": "APPROVED",
+    "cycles": 1,
+    "done_at": "2026-04-24T18:30:00Z",
+    "commit": "pending",
+    "lead_time_hours": 1.0,
+    "mttr_hours": null,
+    "cost_usd": 1.75,
+    "fast_path": false,
+    "waivers_applied": [],
+    "cards_discovered": 2,
+    "notes": "Pipeline 1 ciclo: @reviewer APPROVED_CONDITIONAL (F4 MÉDIO coverage emprestada em email.ts) → resolvido criando tests/unit/lib-email.test.ts (16 tests) → APPROVED sem waiver. Refactor cirúrgico de resolveTrustProxy pra src/lib/. 1039 testes verdes. Coverage global 97.98/92.6/98.62/98.28, src/lib agregado 99/95.65/100/98.98."
+  },
+  "previously_completed": {
     "card_ids_combined": [
       "69d7a8598f9aa68e7ac8d4fa",
       "69e69a6f2c9867a724df7b19"
     ],
-    "phase": "Fase 3 — Testes & Qualidade",
+    "card_title": "3.1 (#30) + 3.1b (#97) — Scaffold + Testcontainers + drift detection (consolidado)",
     "decision": "APPROVED",
     "cycles": 2,
     "done_at": "2026-04-24T17:00:00Z",
-    "commit": "pending",
-    "lead_time_hours": 4.25,
-    "mttr_hours": 0.58,
-    "cost_usd": 4.35,
-    "fast_path": false,
-    "waivers_applied": ["WV-2026-005"],
-    "cards_discovered": 4,
-    "notes": "Pipeline em 2 ciclos: #1 REPROVED_HARD (CRÍTICO drift schema.sql pós-Card #98 DB Hardening) → fix-all em 35min → #2 APPROVED unânime. Tiebreaker formal @reviewer: CRÍTICO > ALTO no drift. 973 testes verdes (959 unit + 14 integration)."
+    "commit": "2c4169d",
+    "waivers_applied": ["WV-2026-005"]
   },
   "phases": {
     "completed": [
@@ -50,7 +59,6 @@
       "started_at": "2026-04-20T21:10:00Z",
       "in_progress": [],
       "next": [
-        "3.2 (#31) testes unitários de src/lib/ — ALTO (meta 90% coverage) — DESBLOQUEADO",
         "3.3 (#32) testes de integração dos módulos (auth/billing/process/usage) — ALTO — DESBLOQUEADO",
         "3.4 (#74) Idempotency-Key em POST /billing/create-checkout — ALTO + SEGURANÇA (due 2026-05-05)"
       ],
@@ -59,10 +67,11 @@
         "#86 webhook-circuit-breaker TOCTOU Lua atomic (BAIXO, pipeline-discovery de 2.4)"
       ],
       "done": [
-        "3.1 (#30) + 3.1b (#97) — Scaffold + Testcontainers + drift detection (APPROVED 2026-04-24)",
+        "3.1 (#30) + 3.1b (#97) — Scaffold + Testcontainers + drift detection (APPROVED 2026-04-24, commit 2c4169d)",
+        "3.2 (#31) — Testes unitários de src/lib/ (APPROVED 2026-04-24, 1039 testes)",
         "98 — Fase 3 DB Hardening TIMESTAMPTZ + UUID native + drop orphan indexes (APPROVED 2026-04-24, commit 43bc1c2)"
       ],
-      "rationale": "Infra de testes liberada: helpers globais + Testcontainers + schema drift detection validados. Próximo: 3.2 (unit coverage 90% em src/lib) → 3.3 (integration dos módulos, consome helpers recém-aprovados) → 3.4 Idempotency-Key com as integrações em cima. Deadline 3.4 = 2026-05-05 (11 dias)."
+      "rationale": "Card 3.2 fechou: coverage src/lib ≥90% (99/95.65/100/98.98). 1039 testes verdes. Próximo: 3.3 (integration dos módulos consumindo helpers + testcontainers) → 3.4 Idempotency-Key. Deadline 3.4 = 2026-05-05 (11 dias restantes)."
     },
     "new_debt_phases_created_2026-04-20": [
       {
