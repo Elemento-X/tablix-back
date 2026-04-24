@@ -1,24 +1,39 @@
 {
   "schema_version": 1,
-  "updated_at": "2026-04-24T21:30:00Z",
+  "updated_at": "2026-04-24T21:45:00Z",
   "current": null,
   "last_completed": {
+    "card_ids": [
+      "69ebcf89440f3009cf24e9a6",
+      "69ebcf9f9a1eb2c047a7ef89",
+      "69ebcfb55b92247585c33569"
+    ],
+    "card_short_links": ["s01lwPyP", "i03eMWQZ", "xRZYeRg4"],
+    "card_id_shorts": [105, 106, 107],
+    "card_title": "3.3a+b+c — fix-all pack dos 3 ALTO do Card #32",
+    "phase": "Fase 3 — Testes & Qualidade",
+    "decision": "APPROVED",
+    "cycles": 1,
+    "done_at": "2026-04-24T21:15:00Z",
+    "commit": "92fbb17",
+    "lead_time_hours": 0.42,
+    "mttr_hours": null,
+    "cost_usd": 0.77,
+    "fast_path": false,
+    "waivers_applied": [],
+    "cards_discovered": 0,
+    "notes": "Fix-all pack dos 3 ALTO do Card #32 em commit único (92fbb17, 5 arquivos, +155/-65). #105 Zod handler (hasZodFastifySchemaValidationErrors + wrap details em {errors:[...]} pra bater com z.record(z.unknown()) do errorDetailSchema); #106 unify validateProToken (5 ramos → 401 INVALID_TOKEN, AuditAction.FINGERPRINT_MISMATCH preservado, refreshSession/getUserInfo intencionalmente não alterados); #107 race TOCTOU (updateMany com WHERE fingerprint:null + safeCompare timing-safe em count=0 + teste Promise.all concorrente). Smart re-run skipping @dba/@tester/@performance: só @security + @reviewer re-rodaram ($0.77 vs $5.10 do #32 original). 1114 tests verdes (1039 unit + 75 integration)."
+  },
+  "previously_completed": {
     "card_id": "69d7a862c050bfabbeb36a3b",
     "card_short_link": "TseszkfE",
     "card_id_short": 32,
-    "card_title": "3.3 — Testes de integração dos módulos (auth/billing/process/usage)",
-    "phase": "Fase 3 — Testes & Qualidade",
+    "card_title": "3.3 — Testes de integração dos módulos",
     "decision": "APPROVED_CONDITIONAL",
     "cycles": 1,
     "done_at": "2026-04-24T21:30:00Z",
-    "commit": "pending",
-    "lead_time_hours": 2.0,
-    "mttr_hours": null,
-    "cost_usd": 5.1,
-    "fast_path": false,
-    "waivers_applied": [],
-    "cards_discovered": 11,
-    "notes": "Pipeline 1 ciclo — 5 agentes: @tester REPROVED_SOFT, @security/@dba/@performance APROVADOS, @reviewer APPROVED_CONDITIONAL. Tiebreakers: F2 error discrimination MÉDIO→ALTO (security.md literal), unificar token errors em 401+INVALID_TOKEN, aprovar card com 3 cards fix obrigatórios na fase atual (sem waiver). 60 tests novos = 74 integration; 1099 total. 11 cards follow-up: #105 (3.3a Zod handler), #106 (3.3b auth unify), #107 (3.3c race TOCTOU), #108-115 (BL-01..08). Gaps pré-existentes revelados: Zod→500, error discrimination, webhook missing header 500, race TOCTOU fingerprint, gap coverage stripe portal, race webhook idempotency, getUserInfo roundtrips."
+    "commit": "7771628",
+    "cards_discovered": 11
   },
   "previously_completed": {
     "card_id": "69d7a85e4f98b64cb676e2c3",
