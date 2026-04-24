@@ -18,12 +18,16 @@ datasource db {
 // Entidade central de identidade, desacoplada de billing
 
 model User {
-  id               String   @id @default(uuid())
+  // UUID nativo (16 bytes) + gen_random_uuid() no DB é SSOT do id.
+  // `dbgenerated` impede o Prisma de gerar UUID no app (drift entre
+  // inserts via Prisma vs SQL direto). Padrão estabelecido em audit_log
+  // (Card 2.4) e replicado para User/Session/Token/Usage/Job na Fase 3.
+  id               String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   email            String   @unique @db.VarChar(255)
   role             Role     @default(FREE)
   stripeCustomerId String?  @unique @map("stripe_customer_id") @db.VarChar(255)
-  createdAt        DateTime @default(now()) @map("created_at")
-  updatedAt        DateTime @updatedAt @map("updated_at")
+  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt        DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   // Relacionamentos
   tokens   Token[]
@@ -41,16 +45,16 @@ model User {
 // Logout revoga a session (seta revokedAt).
 
 model Session {
-  id               String    @id @default(uuid())
-  userId           String    @map("user_id")
+  id               String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId           String    @map("user_id") @db.Uuid
   fingerprint      String?   @db.VarChar(64)
   userAgent        String?   @map("user_agent") @db.VarChar(512)
   ipAddress        String?   @map("ip_address") @db.VarChar(45)
   refreshTokenHash String    @unique @map("refresh_token_hash") @db.VarChar(64)
-  createdAt        DateTime  @default(now()) @map("created_at")
-  lastActivityAt   DateTime  @default(now()) @map("last_activity_at")
-  expiresAt        DateTime  @map("expires_at")
-  revokedAt        DateTime? @map("revoked_at")
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  lastActivityAt   DateTime  @default(now()) @map("last_activity_at") @db.Timestamptz(3)
+  expiresAt        DateTime  @map("expires_at") @db.Timestamptz(3)
+  revokedAt        DateTime? @map("revoked_at") @db.Timestamptz(3)
 
   // Relacionamento
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -68,22 +72,24 @@ model Session {
 // Mecanismo de ativacao, nao identidade.
 
 model Token {
-  id                   String      @id @default(uuid())
-  userId               String      @map("user_id")
+  id                   String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId               String      @map("user_id") @db.Uuid
   token                String      @unique @db.VarChar(64)
   fingerprint          String?     @db.VarChar(64)
   stripeSubscriptionId String?     @map("stripe_subscription_id") @db.VarChar(255)
   plan                 Plan        @default(PRO)
   status               TokenStatus @default(ACTIVE)
-  createdAt            DateTime    @default(now()) @map("created_at")
-  activatedAt          DateTime?   @map("activated_at")
-  expiresAt            DateTime?   @map("expires_at")
+  createdAt            DateTime    @default(now()) @map("created_at") @db.Timestamptz(3)
+  activatedAt          DateTime?   @map("activated_at") @db.Timestamptz(3)
+  expiresAt            DateTime?   @map("expires_at") @db.Timestamptz(3)
 
   // Relacionamento — RESTRICT: cancelar subscription antes de deletar user
   user User @relation(fields: [userId], references: [id], onDelete: Restrict)
 
   @@unique([userId, stripeSubscriptionId], map: "uq_tokens_user_subscription")
-  @@index([token])
+  // NOTA: índice `tokens_token_idx` (BTREE em token) era redundante com
+  // `tokens_token_key` UNIQUE — droppado em Fase 3 Migration C. UNIQUE
+  // serve queries de leitura tão bem quanto BTREE comum.
   @@index([fingerprint])
   @@index([userId], map: "idx_tokens_user")
   @@map("tokens")
@@ -95,11 +101,11 @@ model Token {
 // Controla quantas unificacoes o usuario fez no mes
 
 model Usage {
-  id                String   @id @default(uuid())
-  userId            String   @map("user_id")
+  id                String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId            String   @map("user_id") @db.Uuid
   period            String   @db.VarChar(7) // Formato: 'YYYY-MM'
   unificationsCount Int      @default(0) @map("unifications_count")
-  createdAt         DateTime @default(now()) @map("created_at")
+  createdAt         DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
 
   // Relacionamento — RESTRICT: preservar historico de billing
   user User @relation(fields: [userId], references: [id], onDelete: Restrict)
@@ -114,15 +120,15 @@ model Usage {
 // Para arquivos >10MB que precisam de processamento em fila
 
 model Job {
-  id            String    @id @default(uuid())
-  userId        String    @map("user_id")
+  id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId        String    @map("user_id") @db.Uuid
   status        JobStatus @default(PENDING)
   inputFiles    Json      @map("input_files")
   outputFileUrl String?   @map("output_file_url") @db.VarChar(500)
   errorMessage  String?   @map("error_message")
-  createdAt     DateTime  @default(now()) @map("created_at")
-  startedAt     DateTime? @map("started_at")
-  completedAt   DateTime? @map("completed_at")
+  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  startedAt     DateTime? @map("started_at") @db.Timestamptz(3)
+  completedAt   DateTime? @map("completed_at") @db.Timestamptz(3)
 
   // Relacionamento
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
