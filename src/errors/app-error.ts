@@ -22,6 +22,10 @@ export const ErrorCodes = {
   PORTAL_FAILED: 'PORTAL_FAILED',
   CURRENCY_UNAVAILABLE: 'CURRENCY_UNAVAILABLE',
 
+  // Idempotency (Card #74)
+  IDEMPOTENCY_CONFLICT: 'IDEMPOTENCY_CONFLICT',
+  IDEMPOTENCY_IN_PROGRESS: 'IDEMPOTENCY_IN_PROGRESS',
+
   // Geral
   VALIDATION_ERROR: 'VALIDATION_ERROR',
   NOT_FOUND: 'NOT_FOUND',
@@ -124,6 +128,18 @@ export const Errors = {
         interval,
       },
     ),
+
+  // Idempotency (Card #74) — mesma Idempotency-Key com body diferente.
+  // Alinhado com Stripe spec (422 Unprocessable Entity).
+  idempotencyConflict: (
+    message = 'Idempotency-Key já usada com payload diferente',
+  ) => new AppError(ErrorCodes.IDEMPOTENCY_CONFLICT, message, 422),
+
+  // Outro worker já está processando a mesma key (lock detido).
+  // Cliente deve retentar após alguns segundos (Retry-After header).
+  idempotencyInProgress: (
+    message = 'Requisição similar já está sendo processada',
+  ) => new AppError(ErrorCodes.IDEMPOTENCY_IN_PROGRESS, message, 409),
 
   validationError: (message: string, details?: ErrorDetails) =>
     new AppError(ErrorCodes.VALIDATION_ERROR, message, 400, details),

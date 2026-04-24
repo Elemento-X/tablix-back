@@ -166,6 +166,7 @@ describe('billing.controller.ts — createCheckout (Card 1.20)', () => {
 
     const request: any = {
       body: { email: 'user@example.com', plan: 'monthly', currency: 'BRL' },
+      headers: {},
     }
     const reply = makeReply()
 
@@ -184,6 +185,7 @@ describe('billing.controller.ts — createCheckout (Card 1.20)', () => {
 
     const request: any = {
       body: { email: 'user@example.com', plan: 'monthly', currency: 'BRL' },
+      headers: {},
     }
     const reply = makeReply()
 
@@ -236,6 +238,7 @@ describe('billing.controller.ts — createCheckout (Card 1.20)', () => {
 
     const request: any = {
       body: { email: 'user@example.com' },
+      headers: {},
     }
 
     await createCheckout(request, makeReply())

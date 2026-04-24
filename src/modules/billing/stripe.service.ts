@@ -21,6 +21,12 @@ export interface CreateCheckoutParams {
   priceId: string
   successUrl: string
   cancelUrl: string
+  /**
+   * Card #74 — Idempotency-Key encaminhada ao Stripe SDK (`idempotencyKey`
+   * option). Stripe dedupa chamadas idênticas por 24h mesmo sem nosso
+   * cache Redis — defesa em profundidade.
+   */
+  idempotencyKey?: string
 }
 
 export interface CreateCheckoutResult {
@@ -37,22 +43,30 @@ export async function createCheckoutSession(
   const stripeClient = getStripe()
 
   try {
-    const session = await stripeClient.checkout.sessions.create({
-      mode: 'subscription',
-      payment_method_types: ['card'],
-      customer_email: params.email,
-      line_items: [
-        {
-          price: params.priceId,
-          quantity: 1,
+    const session = await stripeClient.checkout.sessions.create(
+      {
+        mode: 'subscription',
+        payment_method_types: ['card'],
+        customer_email: params.email,
+        line_items: [
+          {
+            price: params.priceId,
+            quantity: 1,
+          },
+        ],
+        ui_mode: 'embedded',
+        return_url: params.successUrl,
+        metadata: {
+          email: params.email,
         },
-      ],
-      ui_mode: 'embedded',
-      return_url: params.successUrl,
-      metadata: {
-        email: params.email,
       },
-    })
+      // 2º argumento — RequestOptions do Stripe SDK. `idempotencyKey` ali
+      // garante que Stripe dedupe a chamada no lado deles (além do nosso
+      // cache Redis).
+      params.idempotencyKey
+        ? { idempotencyKey: params.idempotencyKey }
+        : undefined,
+    )
 
     if (!session.client_secret) {
       throw Errors.checkoutFailed('Stripe não retornou client_secret')
