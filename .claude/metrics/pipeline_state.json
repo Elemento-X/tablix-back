@@ -1,39 +1,35 @@
 {
   "schema_version": 1,
-  "updated_at": "2026-04-24T23:00:00Z",
+  "updated_at": "2026-04-25T00:20:00Z",
   "current": null,
   "last_completed": {
+    "card_id": "69e64ae51362ccc4b8c2cf56",
+    "card_short_link": "MbE1roZB",
+    "card_id_short": 86,
+    "card_title": "webhook-circuit-breaker: TOCTOU INCR/EXPIRE race (Lua atomic)",
+    "phase": "Fase 3 — Testes & Qualidade",
+    "decision": "APPROVED",
+    "cycles": 2,
+    "done_at": "2026-04-25T00:20:00Z",
+    "commit": null,
+    "lead_time_hours": 1.25,
+    "mttr_hours": 0.42,
+    "cost_usd": 1.78,
+    "fast_path": false,
+    "waivers_applied": [],
+    "cards_discovered": 0,
+    "notes": "Pipeline QA v2 em 2 ciclos. Ciclo 1 APPROVED com convergência forte em 5 BAIXOs (TOCTOU residual EVAL→SET ban, log noise, cast as number, weak-assertion guard, shape guard ausente). Ciclo 2 fix-all em commit único: SET ban movido pro Lua (atomicidade total dos 3 races: INCR+EXPIRE+SET), only-once log via banApplied flag, Number() defensivo, shape guard Array.isArray+length===2. APPROVED unânime sem cards residuais. 11/11 unit verdes (era 9). 1068 full suite. Smart re-run: 5 agentes pulados (devops/performance/seo/copywriter/design-qa). Fix-all encerrou cleanly (zero waivers, zero discoveries). Custo: $1.78."
+  },
+  "previously_completed": {
     "card_id": "69dafcedc0d43965537a768e",
     "card_short_link": "irZWcOCv",
     "card_id_short": 74,
     "card_title": "3.4 — Idempotency-Key em POST /billing/create-checkout",
-    "phase": "Fase 3 — Testes & Qualidade",
     "decision": "APPROVED",
     "cycles": 2,
     "done_at": "2026-04-24T23:00:00Z",
-    "commit": null,
-    "lead_time_hours": 4.0,
-    "mttr_hours": 0.67,
-    "cost_usd": 3.05,
-    "fast_path": false,
-    "waivers_applied": [],
-    "cards_discovered": 7,
-    "notes": "Pipeline QA v2 em 2 ciclos. Ciclo 1 REPROVED_HARD: @dba ALTO (TTL reset em completeIdempotentOperation — redis.set EX resetava 24h, contradizia comentário) + 4 MÉDIO (collision-DoS via key fraca, fail-open observability, in_progress wiring não testado, identifier=public guard ausente) + 1 MÉDIO aceito como design (legacy branch sem header). Ciclo 2 APPROVED unânime: PTTL+PX preserva TTL real + fallback robusto, regex UUID v4 estrito (CWE-330+CWE-770), degraded flag + Idempotency-Degraded header + metric:idempotency.degraded, 2 testes integration novos (in_progress pré-popula lock processing matching bodyHash; identifier=public valida via mockRedis.get count). 1090 testes verdes (1066 unit + 24 integration billing). Smart re-run: @devops/@performance/@seo/@copywriter/@design-qa pulados (path-matrix não acionou). 7 cards BAIXO pipeline-discovery no Backlog: deprecação legacy path, swagger headers, lowercase normalize, lua-atomic PTTL+SET, PTTL sentinels, fake-timer no PX preserve, race HTTP real. Custo: $3.05."
-  },
-  "previously_completed": {
-    "card_ids": [
-      "69ebcf89440f3009cf24e9a6",
-      "69ebcf9f9a1eb2c047a7ef89",
-      "69ebcfb55b92247585c33569"
-    ],
-    "card_short_links": ["s01lwPyP", "i03eMWQZ", "xRZYeRg4"],
-    "card_id_shorts": [105, 106, 107],
-    "card_title": "3.3a+b+c — fix-all pack dos 3 ALTO do Card #32",
-    "decision": "APPROVED",
-    "cycles": 1,
-    "done_at": "2026-04-24T21:15:00Z",
-    "commit": "92fbb17",
-    "cards_discovered": 0
+    "commit": "ba258af",
+    "cards_discovered": 7
   },
   "phases": {
     "completed": [
@@ -62,11 +58,10 @@
       "started_at": "2026-04-20T21:10:00Z",
       "in_progress": [],
       "next": [
-        "Fase 3 essencialmente fechada (3.1, 3.1b, 3.2, 3.3, 3.3a-c, 3.4, #98 done). Avaliar consolidação/encerramento."
+        "Fase 3 fechada — todos os cards entregues. Avaliar consolidação no History + avanço pra Fase 4 (Usage & Limits)."
       ],
       "side_quests": [
-        "#63 INFRA — Instalar Stripe CLI (BAIXO, só quando for testar webhook)",
-        "#86 webhook-circuit-breaker TOCTOU Lua atomic (BAIXO, pipeline-discovery de 2.4)"
+        "#63 INFRA — Instalar Stripe CLI (manual, só quando for testar webhook localmente)"
       ],
       "done": [
         "3.1 (#30) + 3.1b (#97) — Scaffold + Testcontainers + drift detection (APPROVED 2026-04-24, commit 2c4169d)",
@@ -74,9 +69,10 @@
         "98 — Fase 3 DB Hardening TIMESTAMPTZ + UUID native + drop orphan indexes (APPROVED 2026-04-24, commit 43bc1c2)",
         "3.3 (#32) — Testes de integração dos módulos (APPROVED_CONDITIONAL 2026-04-24, commit 7771628)",
         "3.3a+b+c (#105+#106+#107) — fix-all pack dos 3 ALTO do #32 (APPROVED 2026-04-24, commit 92fbb17)",
-        "3.4 (#74) — Idempotency-Key em /billing/create-checkout (APPROVED 2026-04-24, 2 ciclos)"
+        "3.4 (#74) — Idempotency-Key em /billing/create-checkout (APPROVED 2026-04-24, 2 ciclos, commit ba258af)",
+        "#86 webhook-circuit-breaker TOCTOU Lua atomic (APPROVED 2026-04-25, 2 ciclos, fix-all encerrou cleanly)"
       ],
-      "rationale": "Card 3.4 fechou: PTTL+PX preserva TTL, UUID v4 strict, fail-open observability, fluxo idempotency completo (hit/conflict/in_progress/miss/degraded). Fase 3 com todos os cards principais entregues. Próximo: avaliar avanço pra Fase 4 (Usage & Limits) ou ajustar débito."
+      "rationale": "Card #86 fechou Fase 3 com TOCTOU 100% atômico (INCR+EXPIRE+SET ban num único Lua EVAL). Convergência tripla @security+@dba+@tester nas BAIXOs do ciclo 1 → fix-all em commit único resolveu tudo. Fase 3 está pronta pra consolidar no History. Próximo: ritual de fechamento Fase 3 + avanço pra Fase 4 (Usage & Limits) ou ajuste de débito acumulado das Fases 1/2."
     },
     "new_debt_phases_created_2026-04-20": [
       {
