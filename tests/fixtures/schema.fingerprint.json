@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-04-24T14:20:22.983Z",
+  "generatedAt": "2026-04-24T16:19:56.277Z",
   "database": "container:postgres-17-alpine",
-  "fingerprint": "59ec8d81369a67a393338471babb0e10a208a23e240f7971b7e18a68f4683707",
+  "fingerprint": "290ba63a2ccf394cbecf3f1ecc13c2ddcf0b4a5e46900227e7682f209a010474",
   "model": {
     "extensions": [
       "pgcrypto"
@@ -87,7 +87,7 @@
           },
           {
             "name": "created_at",
-            "type": "timestamp with time zone",
+            "type": "timestamp with time zone(3)",
             "nullable": false,
             "default": "CURRENT_TIMESTAMP"
           }
@@ -101,13 +101,13 @@
         "columns": [
           {
             "name": "id",
-            "type": "text",
+            "type": "uuid",
             "nullable": false,
             "default": "gen_random_uuid()"
           },
           {
             "name": "user_id",
-            "type": "text",
+            "type": "uuid",
             "nullable": false,
             "default": null
           },
@@ -137,19 +137,19 @@
           },
           {
             "name": "created_at",
-            "type": "timestamp without time zone",
+            "type": "timestamp with time zone(3)",
             "nullable": false,
             "default": "CURRENT_TIMESTAMP"
           },
           {
             "name": "started_at",
-            "type": "timestamp without time zone",
+            "type": "timestamp with time zone(3)",
             "nullable": true,
             "default": null
           },
           {
             "name": "completed_at",
-            "type": "timestamp without time zone",
+            "type": "timestamp with time zone(3)",
             "nullable": true,
             "default": null
           }
@@ -161,13 +161,13 @@
         "columns": [
           {
             "name": "id",
-            "type": "text",
+            "type": "uuid",
             "nullable": false,
             "default": "gen_random_uuid()"
           },
           {
             "name": "user_id",
-            "type": "text",
+            "type": "uuid",
             "nullable": false,
             "default": null
           },
@@ -197,25 +197,25 @@
           },
           {
             "name": "created_at",
-            "type": "timestamp without time zone",
+            "type": "timestamp with time zone(3)",
             "nullable": false,
             "default": "CURRENT_TIMESTAMP"
           },
           {
             "name": "last_activity_at",
-            "type": "timestamp without time zone",
+            "type": "timestamp with time zone(3)",
             "nullable": false,
             "default": "CURRENT_TIMESTAMP"
           },
           {
             "name": "expires_at",
-            "type": "timestamp without time zone",
+            "type": "timestamp with time zone(3)",
             "nullable": false,
             "default": null
           },
           {
             "name": "revoked_at",
-            "type": "timestamp without time zone",
+            "type": "timestamp with time zone(3)",
             "nullable": true,
             "default": null
           }
@@ -239,7 +239,7 @@
           },
           {
             "name": "processed_at",
-            "type": "timestamp with time zone",
+            "type": "timestamp with time zone(3)",
             "nullable": false,
             "default": "CURRENT_TIMESTAMP"
           }
@@ -251,7 +251,7 @@
         "columns": [
           {
             "name": "id",
-            "type": "text",
+            "type": "uuid",
             "nullable": false,
             "default": "gen_random_uuid()"
           },
@@ -287,25 +287,25 @@
           },
           {
             "name": "created_at",
-            "type": "timestamp without time zone",
+            "type": "timestamp with time zone(3)",
             "nullable": false,
             "default": "CURRENT_TIMESTAMP"
           },
           {
             "name": "activated_at",
-            "type": "timestamp without time zone",
+            "type": "timestamp with time zone(3)",
             "nullable": true,
             "default": null
           },
           {
             "name": "expires_at",
-            "type": "timestamp without time zone",
+            "type": "timestamp with time zone(3)",
             "nullable": true,
             "default": null
           },
           {
             "name": "user_id",
-            "type": "text",
+            "type": "uuid",
             "nullable": false,
             "default": null
           }
@@ -317,13 +317,13 @@
         "columns": [
           {
             "name": "id",
-            "type": "text",
+            "type": "uuid",
             "nullable": false,
             "default": "gen_random_uuid()"
           },
           {
             "name": "user_id",
-            "type": "text",
+            "type": "uuid",
             "nullable": false,
             "default": null
           },
@@ -341,7 +341,7 @@
           },
           {
             "name": "created_at",
-            "type": "timestamp without time zone",
+            "type": "timestamp with time zone(3)",
             "nullable": false,
             "default": "CURRENT_TIMESTAMP"
           }
@@ -353,7 +353,7 @@
         "columns": [
           {
             "name": "id",
-            "type": "text",
+            "type": "uuid",
             "nullable": false,
             "default": "gen_random_uuid()"
           },
@@ -377,13 +377,13 @@
           },
           {
             "name": "created_at",
-            "type": "timestamp without time zone",
+            "type": "timestamp with time zone(3)",
             "nullable": false,
             "default": "CURRENT_TIMESTAMP"
           },
           {
             "name": "updated_at",
-            "type": "timestamp without time zone",
+            "type": "timestamp with time zone(3)",
             "nullable": false,
             "default": "CURRENT_TIMESTAMP"
           }
@@ -484,11 +484,6 @@
       },
       {
         "table": "tokens",
-        "name": "tokens_token_idx",
-        "definition": "CREATE INDEX tokens_token_idx ON public.tokens USING btree (token)"
-      },
-      {
-        "table": "tokens",
         "name": "tokens_token_key",
         "definition": "CREATE UNIQUE INDEX tokens_token_key ON public.tokens USING btree (token)"
       },
@@ -496,11 +491,6 @@
         "table": "tokens",
         "name": "uq_tokens_user_subscription",
         "definition": "CREATE UNIQUE INDEX uq_tokens_user_subscription ON public.tokens USING btree (user_id, stripe_subscription_id)"
-      },
-      {
-        "table": "usage",
-        "name": "idx_usage_token_period",
-        "definition": "CREATE INDEX idx_usage_token_period ON public.usage USING btree (user_id, period)"
       },
       {
         "table": "usage",

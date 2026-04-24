@@ -69,10 +69,19 @@ const SAFE_IDENTIFIER = /^[a-zA-Z_][a-zA-Z0-9_]*$/
  */
 export async function truncateAll(): Promise<void> {
   const prisma = getTestPrisma()
+  // Query via pg_class em vez de pg_tables: relkind='r' exclui views/
+  // foreign tables/partitions; regex `!~ '^_'` exclui tabelas internas de
+  // ferramentas (ex: `_prisma_migrations`). Ambos filtros são defesa em
+  // profundidade contra evolução futura do schema. Uso do regex operator
+  // em vez de `LIKE ... ESCAPE` evita colisão do escape backslash com
+  // o template literal do $queryRaw.
   const rows = await prisma.$queryRaw<{ tablename: string }[]>`
-    SELECT tablename
-    FROM pg_tables
-    WHERE schemaname = 'public'
+    SELECT c.relname AS tablename
+    FROM pg_class c
+    JOIN pg_namespace n ON n.oid = c.relnamespace
+    WHERE n.nspname = 'public'
+      AND c.relkind = 'r'
+      AND c.relname !~ '^_'
   `
   if (rows.length === 0) return
   const identifiers = rows

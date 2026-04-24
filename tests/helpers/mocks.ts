@@ -111,18 +111,25 @@ export const stripeFixtures = {
   subscription(
     overrides: Record<string, unknown> = {},
   ): Record<string, unknown> {
+    // current_period_end no ROOT bate com webhook.handler.ts:211,293 (leitura
+    // via `subscription.current_period_end`). Stripe SDK v2024+ moveu o campo
+    // para items.data[].current_period_end; manter nos dois lugares garante
+    // que o consumer atual (root) e qualquer futura migração (items) leiam
+    // valor válido.
+    const periodEnd = Math.floor(Date.now() / 1000) + 30 * 86400
     return {
       id: FAKE_SUB_ID,
       object: 'subscription',
       status: 'active',
       cancel_at_period_end: false,
+      current_period_end: periodEnd,
       customer: FAKE_CUSTOMER_ID,
       items: {
         object: 'list',
         data: [
           {
             id: 'si_test_fixture_default',
-            current_period_end: Math.floor(Date.now() / 1000) + 30 * 86400,
+            current_period_end: periodEnd,
           },
         ],
       },

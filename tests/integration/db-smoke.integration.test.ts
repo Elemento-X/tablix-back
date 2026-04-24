@@ -73,6 +73,62 @@ describe('DB smoke (integration)', () => {
       ])
     })
 
+    // Pega drift silencioso de TIMESTAMP vs TIMESTAMPTZ e TEXT vs UUID que
+    // escapou o Card 3.1b original: o snapshot foi gerado pré-Fase 3 DB
+    // Hardening (commit 43bc1c2), mas o Prisma schema já declarava os tipos
+    // novos. Sem essa assertion, testes de integração passam com semântica
+    // de timezone/tipo diferente da produção e bugs de TZ vazam em deploy.
+    it('todas as colunas *_at das tabelas de domínio são TIMESTAMPTZ', async () => {
+      const rows = await prisma.$queryRaw<
+        {
+          table_name: string
+          column_name: string
+          data_type: string
+        }[]
+      >`
+        SELECT table_name, column_name, data_type
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name IN ('users','sessions','tokens','usage','jobs','stripe_events','audit_log')
+          AND (column_name LIKE '%_at' OR column_name = 'processed_at')
+        ORDER BY table_name, column_name
+      `
+      const offenders = rows.filter(
+        (r) => r.data_type !== 'timestamp with time zone',
+      )
+      expect(offenders).toEqual([])
+      expect(rows.length).toBeGreaterThanOrEqual(14)
+    })
+
+    it('PKs id e FKs user_id são UUID nativo (não TEXT)', async () => {
+      const rows = await prisma.$queryRaw<
+        {
+          table_name: string
+          column_name: string
+          udt_name: string
+        }[]
+      >`
+        SELECT table_name, column_name, udt_name
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name IN ('users','sessions','tokens','usage','jobs','audit_log')
+          AND column_name IN ('id','user_id')
+        ORDER BY table_name, column_name
+      `
+      const offenders = rows.filter((r) => r.udt_name !== 'uuid')
+      expect(offenders).toEqual([])
+      expect(rows.length).toBeGreaterThanOrEqual(10)
+    })
+
+    it('índices órfãos droppados em Fase 3 não voltam', async () => {
+      const rows = await prisma.$queryRaw<{ indexname: string }[]>`
+        SELECT indexname FROM pg_indexes
+        WHERE schemaname = 'public'
+          AND indexname IN ('tokens_token_idx','idx_usage_token_period')
+      `
+      expect(rows).toEqual([])
+    })
+
     it('preserva o CHECK constraint de audit_log.action (regex ^[A-Z_]+$, length 3-50)', async () => {
       await expect(
         prisma.$executeRawUnsafe(

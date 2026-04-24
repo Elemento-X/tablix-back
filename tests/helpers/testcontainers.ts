@@ -30,7 +30,13 @@ import {
   type StartedPostgreSqlContainer,
 } from '@testcontainers/postgresql'
 
-const POSTGRES_IMAGE = 'postgres:17-alpine'
+// Digest-pin garante que tag flutuante (`17-alpine`) não reescreva o
+// schema introspectado silenciosamente entre runs. Digest obtido via
+// `docker inspect postgres:17-alpine` em 2026-04-24. Casa com Supabase
+// PG 17.6 em prod (validado via MCP). Bump manual quando Supabase migrar
+// minor + regeneração do fingerprint.
+const POSTGRES_IMAGE =
+  'postgres:17-alpine@sha256:c7526c0f6c3f30260a563d7bcf8ad778effac59a44f8ffa86678c35418338609'
 const SCHEMA_SQL_PATH = resolve(__dirname, '..', 'fixtures', 'schema.sql')
 
 let container: StartedPostgreSqlContainer | null = null

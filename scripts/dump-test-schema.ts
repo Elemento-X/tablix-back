@@ -490,6 +490,18 @@ function formatColumnType(c: {
   if (c.character_maximum_length) base += `(${c.character_maximum_length})`
   else if (c.numeric_precision != null && c.data_type === 'numeric') {
     base += `(${c.numeric_precision}${c.numeric_scale ? `,${c.numeric_scale}` : ''})`
+  } else if (
+    c.datetime_precision != null &&
+    (c.data_type === 'timestamp with time zone' ||
+      c.data_type === 'timestamp without time zone' ||
+      c.data_type === 'time with time zone' ||
+      c.data_type === 'time without time zone')
+  ) {
+    // Captura precisão fracional dos tipos temporais — sem isso,
+    // `TIMESTAMPTZ(3)` e `TIMESTAMPTZ(6)` geram fingerprint idêntico e
+    // uma migration que muda precisão (perda de ms) passa invisível pelo
+    // drift detector.
+    base += `(${c.datetime_precision})`
   }
   return base
 }
