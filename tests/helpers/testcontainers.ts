@@ -67,7 +67,8 @@ export async function startPostgresContainer(): Promise<string> {
   if (!existsSync(SCHEMA_SQL_PATH)) {
     throw new Error(
       `Schema snapshot não encontrado em ${SCHEMA_SQL_PATH}. ` +
-        `Rode "npm run test:schema:dump" para regenerar a partir de prod.`,
+        `Regenere via MCP Supabase ou pg_dump --schema-only e rode ` +
+        `"npm run test:schema:verify -- --update" para sincronizar o fingerprint.`,
     )
   }
   const schemaSql = readFileSync(SCHEMA_SQL_PATH, 'utf8')
