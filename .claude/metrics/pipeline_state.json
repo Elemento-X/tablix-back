@@ -11,7 +11,7 @@
     "decision": "APPROVED",
     "cycles": 2,
     "done_at": "2026-04-25T00:20:00Z",
-    "commit": null,
+    "commit": "41d0ee2",
     "lead_time_hours": 1.25,
     "mttr_hours": 0.42,
     "cost_usd": 1.78,
@@ -50,29 +50,37 @@
         "status": "CLOSED_WITH_OPEN_DEBT",
         "debt_list_id": "69e6761e9b57377f349b5081",
         "debt_cards": 6
+      },
+      {
+        "phase": "Fase 3 — Testes & Qualidade",
+        "period": "2026-04-20 → 2026-04-25",
+        "cards_delivered": 7,
+        "hist_card": "JJTy3wR4",
+        "hist_card_id_short": 125,
+        "status": "CLOSED_NO_OPEN_DEBT",
+        "debt_list_id": null,
+        "debt_cards": 0,
+        "side_quest_open": "#63 INFRA Stripe CLI (manual, BAIXO)",
+        "discovery_cards_distributed": 26,
+        "waivers_new": ["WV-2026-005"],
+        "cost_total_usd": 16.8,
+        "tests_baseline_at_close": 1090,
+        "checklist_pente_fino_done_at": "2026-04-25T01:05:00Z"
       }
     ],
     "active": {
-      "phase": "Fase 3 — Testes & Qualidade",
-      "list_id": "69d7a7dd73e7ce838f2b8d9c",
-      "started_at": "2026-04-20T21:10:00Z",
+      "phase": null,
+      "list_id": null,
+      "started_at": null,
       "in_progress": [],
       "next": [
-        "Fase 3 fechada — todos os cards entregues. Avaliar consolidação no History + avanço pra Fase 4 (Usage & Limits)."
+        "Decidir entre: Fase 4 (Usage & Limits) ou abordar débito acumulado das Fases 1/2 (3+6 cards de débito ativo) primeiro."
       ],
       "side_quests": [
         "#63 INFRA — Instalar Stripe CLI (manual, só quando for testar webhook localmente)"
       ],
-      "done": [
-        "3.1 (#30) + 3.1b (#97) — Scaffold + Testcontainers + drift detection (APPROVED 2026-04-24, commit 2c4169d)",
-        "3.2 (#31) — Testes unitários de src/lib/ (APPROVED 2026-04-24, 1039 testes)",
-        "98 — Fase 3 DB Hardening TIMESTAMPTZ + UUID native + drop orphan indexes (APPROVED 2026-04-24, commit 43bc1c2)",
-        "3.3 (#32) — Testes de integração dos módulos (APPROVED_CONDITIONAL 2026-04-24, commit 7771628)",
-        "3.3a+b+c (#105+#106+#107) — fix-all pack dos 3 ALTO do #32 (APPROVED 2026-04-24, commit 92fbb17)",
-        "3.4 (#74) — Idempotency-Key em /billing/create-checkout (APPROVED 2026-04-24, 2 ciclos, commit ba258af)",
-        "#86 webhook-circuit-breaker TOCTOU Lua atomic (APPROVED 2026-04-25, 2 ciclos, fix-all encerrou cleanly)"
-      ],
-      "rationale": "Card #86 fechou Fase 3 com TOCTOU 100% atômico (INCR+EXPIRE+SET ban num único Lua EVAL). Convergência tripla @security+@dba+@tester nas BAIXOs do ciclo 1 → fix-all em commit único resolveu tudo. Fase 3 está pronta pra consolidar no History. Próximo: ritual de fechamento Fase 3 + avanço pra Fase 4 (Usage & Limits) ou ajuste de débito acumulado das Fases 1/2."
+      "done": [],
+      "rationale": "Fase 3 encerrada em 2026-04-25 com [HIST] card #125 (JJTy3wR4) e pente fino completo: 39 itens de checklist marcados em 6 cards Done (#26/#28/#29/#30/#31/#32). 2 itens 'futuros' do #29 (cron retenção 90d + endpoint admin) viraram cards #123/#124 no Backlog. @analyst NÃO acionado por decisão consciente — primeira execução agendada pro final da Fase 5 pra acumular massa estatística suficiente."
     },
     "new_debt_phases_created_2026-04-20": [
       {
