@@ -78,12 +78,15 @@ describe('SENSITIVE_FIELD_NAMES (SSOT)', () => {
     expect(SENSITIVE_FIELD_NAMES.has('database_url')).toBe(true)
     expect(SENSITIVE_FIELD_NAMES.has('access_token')).toBe(true)
     expect(SENSITIVE_FIELD_NAMES.has('client_secret')).toBe(true)
+    // Card #77 (@security MÉDIO LGPD): email/phone propagados do REDACT_PATHS
+    expect(SENSITIVE_FIELD_NAMES.has('email')).toBe(true)
+    expect(SENSITIVE_FIELD_NAMES.has('phone')).toBe(true)
   })
 
   it('não vaza nome comum não sensível', () => {
     expect(SENSITIVE_FIELD_NAMES.has('user')).toBe(false)
-    expect(SENSITIVE_FIELD_NAMES.has('email')).toBe(false)
     expect(SENSITIVE_FIELD_NAMES.has('id')).toBe(false)
+    expect(SENSITIVE_FIELD_NAMES.has('name')).toBe(false)
   })
 })
 
@@ -478,7 +481,7 @@ describe('beforeSend — edge cases', () => {
     expect(out.request!.query_string).toContain('x=1')
   })
 
-  it('F4 — query_string parse-based pega email/cpf/phone (PII LGPD)', () => {
+  it('F4 — query_string parse-based redacta email (PII LGPD — Card #77)', () => {
     const ev = makeEvent({
       request: {
         url: 'https://api.tablix.com.br/api/search',
@@ -486,10 +489,26 @@ describe('beforeSend — edge cases', () => {
       },
     })
     const out = beforeSend(ev, {})!
-    // LGPD: email é PII — wildcard *.email não existe em REDACT_PATHS hoje,
-    // mas password/cpf/phone existem via wildcards. Este teste documenta
-    // gap conhecido: email em query ainda vaza. @security: abrir card.
+    // Card #77 (@security MÉDIO LGPD) RESOLVED: REDACT_PATHS agora inclui
+    // `req.query.email` + `*.email`, propagado pro SSOT SENSITIVE_FIELD_NAMES.
+    // Email em query string é redactado, page (não-sensível) preservado.
+    expect(out.request!.query_string).toContain('email=%5BREDACTED%5D')
     expect(out.request!.query_string).toContain('page=1')
+    // Anti-regression: valor literal do email NÃO pode aparecer em lugar nenhum
+    expect(out.request!.query_string).not.toContain('victim@x.com')
+  })
+
+  it('F4 — query_string parse-based redacta phone (PII LGPD — Card #77)', () => {
+    const ev = makeEvent({
+      request: {
+        url: 'https://api.tablix.com.br/api/search',
+        query_string: 'phone=11999998888&page=2',
+      },
+    })
+    const out = beforeSend(ev, {})!
+    expect(out.request!.query_string).toContain('phone=%5BREDACTED%5D')
+    expect(out.request!.query_string).toContain('page=2')
+    expect(out.request!.query_string).not.toContain('11999998888')
   })
 
   it('F4 — query_string parse-based redacta password/cpf', () => {

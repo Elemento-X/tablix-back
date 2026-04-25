@@ -223,6 +223,43 @@ describe('logger REDACT_PATHS — wildcards em profundidade', () => {
     expect(REDACT_PATHS).toContain('*.private_key')
     expect(REDACT_PATHS).toContain('req.query.token')
     expect(REDACT_PATHS).toContain('req.query.code')
+    // Card #77 (@security MÉDIO LGPD): email/phone em query + body + wildcard
+    expect(REDACT_PATHS).toContain('req.query.email')
+    expect(REDACT_PATHS).toContain('req.query.phone')
+    expect(REDACT_PATHS).toContain('req.body.email')
+    expect(REDACT_PATHS).toContain('req.body.phone')
+    expect(REDACT_PATHS).toContain('*.email')
+  })
+
+  it('MUTATION GUARD SEMÂNTICO: email em objeto qualquer é redacted (Card #77 LGPD)', () => {
+    const { logger, lines } = createCapturedLogger()
+    logger.info({ user: { email: 'victim@tablix.test' } }, 'test')
+    expect(JSON.stringify(lines[0])).not.toContain('victim@tablix.test')
+  })
+
+  it('MUTATION GUARD SEMÂNTICO: phone em objeto qualquer é redacted (Card #77 LGPD)', () => {
+    const { logger, lines } = createCapturedLogger()
+    logger.info({ contact: { phone: '11987654321' } }, 'test')
+    expect(JSON.stringify(lines[0])).not.toContain('11987654321')
+  })
+
+  it('CONTRATO: pino-redact é case-sensitive — Email/EMAIL escapam de *.email (documentado)', () => {
+    // Limitação do fast-redact: paths são case-sensitive. Variações de caixa
+    // (Email, EMAIL, Phone) escapam dos wildcards. Mitigação real: payloads
+    // gerados pelo nosso código usam lowercase consistente (ex: req.body.email,
+    // user.email do Prisma). Este teste documenta o gap como contrato.
+    //
+    // Defense in depth: scrubObject do Sentry (sentry.ts:151) faz toLowerCase
+    // na key antes de comparar com SENSITIVE_FIELD_NAMES — então a barreira
+    // do Sentry pega Email/EMAIL, mas o pino direto não.
+    //
+    // Se um dia adicionarmos input externo que use camelCase/PascalCase,
+    // expandir REDACT_PATHS com variantes ou trocar pra logger custom serializer.
+    const { logger, lines } = createCapturedLogger()
+    logger.info({ user: { Email: 'leaks@x.com', EMAIL: 'also@x.com' } }, 'test')
+    // Documenta a limitação: variações de caixa NÃO são pegas pelo *.email
+    expect(JSON.stringify(lines[0])).toContain('leaks@x.com')
+    expect(JSON.stringify(lines[0])).toContain('also@x.com')
   })
 })
 

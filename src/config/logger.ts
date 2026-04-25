@@ -78,6 +78,14 @@ export const REDACT_PATHS: readonly string[] = [
   'req.query.code',
   'req.query.access_token',
   'req.query.id_token',
+  // Card #77 (@security MÉDIO LGPD): email/phone em query string vazam
+  // PII em endpoints de busca/filtro. SSOT propaga pro Sentry via
+  // SENSITIVE_FIELD_NAMES (sentry.ts:57). Body também coberto pra
+  // defense in depth — formulários POST/PUT que carreguem email/phone.
+  'req.query.email',
+  'req.query.phone',
+  'req.body.email',
+  'req.body.phone',
   // Wildcards defensivos — pegam 1 nível de profundidade (limitação fast-redact)
   '*.password',
   '*.secret',
@@ -102,6 +110,11 @@ export const REDACT_PATHS: readonly string[] = [
   '*.csrfToken',
   '*.cpf',
   '*.phone',
+  // Card #77 (@security MÉDIO LGPD): email vazava em qualquer profundidade.
+  // Trade-off: maskEmail() existe pra debug-friendly, mas pino-redact não
+  // suporta transform inline — REDACT total > vazar PII. Audit log no DB
+  // não é afetado (pino só sai pra stdout/aggregator).
+  '*.email',
   '*.stripe_customer_id',
   '*.stripe_subscription_id',
   '*.stripe_webhook_secret',

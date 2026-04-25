@@ -510,4 +510,86 @@ describe('env.ts validation (Cards 1.9 + 1.10)', () => {
       }
     })
   })
+
+  // ============================================
+  // Card #72 (@security MÉDIO): boot failure formatter
+  // não vaza valores de env vars sensíveis no stderr.
+  //
+  // O fix em src/config/env.ts substituiu `_env.error.format()`
+  // por listagem de `path + message` apenas. Estes testes replicam
+  // a logic do formatter e validam invariante: o valor recebido
+  // (que pode ser secret parcial) NUNCA aparece no output.
+  // ============================================
+  describe('boot failure formatter — Card #72 (@security)', () => {
+    const formatIssues = (
+      issues: ReadonlyArray<{ path: (string | number)[]; message: string }>,
+    ) =>
+      issues
+        .map((i) => `  - ${i.path.join('.') || '(root)'}: ${i.message}`)
+        .join('\n')
+
+    it('JWT_SECRET inválido: output contém path + message, NÃO contém o valor sentinel', () => {
+      const SENTINEL = 'CANARY-secret-value-12345-must-not-leak'
+      const schema = buildEnvSchema(false)
+      const result = schema.safeParse({
+        ...validDevEnv,
+        JWT_SECRET: SENTINEL.substring(0, 10), // < 32 chars → falha min(32)
+      })
+
+      expect(result.success).toBe(false)
+      if (!result.success) {
+        const output = formatIssues(result.error.issues)
+        expect(output).toContain('JWT_SECRET')
+        expect(output).toMatch(/at least 32|min/i) // mensagem do Zod
+        // INVARIANTE LGPD/A09: valor nunca vaza
+        expect(output).not.toContain(SENTINEL)
+        expect(output).not.toContain(SENTINEL.substring(0, 10))
+      }
+    })
+
+    it('DATABASE_URL inválido: output não contém o valor recebido', () => {
+      // Sentinel sem `://` pra garantir que não é URL válida.
+      // Uso "leaked-canary" como token único pra grep no output.
+      const SENTINEL = 'leaked-canary-postgres-creds-xyz789'
+      const schema = buildEnvSchema(false)
+      const result = schema.safeParse({
+        ...validDevEnv,
+        DATABASE_URL: SENTINEL, // string sem schema URL → falha .url()
+      })
+
+      expect(result.success).toBe(false)
+      if (!result.success) {
+        const output = formatIssues(result.error.issues)
+        expect(output).toContain('DATABASE_URL')
+        // INVARIANTE LGPD: valor recebido NUNCA aparece no output
+        expect(output).not.toContain(SENTINEL)
+        expect(output).not.toContain('leaked-canary')
+      }
+    })
+
+    it('mutation guard ANTI-REGRESSÃO: formatter NÃO vaza valor recebido', () => {
+      // Sentinel intencionalmente sem prefixo que colida com nome do path
+      // (evitar "SECRE" colidindo com "JWT_SECRET" etc).
+      const SENTINEL = 'leaked-canary-jwt-value-xyz789'
+      const schema = buildEnvSchema(false)
+      const result = schema.safeParse({
+        ...validDevEnv,
+        JWT_SECRET: SENTINEL, // não tem 32 chars + não é placeholder → falha min(32)
+      })
+
+      expect(result.success).toBe(false)
+      if (!result.success) {
+        const safeOutput = formatIssues(result.error.issues)
+        // Path APARECE (esperado — engenheiro precisa saber qual var falhou)
+        expect(safeOutput).toContain('JWT_SECRET')
+        // Mensagem APARECE (esperado — engenheiro precisa do motivo)
+        expect(safeOutput).toMatch(/at least 32|min/i)
+        // VALOR NUNCA aparece (invariante crítico do fix #72)
+        expect(safeOutput).not.toContain(SENTINEL)
+        expect(safeOutput).not.toContain('leaked-canary')
+        // .format() do Zod legacy incluiria estrutura aninhada com _errors;
+        // como nosso formatter usa só path + message, jamais cita o valor.
+      }
+    })
+  })
 })

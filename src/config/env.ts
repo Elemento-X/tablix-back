@@ -200,7 +200,15 @@ const envSchema = z
 const _env = envSchema.safeParse(process.env)
 
 if (_env.success === false) {
-  console.error('Invalid environment variables!', _env.error.format())
+  // Card #72 (@security MÉDIO): nunca emitir `_env.error.format()` —
+  // inclui o VALOR recebido de cada campo. Se uma env var sensível
+  // (JWT_SECRET, STRIPE_SECRET_KEY, DATABASE_URL) falhar a validação
+  // com valor parcial preenchido, o stderr → log aggregator (CloudWatch,
+  // Datadog, Logtail) vaza o secret. Lista apenas path + mensagem.
+  const issues = _env.error.issues
+    .map((i) => `  - ${i.path.join('.') || '(root)'}: ${i.message}`)
+    .join('\n')
+  console.error(`Invalid environment variables:\n${issues}`)
   throw new Error('Invalid environment variables!')
 }
 
