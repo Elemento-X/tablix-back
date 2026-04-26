@@ -75,9 +75,19 @@ const COLUMN_LIMITS = {
  * User-Agent ou em campo de metadata (string) pode quebrar ferramental
  * downstream e forjar entradas falsas em visualizações line-based.
  * Estripar na borda é barato e fecha a classe inteira.
+ *
+ * **Card #88 — implementação linear (split/join) sem regex backtracking.**
+ * V8 regex engine não tem catastrophic backtracking conhecido pra
+ * `[\r\n\0]/g` (character class simples), mas defense in depth bana o
+ * pattern de risco: split/join é O(n) garantido em qualquer engine, sem
+ * estado interno, sem possibilidade de ReDoS futuro se padrão evoluir.
+ *
+ * Trade-off mensurado: split/join faz 3 passes (1 por separador) vs 1
+ * pass do regex. Strings <1KB (limite truncateString) → diferença < 1ms.
  */
 function stripCrlf(value: string): string {
-  return value.replace(/[\r\n\0]/g, '')
+  // Linear, sem backtracking. Cada split/join é O(n).
+  return value.split('\r').join('').split('\n').join('').split('\0').join('')
 }
 
 function truncateString(

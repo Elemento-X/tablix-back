@@ -622,6 +622,93 @@ describe('F8 — scrub de exception.values e message (PII em strings livres)', (
     const out = beforeSend(ev, {})!
     expect(out.message).toContain('[EMAIL]')
   })
+
+  it('Card #82 — redacta CNPJ na exception value (B2B/nota fiscal hardening)', () => {
+    const ev = {
+      event_id: 'abc',
+      timestamp: Date.now() / 1000,
+      request: { url: '/api/foo' },
+      exception: {
+        values: [
+          { type: 'Error', value: 'NF emitida para CNPJ 12.345.678/0001-90' },
+        ],
+      },
+    } as unknown as Parameters<typeof beforeSend>[0]
+    const out = beforeSend(ev, {})!
+    expect(out.exception!.values![0].value).toContain('[CNPJ]')
+    expect(out.exception!.values![0].value).not.toContain('12.345.678/0001-90')
+  })
+
+  it('Card #82 — CNPJ sem máscara também é redactado', () => {
+    const ev = {
+      event_id: 'abc',
+      timestamp: Date.now() / 1000,
+      request: { url: '/api/foo' },
+      message: 'CNPJ 12345678000190 inválido',
+    } as unknown as Parameters<typeof beforeSend>[0]
+    const out = beforeSend(ev, {})!
+    expect(out.message).toContain('[CNPJ]')
+    expect(out.message).not.toContain('12345678000190')
+  })
+})
+
+describe('Card #78 — beforeSend scrub recursivo em event.breadcrumbs', () => {
+  it('scruba JWT em breadcrumb.data (defense in depth pra breadcrumbs que escapam de beforeBreadcrumb)', () => {
+    const ev = {
+      event_id: 'abc',
+      timestamp: Date.now() / 1000,
+      request: { url: '/api/foo' },
+      breadcrumbs: [
+        {
+          type: 'http',
+          category: 'fetch',
+          data: { token: 'eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.payload.sig' },
+        },
+      ],
+    } as unknown as Parameters<typeof beforeSend>[0]
+    const out = beforeSend(ev, {})!
+    const data = out.breadcrumbs![0].data as Record<string, unknown>
+    expect(data.token).toBe('[REDACTED]')
+  })
+
+  it('scruba PII em breadcrumb.message via scrubString', () => {
+    const ev = {
+      event_id: 'abc',
+      timestamp: Date.now() / 1000,
+      request: { url: '/api/foo' },
+      breadcrumbs: [
+        {
+          type: 'log',
+          category: 'console',
+          message: 'request from victim@tablix.test',
+        },
+      ],
+    } as unknown as Parameters<typeof beforeSend>[0]
+    const out = beforeSend(ev, {})!
+    expect(out.breadcrumbs![0].message).toContain('[EMAIL]')
+    expect(out.breadcrumbs![0].message).not.toContain('victim@tablix.test')
+  })
+
+  it('breadcrumbs ausentes/null não causam crash', () => {
+    const ev = {
+      event_id: 'abc',
+      timestamp: Date.now() / 1000,
+      request: { url: '/api/foo' },
+      // sem breadcrumbs
+    } as unknown as Parameters<typeof beforeSend>[0]
+    expect(() => beforeSend(ev, {})).not.toThrow()
+  })
+
+  it('breadcrumbs vazios passam sem alteração', () => {
+    const ev = {
+      event_id: 'abc',
+      timestamp: Date.now() / 1000,
+      request: { url: '/api/foo' },
+      breadcrumbs: [],
+    } as unknown as Parameters<typeof beforeSend>[0]
+    const out = beforeSend(ev, {})!
+    expect(out.breadcrumbs).toEqual([])
+  })
 })
 
 describe('F7 — isSensitiveUrl regex anchored', () => {

@@ -130,6 +130,11 @@ describe('auth.controller — audit emissions', () => {
       expect(call.actor).toBeNull()
       expect(call.success).toBe(false)
       expect(call.metadata).toEqual({ reason: ErrorCodes.INVALID_TOKEN })
+      // Card #91: ip/userAgent presentes em failure paths (não só em success).
+      // Forense de incidente requer rastreamento de quem tentou — derivado
+      // das mesmas variáveis que success path; assert previne regressão.
+      expect(call.ip).toBe('10.0.0.1')
+      expect(call.userAgent).toBe('test-agent/1.0')
     })
 
     it('TOKEN_VALIDATE_FAILURE usa reason="unknown" quando erro não tem code', async () => {
@@ -198,6 +203,10 @@ describe('auth.controller — audit emissions', () => {
       expect(call.action).toBe(AuditAction.SESSION_REFRESH_FAILURE)
       expect(call.success).toBe(false)
       expect(call.metadata).toEqual({ reason: ErrorCodes.UNAUTHORIZED })
+      // Card #91: ip/userAgent em failure paths — defesa em profundidade
+      // contra regressão na derivação de variáveis de contexto.
+      expect(call.ip).toBe('10.0.0.1')
+      expect(call.userAgent).toBe('test-agent/1.0')
     })
   })
 

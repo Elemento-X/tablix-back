@@ -184,6 +184,11 @@ const PII_STRING_PATTERNS: Array<[RegExp, string]> = [
   [/eyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g, '[JWT]'],
   [/[\w.+-]+@[\w-]+\.[\w.-]+/g, '[EMAIL]'],
   [/\b\d{3}\.?\d{3}\.?\d{3}-?\d{2}\b/g, '[CPF]'],
+  // Card #82 — CNPJ pattern (XX.XXX.XXX/XXXX-XX, com ou sem máscara).
+  // Hardening incremental para B2B/nota fiscal futura. Hoje não há endpoint
+  // que aceite CNPJ, mas erros que vazem string com CNPJ literal (ex: log
+  // de integração contábil) ficam scrubados.
+  [/\b\d{2}\.?\d{3}\.?\d{3}\/?\d{4}-?\d{2}\b/g, '[CNPJ]'],
   [/sk_(?:live|test)_[A-Za-z0-9]+/g, '[STRIPE_KEY]'],
   [/whsec_[A-Za-z0-9]+/g, '[STRIPE_WHSEC]'],
   [/tbx_pro_[A-Za-z0-9]+/g, '[TBX_PRO]'],
@@ -264,6 +269,28 @@ export function beforeSend(
   }
   if (typeof event.message === 'string') {
     event.message = scrubString(event.message)
+  }
+
+  // Card #78 — defense in depth: scrub recursivo de event.breadcrumbs.
+  // beforeBreadcrumb cobre breadcrumbs novos, mas se um breadcrumb foi
+  // criado antes do SDK init terminar, foi injetado por outra integração
+  // pré-existente, ou foi mutado post-hoc via SDK externo, chega a
+  // beforeSend sem passar pelo scrub individual. Custo baixo (breadcrumbs
+  // max=50, depth limitado por scrubObject), benefício invariante.
+  if (event.breadcrumbs && Array.isArray(event.breadcrumbs)) {
+    event.breadcrumbs = event.breadcrumbs.map((bc) => {
+      if (!bc || typeof bc !== 'object') return bc
+      const scrubbed = { ...bc }
+      if (scrubbed.data && typeof scrubbed.data === 'object') {
+        scrubbed.data = scrubObject(
+          scrubbed.data as Record<string, unknown>,
+        ) as typeof scrubbed.data
+      }
+      if (typeof scrubbed.message === 'string') {
+        scrubbed.message = scrubString(scrubbed.message)
+      }
+      return scrubbed
+    })
   }
 
   return event
