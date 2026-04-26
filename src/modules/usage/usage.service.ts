@@ -22,6 +22,7 @@
 import type { Plan } from '@prisma/client'
 import { prisma } from '../../lib/prisma'
 import { getLimitsForPlan } from '../../config/plan-limits'
+import { Errors } from '../../errors/app-error'
 import type { LimitsWithPlan, UsageWithReset } from './usage.schema'
 
 /**
@@ -117,6 +118,82 @@ export async function getUserUsage(
  * Plan resolvido server-side a partir do JWT do usuário autenticado.
  * Cliente NUNCA decide o plano (security: a única barreira real é o server).
  */
+/**
+ * Valida-e-incrementa o contador de uso mensal **atomicamente** em um único
+ * statement Postgres. Substitui o par `getCurrentUsage` + `incrementUsage`
+ * separados que tinha race condition (TOCTOU) — fecha waiver WV-2026-002.
+ *
+ * **Pattern:** `INSERT ... ON CONFLICT DO UPDATE WHERE` (Postgres-specific).
+ * Em um único statement:
+ *  - Sem registro pra (user, period) → INSERT count=1 (assume limit ≥ 1).
+ *  - Com registro e count < limit → UPDATE count = count + 1.
+ *  - Com registro e count >= limit → DO NOTHING (`RETURNING` vazio = limit atingido).
+ *
+ * **Atomicidade:** Postgres serializa single-statement INSERT...ON CONFLICT
+ * (lock implícito no índice unique `usage_user_id_period_key`). Duas requests
+ * concorrentes pelo mesmo (user, period) não atravessam o WHERE em paralelo.
+ *
+ * **Por que `$queryRaw`:** Prisma API tipado (upsert) não expõe `ON CONFLICT
+ * WHERE`. Template tag (não `Unsafe`) protege contra injection — parâmetros
+ * viram bind vars no driver pg.
+ *
+ * **Trade-off operacional:** incrementa ANTES do processamento. Se a
+ * operação subsequente falhar (parse/merge corrompido), o usuário "perde"
+ * 1 slot. Aceito como contrapartida: validações cheap pre-flight (file size,
+ * count, columns) capturam 99% das falhas antes deste call. Padrão Stripe:
+ * cobrar quota na entrada > arriscar overage por race em rollback.
+ *
+ * @owner: @dba + @security
+ * @card: 4.2 — fecha waiver WV-2026-002 (TOCTOU em validateProLimits)
+ */
+export async function validateAndIncrementUsage(
+  userId: string,
+  plan: PlanLike,
+): Promise<{ unificationsCount: number; limit: number }> {
+  const { unificationsPerMonth: limit } = getLimitsForPlan(toPrismaPlan(plan))
+
+  // Guard defensivo: limit=0 nunca deveria existir em plano real, mas
+  // se acontecer, o INSERT inicial bypassaria a checagem (count=1 contra
+  // limit=0 só é validado no DO UPDATE WHERE, não no caminho INSERT).
+  if (limit <= 0) {
+    throw Errors.limitExceeded(`${limit} unificações/mês`, '0 utilizadas')
+  }
+
+  const period = getCurrentPeriod()
+
+  // Statement atômico — Postgres garante single-row visibility no índice
+  // unique usage(user_id, period). RETURNING vazio = ON CONFLICT WHERE
+  // bloqueou (limit atingido). Cast `::uuid` obrigatório porque user_id é
+  // @db.Uuid e o driver pg trata a string como text por default.
+  const result = await prisma.$queryRaw<
+    { unifications_count: number | bigint }[]
+  >`
+    INSERT INTO usage (id, user_id, period, unifications_count, created_at)
+    VALUES (gen_random_uuid(), ${userId}::uuid, ${period}, 1, now())
+    ON CONFLICT (user_id, period)
+    DO UPDATE SET unifications_count = usage.unifications_count + 1
+    WHERE usage.unifications_count < ${limit}
+    RETURNING unifications_count
+  `
+
+  if (result.length === 0) {
+    // Limit atingido. Lê count atual pra mensagem acionável (request extra
+    // de leitura aceito — caminho de erro raro, vale clareza pro user).
+    const current = await getCurrentUsage(userId)
+    throw Errors.limitExceeded(
+      `${limit} unificações/mês`,
+      `${current} utilizadas`,
+    )
+  }
+
+  // Postgres pode retornar bigint pra count em alguns drivers. Number()
+  // converte sem perda (count é small int, longe de Number.MAX_SAFE_INTEGER).
+  return {
+    unificationsCount: Number(result[0].unifications_count),
+    limit,
+  }
+}
+
 export function getLimitsForPlanResponse(plan: PlanLike): LimitsWithPlan {
   const limits = getLimitsForPlan(toPrismaPlan(plan))
   // `Plan` enum no Prisma só tem PRO atualmente; FREE é o "implícito"

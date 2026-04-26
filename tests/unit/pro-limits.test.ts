@@ -51,6 +51,8 @@ const { prismaMock } = vi.hoisted(() => {
     $transaction: vi.fn(),
     $connect: vi.fn(),
     $disconnect: vi.fn(),
+    // Card 4.2: validateAndIncrementUsage usa $queryRaw atômico.
+    $queryRaw: vi.fn(),
   }
 
   return { prismaMock }
@@ -100,6 +102,9 @@ beforeEach(() => {
   vi.clearAllMocks()
   // Default: 0 uso no mês
   prismaMock.usage.findUnique.mockResolvedValue(null)
+  // Card 4.2: validateAndIncrementUsage usa $queryRaw atômico. Default
+  // = sucesso (count=1). Tests de quota exhausted overridam pra [].
+  prismaMock.$queryRaw.mockResolvedValue([{ unifications_count: 1 }])
 })
 
 // ===========================================
@@ -259,34 +264,16 @@ describe('validateProLimits — file count (15 max)', () => {
 })
 
 // ===========================================
-// validateProLimits — unifications per month
+// validateProLimits — unifications per month (Card 4.2 — moved)
 // ===========================================
-describe('validateProLimits — unifications (30/month — D.1)', () => {
-  it('rejects when at monthly limit', async () => {
-    prismaMock.usage.findUnique.mockResolvedValue({
-      unificationsCount: 30,
-    })
-
-    await expect(
-      validateProLimits('user-123', [makeFile('f.csv', 1024)]),
-    ).rejects.toMatchObject({
-      code: 'LIMIT_EXCEEDED',
-      details: expect.objectContaining({
-        limit: '30 unificações/mês',
-      }),
-    })
-  })
-
-  it('accepts when under monthly limit', async () => {
-    prismaMock.usage.findUnique.mockResolvedValue({
-      unificationsCount: 29,
-    })
-
-    await expect(
-      validateProLimits('user-123', [makeFile('f.csv', 1024)]),
-    ).resolves.toBeUndefined()
-  })
-})
+// Card 4.2: a validação de unificações mensais MIGROU de `validateProLimits`
+// para `validateAndIncrementUsage` (atomic). Tests dessa lógica vivem agora
+// em `tests/unit/usage-service.test.ts`. `validateProLimits` aqui só valida
+// file size/count/colunas — pre-flight cheap.
+//
+// Estes 2 cenários (at limit / under limit) ficam cobertos via integração
+// concorrente em `tests/integration/usage-atomic.integration.test.ts` (Card
+// 4.2) e via mock $queryRaw em `tests/unit/usage-service.test.ts`.
 
 // ===========================================
 // Zod schema — maxColumns validation

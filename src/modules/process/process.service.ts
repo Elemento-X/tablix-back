@@ -2,7 +2,6 @@
 // TABLIX - SERVIÇO DE PROCESSAMENTO
 // ===========================================
 
-import { prisma } from '../../lib/prisma'
 import { Errors } from '../../errors/app-error'
 import {
   parseSpreadsheet,
@@ -14,11 +13,12 @@ import {
   OutputFormat,
 } from '../../lib/spreadsheet'
 import { ProcessSyncInput, ProcessSyncResult } from './process.schema'
-// Card 4.1 (#33): SSOT de leitura de usage migrou pra usage.service. Esta
-// função era duplicada aqui antes — agora `getCurrentUsage` (ler) e
-// `getCurrentPeriod` vivem só em um lugar. Card 4.2 vai trazer
-// `validateAndIncrementUsage()` atômico (fecha waiver WV-2026-002).
-import { getCurrentPeriod, getCurrentUsage } from '../usage/usage.service'
+// Card 4.2 (#68 absorvido): atomic quota enforcement. O fluxo legado
+// `validateProLimits` (lê usage) → ... → `incrementUsage` (escreve) tinha
+// race TOCTOU — N requests paralelas passavam o check com mesmo count.
+// `validateAndIncrementUsage` faz validação E incremento em single-statement
+// Postgres (INSERT...ON CONFLICT WHERE), fechando WV-2026-002.
+import { validateAndIncrementUsage } from '../usage/usage.service'
 
 interface FileData {
   buffer: Buffer
@@ -26,51 +26,18 @@ interface FileData {
 }
 
 /**
- * Incrementa o contador de uso mensal.
+ * Validações **pré-flight** dos limites do plano Pro: file size individual,
+ * tamanho total, número de arquivos. NÃO valida unificações mensais aqui —
+ * essa parte foi movida pra `validateAndIncrementUsage()` atômico (Card 4.2).
  *
- * Permanece neste arquivo até o Card 4.2 substituir por
- * `validateAndIncrementUsage()` atômico no `usage.service` (fecha o
- * TOCTOU do waiver WV-2026-002).
- */
-async function incrementUsage(userId: string): Promise<void> {
-  const period = getCurrentPeriod()
-
-  await prisma.usage.upsert({
-    where: {
-      userId_period: {
-        userId,
-        period,
-      },
-    },
-    update: {
-      unificationsCount: {
-        increment: 1,
-      },
-    },
-    create: {
-      userId,
-      period,
-      unificationsCount: 1,
-    },
-  })
-}
-
-/**
- * Valida os limites do plano Pro antes do processamento
+ * Validações cheap (sem I/O) ficam aqui propositalmente: capturam 99% das
+ * falhas ANTES do increment de usage, pra reduzir desperdício de slot quando
+ * o input é claramente inválido.
  */
 export async function validateProLimits(
-  userId: string,
+  _userId: string,
   files: FileData[],
 ): Promise<void> {
-  // Verifica limite de unificações mensais
-  const currentUsage = await getCurrentUsage(userId)
-  if (currentUsage >= PRO_LIMITS.unificationsPerMonth) {
-    throw Errors.limitExceeded(
-      `${PRO_LIMITS.unificationsPerMonth} unificações/mês`,
-      `${currentUsage} utilizadas`,
-    )
-  }
-
   // Verifica limite de arquivos por unificação
   if (files.length > PRO_LIMITS.maxInputFiles) {
     throw Errors.limitExceeded(
@@ -129,7 +96,24 @@ function validateRowLimits(spreadsheets: ParsedSpreadsheet[]): void {
 }
 
 /**
- * Processa as planilhas e retorna buffer + metadata
+ * Processa as planilhas e retorna buffer + metadata.
+ *
+ * **Card 4.2 — ordem de validação refatorada:**
+ *  1. Pre-flight cheap (file size, count, columns) — capturam input claramente
+ *     inválido sem nenhum I/O.
+ *  2. `validateAndIncrementUsage` atômico — valida quota mensal E incrementa
+ *     em single-statement Postgres. Race TOCTOU fechada (WV-2026-002).
+ *  3. Parse + merge + generate — operações pesadas, só rodam se quota foi
+ *     reservada com sucesso.
+ *
+ * Trade-off documentado em `usage.service.validateAndIncrementUsage`: se o
+ * processamento falhar pós-reserva, usuário "perde" 1 slot. Aceito (padrão
+ * Stripe — cobrar quota na entrada > arriscar overage por race em rollback).
+ *
+ * `userId` aqui é o `request.user.userId` (UUID do JWT). Plan vem do mesmo
+ * lugar (caller deve passar). Mantemos `'PRO'` hardcoded por compat com
+ * o controller atual que ainda não propaga `request.user.role` — refator
+ * separado em pipeline-discovery (não escopo do 4.2).
  */
 export async function processSpreadsheets(
   userId: string,
@@ -138,10 +122,10 @@ export async function processSpreadsheets(
 ): Promise<ProcessSyncResult> {
   const { selectedColumns, outputFormat } = input
 
-  // Valida limites antes de processar
+  // 1. Pré-flight cheap (sem I/O): file size, count, total
   await validateProLimits(userId, files)
 
-  // Valida número de colunas
+  // Valida número de colunas (também cheap)
   if (selectedColumns.length > PRO_LIMITS.maxColumns) {
     throw Errors.limitExceeded(
       `${PRO_LIMITS.maxColumns} colunas`,
@@ -149,7 +133,13 @@ export async function processSpreadsheets(
     )
   }
 
-  // Parse de cada arquivo
+  // 2. Atomic quota check + increment (Card 4.2 — fecha WV-2026-002).
+  // Plan='PRO' hardcoded — controller atualmente só chama esta função para
+  // usuários PRO autenticados (FREE faz processamento client-side). Quando
+  // o controller passar `request.user.role`, propagar até aqui.
+  await validateAndIncrementUsage(userId, 'PRO')
+
+  // 3. Parse + merge + generate (operações pesadas)
   const parsedSpreadsheets: ParsedSpreadsheet[] = []
 
   for (const file of files) {
@@ -169,9 +159,6 @@ export async function processSpreadsheets(
 
   // Gera arquivo de saída
   const outputFile = generateOutputFile(merged, outputFormat as OutputFormat)
-
-  // Incrementa contador de uso
-  await incrementUsage(userId)
 
   return {
     buffer: outputFile.buffer,

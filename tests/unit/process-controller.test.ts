@@ -44,6 +44,10 @@ const { prismaMock, redisMock } = vi.hoisted(() => {
     $transaction: vi.fn(),
     $connect: vi.fn(),
     $disconnect: vi.fn(),
+    // Card 4.2: validateAndIncrementUsage usa $queryRaw (template tag).
+    // Default abaixo (mockResolvedValue [{unifications_count:1}]) cobre o
+    // happy path. Tests de quota exhausted overridam pra retornar [].
+    $queryRaw: vi.fn(),
   }
 
   const redisMock = {
@@ -101,6 +105,10 @@ beforeEach(() => {
   vi.clearAllMocks()
   prismaMock.usage.findUnique.mockResolvedValue(null)
   prismaMock.usage.upsert.mockResolvedValue({})
+  // Card 4.2: $queryRaw cobre validateAndIncrementUsage. Default = sucesso
+  // (slot reservado, count=1). Tests de quota exhausted overridam pra []
+  // (limit atingido → throw LIMIT_EXCEEDED).
+  prismaMock.$queryRaw.mockResolvedValue([{ unifications_count: 1 }])
   redisMock.incr.mockResolvedValue(1)
   redisMock.decr.mockResolvedValue(0)
   redisMock.expire.mockResolvedValue(true)
@@ -938,9 +946,14 @@ describe('processSpreadsheets — pro-limit edge cases', () => {
     ).rejects.toThrow('Limite excedido')
   })
 
-  it('rejects when monthly unification quota is exhausted', async () => {
+  it('rejects when monthly unification quota is exhausted (Card 4.2 atomic)', async () => {
     const { PRO_LIMITS } = await import('../../src/lib/spreadsheet/types')
 
+    // Card 4.2: validateAndIncrementUsage usa $queryRaw atômico. Limit hit
+    // = INSERT ON CONFLICT WHERE não passou = RETURNING vazio. Em seguida,
+    // getCurrentUsage (findUnique) é chamado pra montar mensagem de erro
+    // acionável.
+    prismaMock.$queryRaw.mockResolvedValueOnce([])
     prismaMock.usage.findUnique.mockResolvedValue({
       unificationsCount: PRO_LIMITS.unificationsPerMonth,
     } as never)
