@@ -4,6 +4,7 @@ import { billingRoutes } from './billing.routes'
 import { webhookRoutes } from './webhook.routes'
 import { processRoutes } from './process.routes'
 import { healthRoutes } from './health.routes'
+import { usageRoutes } from './usage.routes'
 
 /**
  * Registra todas as rotas da aplicação
@@ -27,6 +28,9 @@ export async function registerRoutes(app: FastifyInstance) {
   // Rotas de processamento
   await app.register(processRoutes, { prefix: '/process' })
 
-  // Futuras rotas serão adicionadas aqui:
-  // await app.register(usageRoutes, { prefix: '/usage' })
+  // Rotas de usage & limits (Card 4.1) — GET /usage, GET /limits
+  // Não tem prefix dedicado porque são endpoints distintos no top-level
+  // (front consome /usage e /limits como rotas separadas, sem agrupar
+  // sob /usage/*).
+  await app.register(usageRoutes)
 }

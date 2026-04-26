@@ -109,6 +109,8 @@ describe('rateLimitMiddleware — export shape', () => {
     'billing',
     'process',
     'health', // Card 2.3 — health check rate limiter (/health/ready, /health/)
+    'usage', // Card 4.1 (#33) — GET /usage (60/min, polling do front)
+    'limits', // Card 4.1 (#33) — GET /limits (100/min, mais leve)
   ] as const
 
   it('deve exportar todas as chaves esperadas', () => {

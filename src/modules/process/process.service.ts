@@ -14,6 +14,11 @@ import {
   OutputFormat,
 } from '../../lib/spreadsheet'
 import { ProcessSyncInput, ProcessSyncResult } from './process.schema'
+// Card 4.1 (#33): SSOT de leitura de usage migrou pra usage.service. Esta
+// função era duplicada aqui antes — agora `getCurrentUsage` (ler) e
+// `getCurrentPeriod` vivem só em um lugar. Card 4.2 vai trazer
+// `validateAndIncrementUsage()` atômico (fecha waiver WV-2026-002).
+import { getCurrentPeriod, getCurrentUsage } from '../usage/usage.service'
 
 interface FileData {
   buffer: Buffer
@@ -21,35 +26,11 @@ interface FileData {
 }
 
 /**
- * Retorna o período atual no formato YYYY-MM
- */
-function getCurrentPeriod(): string {
-  const now = new Date()
-  const year = now.getFullYear()
-  const month = String(now.getMonth() + 1).padStart(2, '0')
-  return `${year}-${month}`
-}
-
-/**
- * Busca o uso atual do mês para o token
- */
-async function getCurrentUsage(userId: string): Promise<number> {
-  const period = getCurrentPeriod()
-
-  const usage = await prisma.usage.findUnique({
-    where: {
-      userId_period: {
-        userId,
-        period,
-      },
-    },
-  })
-
-  return usage?.unificationsCount ?? 0
-}
-
-/**
- * Incrementa o contador de uso mensal
+ * Incrementa o contador de uso mensal.
+ *
+ * Permanece neste arquivo até o Card 4.2 substituir por
+ * `validateAndIncrementUsage()` atômico no `usage.service` (fecha o
+ * TOCTOU do waiver WV-2026-002).
  */
 async function incrementUsage(userId: string): Promise<void> {
   const period = getCurrentPeriod()

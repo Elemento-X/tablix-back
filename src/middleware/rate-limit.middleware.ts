@@ -129,4 +129,6 @@ export const rateLimitMiddleware = {
   billing: createRateLimitMiddleware('billing'),
   process: createRateLimitMiddleware('process'),
   health: createRateLimitMiddleware('health'),
+  usage: createRateLimitMiddleware('usage'),
+  limits: createRateLimitMiddleware('limits'),
 }

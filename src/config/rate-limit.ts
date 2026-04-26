@@ -31,6 +31,8 @@ const createLimiter = (requests: number, window: Duration, prefix: string) => {
  * - process: /process/* (10 req/min) - futuro
  * - health: /health e /health/ready (60/min) - Card 2.3, anti-abuse de probes externos
  *           /health/live é exclusão total (sem rate limit, ver health.routes.ts)
+ * - usage: GET /usage (60/min) - Card 4.1, polling do front (use-usage hook)
+ * - limits: GET /limits (100/min) - Card 4.1, mais leve que usage (estático por plan)
  */
 export const rateLimiters = {
   global: createLimiter(100, '1m', 'global'),
@@ -42,6 +44,8 @@ export const rateLimiters = {
   billing: createLimiter(20, '1m', 'billing'),
   process: createLimiter(10, '1m', 'process'),
   health: createLimiter(60, '1m', 'health'),
+  usage: createLimiter(60, '1m', 'usage'),
+  limits: createLimiter(100, '1m', 'limits'),
 } as const
 
 export type RateLimiterType = keyof typeof rateLimiters

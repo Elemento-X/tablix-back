@@ -11,6 +11,11 @@ import { Errors } from '../../errors/app-error'
 import { emitAuditEvent } from '../../lib/audit/audit.service'
 import { AuditAction } from '../../lib/audit/audit.types'
 import { createHmac, timingSafeEqual } from 'crypto'
+// SSOT do período mensal vive em usage.service (UTC explícito). Card 4.1
+// (#33) consolidou — antes existia uma cópia local aqui que usava TZ local
+// (getFullYear/getMonth), causando drift entre /auth/me e /usage em servidor
+// configurado com TZ regional. @dba MÉDIO: bug latente fechado neste fix.
+import { getCurrentPeriod } from '../usage/usage.service'
 
 export interface ValidateTokenResult {
   accessToken: string
@@ -393,16 +398,6 @@ export async function revokeAllSessions(userId: string): Promise<number> {
   })
 
   return result.count
-}
-
-/**
- * Retorna o período atual no formato YYYY-MM
- */
-function getCurrentPeriod(): string {
-  const now = new Date()
-  const year = now.getFullYear()
-  const month = String(now.getMonth() + 1).padStart(2, '0')
-  return `${year}-${month}`
 }
 
 /**
