@@ -38,18 +38,28 @@
         "period": "2026-04-09 → 2026-04-19",
         "cards_delivered": 14,
         "hist_card": "Cce9ClE8",
-        "status": "CLOSED_WITH_OPEN_DEBT",
+        "status": "CLOSED_NO_OPEN_DEBT",
+        "debt_closed_at": "2026-04-26",
         "debt_list_id": "69e6761d693aef53496559b2",
-        "debt_cards": 3
+        "debt_cards": 0,
+        "debt_closure_commits": [
+          "42f9427 (Card 4.2 → #68)",
+          "36d7072 (side-quest pack → #76, #91)"
+        ]
       },
       {
         "phase": "Fase 2 — Observabilidade & Auditoria",
         "period": "2026-04-13 → 2026-04-20",
         "cards_delivered": 4,
         "hist_card": "xVoSXmfy",
-        "status": "CLOSED_WITH_OPEN_DEBT",
+        "status": "CLOSED_NO_OPEN_DEBT",
+        "debt_closed_at": "2026-04-26",
         "debt_list_id": "69e6761e9b57377f349b5081",
-        "debt_cards": 6
+        "debt_cards": 0,
+        "debt_closure_commits": [
+          "61b2366 (LGPD pack → #72, #77)",
+          "36d7072 (side-quest pack → #78, #82, #88)"
+        ]
       },
       {
         "phase": "Fase 3 — Testes & Qualidade",
@@ -69,18 +79,21 @@
       }
     ],
     "active": {
-      "phase": null,
-      "list_id": null,
-      "started_at": null,
+      "phase": "Fase 4 — Usage & Limits",
+      "list_id": "69d7a7dddf35f1d898ec40c1",
+      "started_at": "2026-04-25T17:30:00Z",
       "in_progress": [],
       "next": [
-        "Decidir entre: Fase 4 (Usage & Limits) ou abordar débito acumulado das Fases 1/2 (3+6 cards de débito ativo) primeiro."
+        "Card 4.3 (#134, guKQavH5) — features futuras Usage/Limits: A) histórico, B) admin leaderboard, C) admin stats, D) webhook outbound. Decidir prioridade antes de implementar.",
+        "Avançar pra Fase 5 — Integração Front-Back (depois do 4.3 ou pulando se decidir)"
       ],
-      "side_quests": [
-        "#63 INFRA — Instalar Stripe CLI (manual, só quando for testar webhook localmente)"
+      "side_quests": [],
+      "done": [
+        "4.1 (#33) — GET /usage e /limits (APPROVED 2026-04-25, commit ded9357)",
+        "4.2 (#129) — Atomic quota enforcement (APPROVED 2026-04-26, commit 42f9427, fecha WV-2026-002)",
+        "Side-quest pack — débito Fase 1/2 ZERADO (APPROVED 2026-04-26, commit 36d7072): #72/#77/#76/#78/#82/#88/#91"
       ],
-      "done": [],
-      "rationale": "Fase 3 encerrada em 2026-04-25 com [HIST] card #125 (JJTy3wR4) e pente fino completo: 39 itens de checklist marcados em 6 cards Done (#26/#28/#29/#30/#31/#32). 2 itens 'futuros' do #29 (cron retenção 90d + endpoint admin) viraram cards #123/#124 no Backlog. @analyst NÃO acionado por decisão consciente — primeira execução agendada pro final da Fase 5 pra acumular massa estatística suficiente."
+      "rationale": "Fase 4 ativa desde 2026-04-25. Cards 4.1 (read-only API) e 4.2 (atomic enforcement, fecha WV-2026-002) entregaram core. Side-quest pack zerou débito Fase 1/2 (commit 36d7072). Card 4.3 placeholder pra features incrementais (relatórios + admin dashboard) — bloqueio parcial por #124 (roles admin) e #128 (period DATE). Operador pode ir direto pra Fase 5 se decidir que 4.3 não é prioridade pré-launch."
     },
     "new_debt_phases_created_2026-04-20": [
       {
