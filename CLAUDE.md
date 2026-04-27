@@ -34,9 +34,9 @@
 
 - Moeda da cobrança é decidida **server-side** pelo backend, nunca pelo cliente
 - Regra de negócio: `.env.example` declara "psychological pricing por mercado, sem conversão automática" — cada país tem price ID próprio no Stripe (BRL/USD/EUR)
-- Fonte da verdade do país do usuário: header `CF-IPCountry` injetado pela Cloudflare na frente do Fly.io (dependência de infra — Fase 8)
+- Fonte da verdade do país do usuário: header `CF-IPCountry` injetado pela Cloudflare na frente do Fly.io (dependência de infra — Fase 7 — Infra & Deploy, anteriormente Fase 8)
 - Schema do `/billing/create-checkout` continua aceitando `currency` no body por compatibilidade, mas o handler IGNORA o valor do cliente e resolve via `CF-IPCountry` → `PRICE_MAP`
-- Implementação completa adiada para Card 8.7 (ex-1.20) na Fase 8 — Infra & Deploy, junto com a configuração da Cloudflare
+- Implementação completa adiada para Card 7.7 (ex-1.20, ex-8.7) na Fase 7 — Infra & Deploy, junto com a configuração da Cloudflare
 - Até lá: `PRICE_MAP` existe no código mas só `BRL` tem price ID configurado em produção; `env.ts` via `superRefine` só exige `USD`/`EUR` quando `NODE_ENV=production`
 - Finding F-HIGH-01 (price arbitrage) coberto pelo waiver `WV-2026-004` (expira 2026-05-15) — risco real = zero em ambiente controlado pré-go-live
 - Atalhos rejeitados conscientemente: `geoip-lite` (base desatualizada, VPN-bypass trivial), detecção via `Accept-Language` (não é sinal de país)

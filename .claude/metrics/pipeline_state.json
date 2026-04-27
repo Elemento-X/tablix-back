@@ -1,35 +1,35 @@
 {
   "schema_version": 1,
-  "updated_at": "2026-04-25T00:20:00Z",
+  "updated_at": "2026-04-26T23:30:00Z",
   "current": null,
   "last_completed": {
+    "card_id": "69ee93f2ae0616e4723cee76",
+    "card_short_link": "jnnBeGJg",
+    "card_id_short": 138,
+    "card_title": "[HIST] Fase 4 — Usage & Limits (encerrada 2026-04-26)",
+    "phase": "Fase 4 — Usage & Limits (encerramento + renumeração de fases)",
+    "decision": "CLOSED_NO_OPEN_DEBT",
+    "cycles": 0,
+    "done_at": "2026-04-26T23:30:00Z",
+    "commit": null,
+    "lead_time_hours": null,
+    "mttr_hours": null,
+    "cost_usd": null,
+    "fast_path": false,
+    "waivers_applied": [],
+    "cards_discovered": 0,
+    "notes": "Encerramento administrativo da Fase 4 + renumeração das fases 6-12 → 5-11 (total agora: 11 fases). Card 4.3 (#134) placeholder desmembrado em 3 substitutos (#135 9.6 histórico, #136 9.7 dashboard admin, #137 6.9 webhook outbound). Pré-requisitos #124 e #128 movidos pra Fase 9. Antiga Fase 5 (Integração Front-Back) sumiu — 3 cards CROSS-REPO (#34/#58/#59) migrados pro board Tablix Frontend (Fase 8 — Blockers de Launch); 5.2 smoke E2E (#35) ficou no back como 6.1 da nova Fase 6 (Fila Assíncrona). 28 cards renomeados em 2 batches paralelos. Lista vazia da antiga Fase 5 arquivada. #138 [HIST] criado com 3 checklists. As 7 listas Fase 6-12 do Trello mantêm os IDs originais — usuário renomeia o nome no UI (workaround pra ausência de update_list no MCP)."
+  },
+  "previously_completed": {
     "card_id": "69e64ae51362ccc4b8c2cf56",
     "card_short_link": "MbE1roZB",
     "card_id_short": 86,
     "card_title": "webhook-circuit-breaker: TOCTOU INCR/EXPIRE race (Lua atomic)",
-    "phase": "Fase 3 — Testes & Qualidade",
     "decision": "APPROVED",
     "cycles": 2,
     "done_at": "2026-04-25T00:20:00Z",
     "commit": "41d0ee2",
-    "lead_time_hours": 1.25,
-    "mttr_hours": 0.42,
-    "cost_usd": 1.78,
-    "fast_path": false,
-    "waivers_applied": [],
-    "cards_discovered": 0,
-    "notes": "Pipeline QA v2 em 2 ciclos. Ciclo 1 APPROVED com convergência forte em 5 BAIXOs (TOCTOU residual EVAL→SET ban, log noise, cast as number, weak-assertion guard, shape guard ausente). Ciclo 2 fix-all em commit único: SET ban movido pro Lua (atomicidade total dos 3 races: INCR+EXPIRE+SET), only-once log via banApplied flag, Number() defensivo, shape guard Array.isArray+length===2. APPROVED unânime sem cards residuais. 11/11 unit verdes (era 9). 1068 full suite. Smart re-run: 5 agentes pulados (devops/performance/seo/copywriter/design-qa). Fix-all encerrou cleanly (zero waivers, zero discoveries). Custo: $1.78."
-  },
-  "previously_completed": {
-    "card_id": "69dafcedc0d43965537a768e",
-    "card_short_link": "irZWcOCv",
-    "card_id_short": 74,
-    "card_title": "3.4 — Idempotency-Key em POST /billing/create-checkout",
-    "decision": "APPROVED",
-    "cycles": 2,
-    "done_at": "2026-04-24T23:00:00Z",
-    "commit": "ba258af",
-    "cards_discovered": 7
+    "cards_discovered": 0
   },
   "phases": {
     "completed": [
@@ -70,54 +70,81 @@
         "status": "CLOSED_NO_OPEN_DEBT",
         "debt_list_id": null,
         "debt_cards": 0,
-        "side_quest_open": "#63 INFRA Stripe CLI (manual, BAIXO)",
+        "side_quest_open": "#63 INFRA Stripe CLI (movido pra Fase 7 — Infra & Deploy)",
         "discovery_cards_distributed": 26,
         "waivers_new": ["WV-2026-005"],
         "cost_total_usd": 16.8,
         "tests_baseline_at_close": 1090,
         "checklist_pente_fino_done_at": "2026-04-25T01:05:00Z"
+      },
+      {
+        "phase": "Fase 4 — Usage & Limits",
+        "period": "2026-04-25 → 2026-04-26",
+        "cards_delivered": 7,
+        "hist_card": "jnnBeGJg",
+        "hist_card_id_short": 138,
+        "status": "CLOSED_NO_OPEN_DEBT",
+        "debt_list_id": null,
+        "debt_cards": 0,
+        "discovery_cards_distributed": 7,
+        "waivers_closed": ["WV-2026-002"],
+        "cost_total_usd": 3.5,
+        "tests_baseline_at_close": "1115 unit + 5 integration",
+        "card_43_disposition": {
+          "decision": "desmembrado em 3 substitutos pra fases naturais",
+          "substitutes_post_renumeration": [
+            "#135 (X1rUNB0g) 9.6 — GET /usage/history → Fase 9 — Go-live & Docs",
+            "#136 (VjQmQOsu) 9.7 — Dashboard admin (leaderboard + stats) → Fase 9 (depende de #124)",
+            "#137 (4cxrqvD5) 6.9 — Webhook outbound usage.threshold_reached → Fase 6 — Fila Assíncrona"
+          ],
+          "prerequisites_relocated": [
+            "#124 (roles admin) Backlog → Fase 9",
+            "#128 (Usage.period DATE) Backlog → Fase 9"
+          ],
+          "placeholder_archived": "#134 (guKQavH5) com comentário de remanejamento"
+        },
+        "renumeration_executed": {
+          "trigger": "Antiga Fase 5 (Integração Front-Back) esvaziada — cards CROSS-REPO migrados pro board Tablix Frontend",
+          "result": "11 fases (era 12)",
+          "cross_board_migrations": [
+            "#34 (5.1 → idShort 171) Tablix Backend → Tablix Frontend Fase 8",
+            "#58 (5.3 → idShort 172) Tablix Backend → Tablix Frontend Fase 8",
+            "#59 (5.4 → idShort 173) Tablix Backend → Tablix Frontend Fase 8"
+          ],
+          "kept_in_back": "#35 (5.2 smoke E2E → renomeado 6.1, movido pra atual lista 'Fase 7 → Fila Assíncrona' que vira Fase 6)",
+          "list_archived": "Fase 5 — Integração Front-Back (id 69d7a7ded57bfb59f1d72c84) — agora vazia",
+          "list_renames_pending_user": "Operador renomeia 7 listas no UI: Fase 6→5, 7→6, 8→7, 9→8, 10→9, 11→10, 12→11"
+        },
+        "rationale": "4.1 (read-only API) + 4.2 (atomic enforcement, fecha WV-2026-002) entregaram o produto mínimo de quota. Side-quest pack zerou débito Fase 1/2 (commit 36d7072). 4.3 itens não cabiam na Fase 4 por dependências reais — não atalho."
       }
     ],
     "active": {
-      "phase": "Fase 4 — Usage & Limits",
-      "list_id": "69d7a7dddf35f1d898ec40c1",
-      "started_at": "2026-04-25T17:30:00Z",
+      "phase": "Fase 5 — Storage (anteriormente Fase 6)",
+      "list_id": "69d7a7def8794179e29c6614",
+      "started_at": "2026-04-26T23:30:00Z",
       "in_progress": [],
       "next": [
-        "Card 4.3 (#134, guKQavH5) — features futuras Usage/Limits: A) histórico, B) admin leaderboard, C) admin stats, D) webhook outbound. Decidir prioridade antes de implementar.",
-        "Avançar pra Fase 5 — Integração Front-Back (depois do 4.3 ou pulando se decidir)"
+        "5.1 — Adapter de storage (Supabase Storage) — #36 (lGlZpdE7)",
+        "5.2 — Cron de retencao 30d + alerta 70% + opt-in — #37 (rkpPoy5P)",
+        "5.3 — [CROSS-REPO] Copy fix privacy policy + opt-in (front) — #55 (NnsbqJyS) — candidato a migrar pro board front futuramente"
       ],
       "side_quests": [],
-      "done": [
-        "4.1 (#33) — GET /usage e /limits (APPROVED 2026-04-25, commit ded9357)",
-        "4.2 (#129) — Atomic quota enforcement (APPROVED 2026-04-26, commit 42f9427, fecha WV-2026-002)",
-        "Side-quest pack — débito Fase 1/2 ZERADO (APPROVED 2026-04-26, commit 36d7072): #72/#77/#76/#78/#82/#88/#91"
-      ],
-      "rationale": "Fase 4 ativa desde 2026-04-25. Cards 4.1 (read-only API) e 4.2 (atomic enforcement, fecha WV-2026-002) entregaram core. Side-quest pack zerou débito Fase 1/2 (commit 36d7072). Card 4.3 placeholder pra features incrementais (relatórios + admin dashboard) — bloqueio parcial por #124 (roles admin) e #128 (period DATE). Operador pode ir direto pra Fase 5 se decidir que 4.3 não é prioridade pré-launch."
+      "done": [],
+      "rationale": "Fase 5 — Storage ativada após renumeração de 2026-04-26. 3 cards: 2 backend puros (5.1 adapter, 5.2 cron retenção) + 1 cross-repo front (5.3 copy fix, candidato a migrar pro board front)."
     },
-    "new_debt_phases_created_2026-04-20": [
-      {
-        "phase": "Fase 11 — Cleanup técnico",
-        "list_id": "69e6761ecd18f2c64020cfa1",
-        "cards": 3,
-        "purpose": "findings BAIXO de pipeline-discovery sem fase natural"
-      },
-      {
-        "phase": "Fase 12 — Docs & revisão final",
-        "list_id": "69e6761e0f0f087f0f51c842",
-        "cards": 2,
-        "purpose": "wontfix documentados + doc drift de schema"
-      }
-    ]
+    "phase_map_after_renumeration": {
+      "active": "Fase 5 — Storage",
+      "next_phases": [
+        "Fase 6 — Fila Assíncrona (BullMQ + smoke E2E + webhook outbound)",
+        "Fase 7 — Infra & Deploy (Fly.io + Cloudflare + multi-currency + Stripe live)",
+        "Fase 8 — CI/CD",
+        "Fase 9 — Go-live & Docs (rotação segredos + roles admin + endpoints admin + Stripe live + monitoramento 48h)",
+        "Fase 10 — Cleanup técnico (3 cards BAIXO de pipeline-discovery)",
+        "Fase 11 — Docs & revisão final (2 cards informativos)"
+      ]
+    }
   },
   "active_waivers": [
-    {
-      "id": "WV-2026-002",
-      "subject": "Quota TOCTOU (INCR+EXPIRE race)",
-      "expires": "2026-07-10",
-      "follow_up_card": "EAwV6A7O (#68)",
-      "follow_up_due": "2026-06-30"
-    },
     {
       "id": "WV-2026-003",
       "subject": "XLSX ReDoS catastrophic",
@@ -127,9 +154,9 @@
     },
     {
       "id": "WV-2026-004",
-      "subject": "Multi-currency price arbitrage (F-HIGH-01) — Card 8.7 Fase 8",
+      "subject": "Multi-currency price arbitrage (F-HIGH-01) — Card 7.7 Fase 7 — Infra & Deploy",
       "expires": "2026-05-15",
-      "follow_up_card": "ufMAjDlV (8.7)",
+      "follow_up_card": "ufMAjDlV (7.7)",
       "follow_up_due": "2026-05-15"
     },
     {
@@ -147,7 +174,14 @@
       "closed_at": "2026-04-20T18:00:00Z",
       "closed_reason": "resolved_upstream",
       "evidence": "registerStripeEvent() + StripeEvent model unique + Stripe SDK tolerance 300s já presentes antes do waiver"
+    },
+    {
+      "id": "WV-2026-002",
+      "subject": "Quota TOCTOU (INCR+EXPIRE race)",
+      "closed_at": "2026-04-26T00:00:00Z",
+      "closed_reason": "resolved_via_card_4.2",
+      "evidence": "Card 4.2 INSERT...ON CONFLICT DO UPDATE WHERE atômico — integration test prova invariante (Promise.all 10× com 2 slots → EXATAMENTE 2 sucessos e 8 falhas contra Postgres real, commit 42f9427)"
     }
   ],
-  "notes": "Snapshot atualizado em 2026-04-24T23:00 após APPROVED unânime do Card #74 (3.4 Idempotency-Key). Pipeline QA v2 em 2 ciclos: ciclo 1 REPROVED_HARD por @dba ALTO (TTL reset em completeIdempotentOperation) + 4 MÉDIO; ciclo 2 APPROVED após fix-all + 2 testes novos. Validação aplicou rule de fix-all: nenhum finding corrigível foi postergado. Chave da fix do @dba: PTTL+PX preserva janela real do lock (não estende 24h). Chave da fix do @security: regex UUID v4 estrito (não Zod .uuid() permissivo). 7 cards BAIXO de pipeline-discovery a criar no Backlog. Custo: $3.05."
+  "notes": "Snapshot atualizado em 2026-04-26T23:30 após encerramento da Fase 4 + renumeração completa do roadmap. Sem novo commit — apenas Trello e files locais. Agora 11 fases (era 12). Antiga Fase 5 (Integração Front-Back) esvaziada e arquivada (3 cards migrados pro board front, 1 ficou no back virando 6.1). Fases 6-12 renumeradas pra 5-11 (renomeação de listas pendente no UI pelo operador). Débito Fase 1/2/3/4: TODOS ZERADOS. Active waivers: 3 (WV-003 XLSX, WV-004 multi-currency, WV-005 devDep CVE). Closed waivers: 2 (WV-001 webhook replay, WV-002 quota TOCTOU)."
 }
