@@ -192,6 +192,10 @@ const PII_STRING_PATTERNS: Array<[RegExp, string]> = [
   [/sk_(?:live|test)_[A-Za-z0-9]+/g, '[STRIPE_KEY]'],
   [/whsec_[A-Za-z0-9]+/g, '[STRIPE_WHSEC]'],
   [/tbx_pro_[A-Za-z0-9]+/g, '[TBX_PRO]'],
+  // Card 5.1 — Supabase secret key (Storage). Hard req #7 do @security:
+  // se a key vazar em log/Sentry, atacante tem acesso server-side ao
+  // projeto Supabase inteiro (Storage + DB via PostgREST + Auth admin).
+  [/sb_secret_[A-Za-z0-9_-]+/g, '[SUPABASE_SECRET]'],
 ]
 
 function scrubString(value: string): string {
@@ -304,6 +308,10 @@ const OUTBOUND_HOST_ALLOWLIST = [
   'api.stripe.com',
   'api.resend.com',
   '.upstash.io', // suffix match
+  // Card 5.1 — adapter Supabase Storage faz outbound a {ref}.supabase.co
+  // (Storage REST + Realtime WS). Sem isso, breadcrumb HTTP do upload
+  // fica invisível e diag de incidente em prod fica cego (3am test).
+  '.supabase.co', // suffix match
 ] as const
 
 function isAllowlistedHost(url: string): boolean {

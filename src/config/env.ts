@@ -80,6 +80,26 @@ const envSchema = z
     SENTRY_AUTH_TOKEN: z.string().optional().or(z.literal('')),
     SENTRY_ORG: z.string().optional(),
     SENTRY_PROJECT: z.string().optional(),
+
+    // Supabase Storage (Card 5.1 — Fase 5)
+    // Auth dedicada ao Storage (NÃO reusar service_role do Prisma DB).
+    // Decisão @planner D4 + @security hard-req #9: isolamento de uso reduz
+    // blast radius operacional + permite rotação independente.
+    //
+    // SUPABASE_URL: regex anchor previne SSRF via config drift (atacante
+    // interno troca pra https://attacker.com e adapter manda secret key
+    // pro host). Mesmo padrão de SENTRY_DSN. Suporta domínios `.supabase.co`
+    // (default) e `.supabase.in` (regiões alternativas).
+    SUPABASE_URL: z
+      .string()
+      .url()
+      .regex(
+        /^https:\/\/[a-z0-9-]+\.supabase\.(co|in)$/i,
+        'SUPABASE_URL deve seguir https://<project-ref>.supabase.(co|in)',
+      )
+      .optional(),
+    SUPABASE_STORAGE_KEY: z.string().optional(),
+    SUPABASE_STORAGE_BUCKET: z.string().optional(),
   })
   .superRefine((data, ctx) => {
     // JWT_SECRET: rejeitar placeholders conhecidos
@@ -192,6 +212,31 @@ const envSchema = z
           path: ['FRONTEND_URL'],
           message:
             'FRONTEND_URL deve ser HTTPS em produção (não pode ser localhost)',
+        })
+      }
+
+      // Supabase Storage obrigatório em produção (Card 5.1 — Fase 5)
+      if (!data.SUPABASE_URL) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['SUPABASE_URL'],
+          message: 'SUPABASE_URL é obrigatório em produção (Storage Card 5.1)',
+        })
+      }
+      if (!data.SUPABASE_STORAGE_KEY) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['SUPABASE_STORAGE_KEY'],
+          message:
+            'SUPABASE_STORAGE_KEY é obrigatório em produção (Storage Card 5.1)',
+        })
+      }
+      if (!data.SUPABASE_STORAGE_BUCKET) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['SUPABASE_STORAGE_BUCKET'],
+          message:
+            'SUPABASE_STORAGE_BUCKET é obrigatório em produção (Storage Card 5.1)',
         })
       }
     }
