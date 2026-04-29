@@ -187,6 +187,100 @@ model AuditLog {
 }
 
 // ===========================================
+// AUDIT LOG LEGAL - Trilha LGPD com retencao 5 anos
+// ===========================================
+// SEPARADA do audit_log operacional (90d). Eventos legais (purge/consent/dsar)
+// exigem retencao 5 anos por LGPD Art. 16/37 + CDC Art. 27 (prazo prescricional
+// reparacao por fato do servico). Card #150 / Fase 5.
+//
+// IMPORTANTE - DECISOES IRREVERSIVEIS (consultar plano antes de mudar):
+// .claude/plans/2026-04-28-card-150-audit-log-legal.md
+//
+// (D-5) userId NAO TEM FOREIGN KEY pra users.id. INTENCIONAL.
+//   Razao: o evento legal precisa SOBREVIVER ao delete do user (essa eh a
+//   prova juridica da purga). FK ON DELETE SET NULL = "purga de quem?"
+//   absurdo legalmente. FK RESTRICT trava o cron de delete user.
+//   NAO ADICIONAR @relation por reflexo.
+//
+// (R-7) NAO REUSAR cron de retencao do audit_log (90d) nesta tabela.
+//   Cron de 5 anos vive em card proprio (#152). Cron 90d apagando registros
+//   legais = perda de prova juridica = nao-conformidade LGPD critica.
+//
+// (D-1) Service `recordLegalEvent` eh AWAIT (nao fire-and-forget como
+//   AuditLog). Falha de DB DEVE bloquear caller. LGPD nao tolera evento
+//   silenciosamente perdido.
+//
+// (D-2/D-4) event_type, actor, outcome, legal_basis sao WHITELIST via
+//   CHECK constraint SQL + `as const` no TS. Defesa em profundidade.
+//   Adicionar valor exige migration nova (vide audit-legal.types.ts).
+//
+// (resource_hash) bytea 32 bytes = SHA-256(userId:storagePath). FREEZED v1.
+//   Mudanca de formula = nova coluna resourceHashV2, NUNCA mutar v1.
+//   Implementacao: src/lib/audit-hash.ts (funcao pura, PROIBIDO logar input).
+//   Algoritmo registrado em resource_hash_algo (default 'sha256v1') pra
+//   permitir migracao futura sem ambiguidade.
+
+model AuditLogLegal {
+  // UUID nativo (16 bytes) + gen_random_uuid() no DB. SSOT no banco.
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+
+  // eventId vem do CALLER (idempotency-key style). UNIQUE permite cron
+  // retentar sem duplicar evento (P2002 → service faz lookup e retorna).
+  eventId String @unique @map("event_id") @db.Uuid
+
+  // Whitelist via CHECK SQL: purge_pending|purge_completed|purge_failed|
+  // consent_given|consent_withdrawn|dsar_request|dsar_fulfilled
+  eventType String @map("event_type") @db.VarChar(40)
+
+  timestamp DateTime @default(now()) @db.Timestamptz(3)
+
+  // SEM FK (D-5). String Uuid solta proposital.
+  userId String @map("user_id") @db.Uuid
+
+  resourceType String @map("resource_type") @db.VarChar(40)
+  resourceId   String @map("resource_id") @db.VarChar(64)
+
+  // Whitelist via CHECK SQL: regex `^[a-z_]+$` length 3-60.
+  // Ex: retention_expired, user_request_art_18, consent_withdrawn
+  legalBasis String @map("legal_basis") @db.VarChar(60)
+
+  // Whitelist via CHECK SQL: cron_purge_worker|user_self_service|admin_panel
+  actor String @db.VarChar(40)
+
+  // Prova de respeito ao prazo de retencao no momento da purga.
+  expiresAtOriginal DateTime? @map("expires_at_original") @db.Timestamptz(3)
+
+  // SHA-256(userId:storagePath) em bytea (32 bytes). NUNCA path real.
+  // CHECK SQL: octet_length = 32.
+  resourceHash Bytes? @map("resource_hash")
+
+  // Algoritmo do resource_hash. Default 'sha256v1'. Permite versionamento
+  // futuro sem ambiguidade (defense in depth do hash freezed).
+  resourceHashAlgo String @default("sha256v1") @map("resource_hash_algo") @db.VarChar(8)
+
+  // Whitelist via CHECK SQL: success|failure
+  outcome String @db.VarChar(16)
+
+  // Obrigatorio se outcome='failure' (validado em Zod superRefine).
+  errorCode String? @map("error_code") @db.VarChar(80)
+
+  // JSONB com metadata adicional. PII passa por scrubObject SSOT antes
+  // de persistir. Cap 1024 bytes serializados (igual audit_log).
+  metadata Json?
+
+  @@index([userId, timestamp(sort: Desc)], map: "idx_audit_log_legal_user_ts")
+  @@index([eventType, timestamp(sort: Desc)], map: "idx_audit_log_legal_event_type_ts")
+  // NOTA: 2 PARTIAL INDEXES gerenciados via raw SQL na migration:
+  //   - `idx_audit_log_legal_failures` (outcome='failure') -- forensics
+  //   - `idx_audit_log_legal_hash_pending` (event_type IN purge_*, resource_hash IS NOT NULL)
+  //     -- cron #146 correlation hot path
+  // Prisma nao suporta partial indexes declarativamente. Nao usar
+  // `prisma migrate dev` (drop do indice); preferir `prisma db pull` ou
+  // migration SQL ao editar esta model.
+  @@map("audit_log_legal")
+}
+
+// ===========================================
 // ENUMS
 // ===========================================
 

@@ -158,3 +158,85 @@ CREATE INDEX "idx_audit_log_action"            ON "audit_log" ("action");
 CREATE INDEX "idx_audit_log_actor_created_at"  ON "audit_log" ("actor", "created_at" DESC);
 CREATE INDEX "idx_audit_log_created_at"        ON "audit_log" ("created_at");
 CREATE INDEX "idx_audit_log_failures"          ON "audit_log" ("created_at" DESC) WHERE (success = false);
+
+-- ----------------------------------------------------------------------------
+-- TABLE: audit_log_legal
+-- ----------------------------------------------------------------------------
+-- Trilha LGPD com retencao 5 anos. SEPARADA de audit_log (90d).
+-- Eventos: purge/consent/dsar. Card #150 (Fase 5).
+-- IRREVERSIVEIS: D-1 (await), D-2/D-4 (whitelists), D-3 (tabela separada),
+-- D-5 (sem FK userId), R-7 (nao reusar cron 90d), resource_hash FREEZED v1.
+-- Plano: .claude/plans/2026-04-28-card-150-audit-log-legal.md
+CREATE TABLE "audit_log_legal" (
+  "id"                    UUID            NOT NULL DEFAULT gen_random_uuid(),
+  "event_id"              UUID            NOT NULL,
+  "event_type"            VARCHAR(40)     NOT NULL,
+  "timestamp"             TIMESTAMPTZ(3)  NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  "user_id"               UUID            NOT NULL,
+  "resource_type"         VARCHAR(40)     NOT NULL,
+  "resource_id"           VARCHAR(64)     NOT NULL,
+  "legal_basis"           VARCHAR(60)     NOT NULL,
+  "actor"                 VARCHAR(40)     NOT NULL,
+  "expires_at_original"   TIMESTAMPTZ(3),
+  "resource_hash"         BYTEA,
+  "resource_hash_algo"    VARCHAR(8)      NOT NULL DEFAULT 'sha256v1',
+  "outcome"               VARCHAR(16)     NOT NULL,
+  "error_code"            VARCHAR(80),
+  "metadata"              JSONB,
+  CONSTRAINT "audit_log_legal_pkey" PRIMARY KEY ("id"),
+  CONSTRAINT "audit_log_legal_event_id_key" UNIQUE ("event_id"),
+  CONSTRAINT "audit_log_legal_event_type_check" CHECK (
+    "event_type" IN (
+      'purge_pending', 'purge_completed', 'purge_failed',
+      'consent_given', 'consent_withdrawn',
+      'dsar_request', 'dsar_fulfilled'
+    )
+  ),
+  CONSTRAINT "audit_log_legal_actor_check" CHECK (
+    "actor" IN ('cron_purge_worker', 'user_self_service', 'admin_panel')
+  ),
+  CONSTRAINT "audit_log_legal_outcome_check" CHECK (
+    "outcome" IN ('success', 'failure')
+  ),
+  CONSTRAINT "audit_log_legal_legal_basis_format_check" CHECK (
+    ("legal_basis"::text ~ '^[a-z_]+$'::text)
+    AND (length("legal_basis"::text) >= 3)
+    AND (length("legal_basis"::text) <= 60)
+  ),
+  CONSTRAINT "audit_log_legal_resource_hash_size_check" CHECK (
+    "resource_hash" IS NULL OR octet_length("resource_hash") = 32
+  ),
+  CONSTRAINT "audit_log_legal_error_code_required_check" CHECK (
+    ("outcome" = 'success') OR
+    ("outcome" = 'failure' AND "error_code" IS NOT NULL)
+  )
+);
+ALTER TABLE "audit_log_legal" SET (toast_tuple_target = 4096);
+ALTER TABLE "audit_log_legal" ENABLE ROW LEVEL SECURITY;
+CREATE INDEX "idx_audit_log_legal_user_ts"          ON "audit_log_legal" ("user_id", "timestamp" DESC);
+CREATE INDEX "idx_audit_log_legal_event_type_ts"    ON "audit_log_legal" ("event_type", "timestamp" DESC);
+CREATE INDEX "idx_audit_log_legal_failures"         ON "audit_log_legal" ("timestamp" DESC) WHERE ("outcome" = 'failure');
+CREATE INDEX "idx_audit_log_legal_hash_pending"     ON "audit_log_legal" ("resource_hash") WHERE ("event_type" IN ('purge_pending', 'purge_completed', 'purge_failed') AND "resource_hash" IS NOT NULL);
+
+-- ----------------------------------------------------------------------------
+-- TRIGGER: audit_log_legal append-only enforcement (Card #150 fix-pack F-MED-01)
+-- ----------------------------------------------------------------------------
+-- Bloqueia UPDATE/DELETE em audit_log_legal (LGPD prova juridica intacta).
+-- Excecao prevista: cron de retencao 5 anos (Card #152 futuro) com role dedicada.
+CREATE OR REPLACE FUNCTION block_audit_log_legal_mutation()
+RETURNS TRIGGER AS $$
+BEGIN
+  RAISE EXCEPTION
+    'audit_log_legal is append-only (LGPD prova juridica). UPDATE/DELETE proibidos. Cron de retencao 5 anos (Card #152) usa role dedicada com bypass explicito.'
+    USING
+      ERRCODE = 'insufficient_privilege',
+      HINT = 'Para deletar registros expirados, use o cron #152 com role audit_legal_purge_role.';
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER audit_log_legal_block_update
+  BEFORE UPDATE ON "audit_log_legal"
+  FOR EACH ROW EXECUTE FUNCTION block_audit_log_legal_mutation();
+CREATE TRIGGER audit_log_legal_block_delete
+  BEFORE DELETE ON "audit_log_legal"
+  FOR EACH ROW EXECUTE FUNCTION block_audit_log_legal_mutation();

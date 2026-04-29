@@ -135,16 +135,85 @@
     }
   ],
   "next_action_for_operator": {
-    "card": "5.2 (#37, rkpPoy5P) — Cron de retenção 30d + alerta 70% + opt-in",
-    "blocker": "4 decisões arquiteturais pendentes do operador",
-    "decisions_pending": [
-      "1. Runtime do cron: node-cron in-process + Redis leader lock (recomendado) | BullMQ (depende Fase 6) | Fly scheduled machines (Fase 7) | Supabase pg_cron | GitHub Actions externo",
-      "2. expiresAt: 30d fixo (recomendado) ou configurável por plano",
-      "3. LGPD: hard delete + audit log antes (recomendado) ou soft delete deletedAt",
-      "4. Subdividir 5.2 em 5.2a (schema+endpoints) / 5.2b (cron retenção) / 5.2c (cron alerta)?"
+    "card": "#150 (pVasIL6l) — audit_log_legal 5 anos (movido pra Fase 5 como pré-req de 5.2b)",
+    "blocker": "Aguardando plano INVEST do @planner pra começar implementação",
+    "decisions_closed": [
+      "#1 Runtime cron: A (node-cron + Redis lock) — voto 4/4 unânime",
+      "#2 expiresAt: B.3 (env PRO_RETENTION_DAYS=30) — tiebreaker @devops",
+      "#3 LGPD delete: C (two-phase) — voto 2/2 unânime",
+      "#4 Subdivisão 5.2: B (5.2a/b/c) — voto 2/2 unânime",
+      "#5 Ordering: (a) — #150 antes de 5.2a/b/c — aprovado 2026-04-28"
     ],
-    "details_in_memory": "project_card52_pending_decisions.md",
-    "after_decisions": "Chamar @planner pra estruturar 5.2a com tasks INVEST"
+    "implementation_sequence_fase5": [
+      "1. #150 audit_log_legal (~150 LoC, 1-2h) — em planejamento agora",
+      "2. #145 5.2a schema + endpoints + infra scheduling/lock (~300-400 LoC)",
+      "3. #146 5.2b cron purge (~250 LoC) ‖ #147 5.2c cron alerta (~250 LoC) [paralelos]"
+    ],
+    "details_in_memory": "project_card52_decisions_closed.md",
+    "operator_pending_actions": [
+      "Adicionar SUPABASE_CRON_KEY ao Card 9.5 (rotação pré-go-live)",
+      "Atualizar Card 7.10 quando chegar lá (remover purgas/consents/dsars do escopo, deixar só retenção operacional 90d)"
+    ]
   },
-  "notes": "Snapshot atualizado em 2026-04-27T03:50 após Card 5.1 APPROVED + push. 3 commits pushed (0ebb7e2 + 2ce90f2 + 7d31196). Fase 5 ativa, 1/3 cards done. Card 5.2 bloqueado por 4 decisões pendentes do operador — detalhadas em project_card52_pending_decisions.md."
+  "cards_created_2026_04_27_session": {
+    "subdivision_52": [
+      {
+        "id": 145,
+        "shortLink": "DtBkVtVY",
+        "name": "5.2a Schema + endpoints + infra scheduling/lock",
+        "list": "Fase 5 — Storage",
+        "size": "P-M ~300-400 LoC"
+      },
+      {
+        "id": 146,
+        "shortLink": "FK94hRBQ",
+        "name": "5.2b Cron 03:00 retenção two-phase",
+        "list": "Fase 5 — Storage",
+        "size": "M ~250 LoC"
+      },
+      {
+        "id": 147,
+        "shortLink": "s3NLF6bv",
+        "name": "5.2c Cron 08:00 alerta quota + Resend",
+        "list": "Fase 5 — Storage",
+        "size": "M ~250 LoC"
+      }
+    ],
+    "future_migrations": [
+      {
+        "id": 148,
+        "shortLink": "bsW63PxF",
+        "name": "[FUTURO Fase 6] Migrar cron A→B BullMQ",
+        "list": "Backlog"
+      },
+      {
+        "id": 149,
+        "shortLink": "zXZhvzX8",
+        "name": "[FUTURO 7.x] Migrar cron A→C Fly scheduled",
+        "list": "Fase 7"
+      }
+    ],
+    "lgpd_critical": [
+      {
+        "id": 150,
+        "shortLink": "pVasIL6l",
+        "name": "[CRÍTICO LGPD] audit_log_legal retenção 5 anos",
+        "list": "Fase 7",
+        "discovered_by": "@security",
+        "blocks": ["5.2b", "Card 7.10 update"]
+      }
+    ]
+  },
+  "phases_active_status": {
+    "Fase 5 — Storage": {
+      "list_id": "69d7a7def8794179e29c6614",
+      "done": ["5.1 (#36, lGlZpdE7)"],
+      "pending": [
+        "5.2a (#145, DtBkVtVY) — bloqueador atual: ordering vs #150",
+        "5.2b (#146, FK94hRBQ) — depende 5.2a + #150",
+        "5.2c (#147, s3NLF6bv) — depende 5.2a"
+      ]
+    }
+  },
+  "notes": "Snapshot atualizado em 2026-04-28T01:35 após sessão de decisões Card 5.2. 4 decisões fechadas com consenso unânime/quase-unânime do time (5 agentes paralelos consultados). 6 cards Trello criados (#145-150). Achado crítico LGPD do @security gerou #150 (audit_log_legal 5 anos, Art. 16 + 37 + CDC Art. 27). Próximo bloqueador: decidir ordem 5.2a vs #150 antes de @planner."
 }

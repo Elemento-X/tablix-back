@@ -39,7 +39,7 @@ describe('DB smoke (integration)', () => {
   })
 
   describe('1. schema introspection', () => {
-    it('tem 7 tabelas no schema public', async () => {
+    it('tem 8 tabelas no schema public', async () => {
       const rows = await prisma.$queryRaw<{ tablename: string }[]>`
         SELECT tablename FROM pg_tables WHERE schemaname = 'public' ORDER BY tablename
       `
@@ -47,6 +47,7 @@ describe('DB smoke (integration)', () => {
       expect(names).toEqual(
         [
           'audit_log',
+          'audit_log_legal', // Card #150 — LGPD 5y retention
           'jobs',
           'sessions',
           'stripe_events',

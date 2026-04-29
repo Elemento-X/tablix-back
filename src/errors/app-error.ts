@@ -26,6 +26,10 @@ export const ErrorCodes = {
   IDEMPOTENCY_CONFLICT: 'IDEMPOTENCY_CONFLICT',
   IDEMPOTENCY_IN_PROGRESS: 'IDEMPOTENCY_IN_PROGRESS',
 
+  // LGPD Audit Legal (Card #150) — falha de persistência de evento legal.
+  // AWAIT obrigatório (D-1): caller (cron purge, DSAR) deve abortar em falha.
+  LEGAL_AUDIT_PERSIST_FAILED: 'LEGAL_AUDIT_PERSIST_FAILED',
+
   // Geral
   VALIDATION_ERROR: 'VALIDATION_ERROR',
   NOT_FOUND: 'NOT_FOUND',
@@ -140,6 +144,16 @@ export const Errors = {
   idempotencyInProgress: (
     message = 'Requisição similar já está sendo processada',
   ) => new AppError(ErrorCodes.IDEMPOTENCY_IN_PROGRESS, message, 409),
+
+  // LGPD Audit Legal (Card #150). 500 — falha de infra crítica.
+  // Caller (cron #146 purge, DSAR handler) DEVE abortar a operação:
+  // sem prova jurídica do evento legal, não pode prosseguir com o efeito
+  // (delete no Storage, export DSAR, etc).
+  legalAuditPersistFailed: (
+    message = 'Falha ao persistir evento legal de auditoria',
+    details?: ErrorDetails,
+  ) =>
+    new AppError(ErrorCodes.LEGAL_AUDIT_PERSIST_FAILED, message, 500, details),
 
   validationError: (message: string, details?: ErrorDetails) =>
     new AppError(ErrorCodes.VALIDATION_ERROR, message, 400, details),

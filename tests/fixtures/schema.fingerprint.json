@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-04-24T16:19:56.277Z",
+  "generatedAt": "2026-04-29T01:14:08.067Z",
   "database": "container:postgres-17-alpine",
-  "fingerprint": "290ba63a2ccf394cbecf3f1ecc13c2ddcf0b4a5e46900227e7682f209a010474",
+  "fingerprint": "87a45b0cccc8af2de1dd6184fcc6f7bfaae054bbb8117206bbfaf7e0b97feaf3",
   "model": {
     "extensions": [
       "pgcrypto"
@@ -90,6 +90,104 @@
             "type": "timestamp with time zone(3)",
             "nullable": false,
             "default": "CURRENT_TIMESTAMP"
+          }
+        ],
+        "reloptions": [
+          "toast_tuple_target=4096"
+        ]
+      },
+      {
+        "name": "audit_log_legal",
+        "columns": [
+          {
+            "name": "id",
+            "type": "uuid",
+            "nullable": false,
+            "default": "gen_random_uuid()"
+          },
+          {
+            "name": "event_id",
+            "type": "uuid",
+            "nullable": false,
+            "default": null
+          },
+          {
+            "name": "event_type",
+            "type": "character varying(40)",
+            "nullable": false,
+            "default": null
+          },
+          {
+            "name": "timestamp",
+            "type": "timestamp with time zone(3)",
+            "nullable": false,
+            "default": "CURRENT_TIMESTAMP"
+          },
+          {
+            "name": "user_id",
+            "type": "uuid",
+            "nullable": false,
+            "default": null
+          },
+          {
+            "name": "resource_type",
+            "type": "character varying(40)",
+            "nullable": false,
+            "default": null
+          },
+          {
+            "name": "resource_id",
+            "type": "character varying(64)",
+            "nullable": false,
+            "default": null
+          },
+          {
+            "name": "legal_basis",
+            "type": "character varying(60)",
+            "nullable": false,
+            "default": null
+          },
+          {
+            "name": "actor",
+            "type": "character varying(40)",
+            "nullable": false,
+            "default": null
+          },
+          {
+            "name": "expires_at_original",
+            "type": "timestamp with time zone(3)",
+            "nullable": true,
+            "default": null
+          },
+          {
+            "name": "resource_hash",
+            "type": "bytea",
+            "nullable": true,
+            "default": null
+          },
+          {
+            "name": "resource_hash_algo",
+            "type": "character varying(8)",
+            "nullable": false,
+            "default": "'sha256v1'::character varying"
+          },
+          {
+            "name": "outcome",
+            "type": "character varying(16)",
+            "nullable": false,
+            "default": null
+          },
+          {
+            "name": "error_code",
+            "type": "character varying(80)",
+            "nullable": true,
+            "default": null
+          },
+          {
+            "name": "metadata",
+            "type": "jsonb",
+            "nullable": true,
+            "default": null
           }
         ],
         "reloptions": [
@@ -418,6 +516,36 @@
         "definition": "CREATE INDEX idx_audit_log_failures ON public.audit_log USING btree (created_at DESC) WHERE (success = false)"
       },
       {
+        "table": "audit_log_legal",
+        "name": "audit_log_legal_event_id_key",
+        "definition": "CREATE UNIQUE INDEX audit_log_legal_event_id_key ON public.audit_log_legal USING btree (event_id)"
+      },
+      {
+        "table": "audit_log_legal",
+        "name": "audit_log_legal_pkey",
+        "definition": "CREATE UNIQUE INDEX audit_log_legal_pkey ON public.audit_log_legal USING btree (id)"
+      },
+      {
+        "table": "audit_log_legal",
+        "name": "idx_audit_log_legal_event_type_ts",
+        "definition": "CREATE INDEX idx_audit_log_legal_event_type_ts ON public.audit_log_legal USING btree (event_type, \"timestamp\" DESC)"
+      },
+      {
+        "table": "audit_log_legal",
+        "name": "idx_audit_log_legal_failures",
+        "definition": "CREATE INDEX idx_audit_log_legal_failures ON public.audit_log_legal USING btree (\"timestamp\" DESC) WHERE ((outcome)::text = 'failure'::text)"
+      },
+      {
+        "table": "audit_log_legal",
+        "name": "idx_audit_log_legal_hash_pending",
+        "definition": "CREATE INDEX idx_audit_log_legal_hash_pending ON public.audit_log_legal USING btree (resource_hash) WHERE (((event_type)::text = ANY ((ARRAY['purge_pending'::character varying, 'purge_completed'::character varying, 'purge_failed'::character varying])::text[])) AND (resource_hash IS NOT NULL))"
+      },
+      {
+        "table": "audit_log_legal",
+        "name": "idx_audit_log_legal_user_ts",
+        "definition": "CREATE INDEX idx_audit_log_legal_user_ts ON public.audit_log_legal USING btree (user_id, \"timestamp\" DESC)"
+      },
+      {
         "table": "jobs",
         "name": "idx_jobs_status",
         "definition": "CREATE INDEX idx_jobs_status ON public.jobs USING btree (status)"
@@ -530,6 +658,54 @@
         "name": "audit_log_pkey",
         "type": "p",
         "definition": "PRIMARY KEY (id)"
+      },
+      {
+        "table": "audit_log_legal",
+        "name": "audit_log_legal_actor_check",
+        "type": "c",
+        "definition": "CHECK (((actor)::text = ANY ((ARRAY['cron_purge_worker'::character varying, 'user_self_service'::character varying, 'admin_panel'::character varying])::text[])))"
+      },
+      {
+        "table": "audit_log_legal",
+        "name": "audit_log_legal_error_code_required_check",
+        "type": "c",
+        "definition": "CHECK ((((outcome)::text = 'success'::text) OR (((outcome)::text = 'failure'::text) AND (error_code IS NOT NULL))))"
+      },
+      {
+        "table": "audit_log_legal",
+        "name": "audit_log_legal_event_id_key",
+        "type": "u",
+        "definition": "UNIQUE (event_id)"
+      },
+      {
+        "table": "audit_log_legal",
+        "name": "audit_log_legal_event_type_check",
+        "type": "c",
+        "definition": "CHECK (((event_type)::text = ANY ((ARRAY['purge_pending'::character varying, 'purge_completed'::character varying, 'purge_failed'::character varying, 'consent_given'::character varying, 'consent_withdrawn'::character varying, 'dsar_request'::character varying, 'dsar_fulfilled'::character varying])::text[])))"
+      },
+      {
+        "table": "audit_log_legal",
+        "name": "audit_log_legal_legal_basis_format_check",
+        "type": "c",
+        "definition": "CHECK ((((legal_basis)::text ~ '^[a-z_]+$'::text) AND (length((legal_basis)::text) >= 3) AND (length((legal_basis)::text) <= 60)))"
+      },
+      {
+        "table": "audit_log_legal",
+        "name": "audit_log_legal_outcome_check",
+        "type": "c",
+        "definition": "CHECK (((outcome)::text = ANY ((ARRAY['success'::character varying, 'failure'::character varying])::text[])))"
+      },
+      {
+        "table": "audit_log_legal",
+        "name": "audit_log_legal_pkey",
+        "type": "p",
+        "definition": "PRIMARY KEY (id)"
+      },
+      {
+        "table": "audit_log_legal",
+        "name": "audit_log_legal_resource_hash_size_check",
+        "type": "c",
+        "definition": "CHECK (((resource_hash IS NULL) OR (octet_length(resource_hash) = 32)))"
       },
       {
         "table": "jobs",
