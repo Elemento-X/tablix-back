@@ -1,38 +1,33 @@
 {
   "schema_version": 1,
-  "updated_at": "2026-04-27T03:50:00Z",
+  "updated_at": "2026-04-29T20:30:00Z",
   "current": null,
   "last_completed": {
+    "card_id": "69f00e9a38044c23850bb3a4",
+    "card_short_link": "pVasIL6l",
+    "card_id_short": 150,
+    "card_title": "[CRITICO LGPD] audit_log_legal com retencao 5 anos (purge/consent/dsar)",
+    "phase": "Fase 5 — Storage",
+    "decision": "APPROVED",
+    "cycles": 2,
+    "done_at": "2026-04-29T20:30:00Z",
+    "commit": "b076002",
+    "lead_time_hours": 42.93,
+    "mttr_hours": 4.0,
+    "cost_usd": 2.1,
+    "fast_path": false,
+    "waivers_applied": [],
+    "cards_discovered": 3,
+    "notes": "Card #150 audit_log_legal LGPD 5y. 2 ciclos: ciclo 1 REPROVED_HARD@security (1 ALTO bloqueador F-HIGH-01 logger sem redact REDACT_PATHS) + APPROVED_WITH_CONDITIONS@tester (2 ALTOs F-ALTO-01/02) + APPROVED@dba; fix-pack atomico (commit b076002) cobriu 100% findings (REDACT logger + trigger append-only + raceCondition discriminator + Promise.all 5x test + RLS funcional + parity Zod-SQL + fast-check property-based + crypto.randomUUID + Sentry breadcrumb error level + dead code removido); ciclo 2 smart re-run: APPROVED unanime sem condicoes/waivers/escalation. 1275 unit + 29 integration + 11 db-smoke verdes. Coverage src/modules/audit-legal + audit-hash.ts: 100/100/100/100. 5 camadas defesa em profundidade (Zod+CHECK+RLS+trigger+REDACT). Cards descoberta #154/#155/#156 no Backlog. Push origin/feat/Maclean OK. Pre-requisito de #146 (5.2b cron purge) destravado."
+  },
+  "previously_completed": {
     "card_id": "69d7a876658cb64e3a52c7fa",
     "card_short_link": "lGlZpdE7",
     "card_id_short": 36,
     "card_title": "5.1 - Adapter de storage (Supabase Storage)",
-    "phase": "Fase 5 — Storage",
     "decision": "APPROVED",
-    "cycles": 2,
     "done_at": "2026-04-27T03:35:00Z",
-    "commit": "2ce90f2",
-    "commits_related": [
-      "0ebb7e2 (chore: encerra Fase 4 + renumera roadmap)",
-      "2ce90f2 (feat: storage adapter + fix-pack)",
-      "7d31196 (chore: registra pipeline.jsonl Card 5.1)"
-    ],
-    "lead_time_hours": 7.58,
-    "mttr_hours": 0.75,
-    "cost_usd": 3.4,
-    "fast_path": false,
-    "waivers_applied": [],
-    "cards_discovered": 6,
-    "notes": "Pipeline QA v2 em 2 ciclos (REPROVED_HARD ciclo #1 com 2 ALTOs do @reviewer → APPROVED ciclo #2 após fix-pack atômico de 8 itens em 1 commit). StorageAdapter user-scoped + UserScopedPath branded type + bucket Supabase + 4 RLS policies. 1215 unit + 8 integration verdes. Coverage src/lib/storage: 100/94.44/100/100. Hard reqs @security: 10/10 cumpridos. 6 cards pipeline-discovery #139-#144 (4 backlog + 2 Fase 7). Push feito pra origin/feat/Maclean."
-  },
-  "previously_completed": {
-    "card_id": "69ee93f2ae0616e4723cee76",
-    "card_short_link": "jnnBeGJg",
-    "card_id_short": 138,
-    "card_title": "[HIST] Fase 4 — Usage & Limits (encerrada 2026-04-26)",
-    "decision": "CLOSED_NO_OPEN_DEBT",
-    "done_at": "2026-04-26T23:30:00Z",
-    "commit": "0ebb7e2"
+    "commit": "2ce90f2"
   },
   "phases": {
     "completed": [
@@ -79,11 +74,16 @@
         "5.1 (#36, lGlZpdE7) — Adapter Supabase Storage (APPROVED 2026-04-27, commit 2ce90f2)"
       ],
       "next": [
-        "5.2 (#37, rkpPoy5P) — Cron de retenção 30d + alerta 70% + opt-in — PENDENTE 4 DECISÕES (ver memory project_card52_pending_decisions.md)",
-        "5.3 (#55, NnsbqJyS) — [CROSS-REPO] Copy fix privacy policy + opt-in (front) — candidato a migrar pro board front"
+        "5.2a (#145, DtBkVtVY) — Schema FileHistory + 5 endpoints opt-in + infra scheduling/lock — DESTRAVADO (audit_log_legal pronto)",
+        "5.2b (#146, FK94hRBQ) — Cron 03:00 retenção two-phase — bloqueado por 5.2a",
+        "5.2c (#147, s3NLF6bv) — Cron 08:00 alerta quota + Resend — bloqueado por 5.2a (paraleliza com 5.2b)"
+      ],
+      "done_in_phase": [
+        "5.1 (#36, lGlZpdE7) — Adapter Supabase Storage (commit 2ce90f2)",
+        "#150 (pVasIL6l) — audit_log_legal LGPD 5y (commit b076002, 2026-04-29)"
       ],
       "side_quests": [],
-      "rationale": "Card 5.1 entregue. Card 5.2 BLOQUEADO até operador decidir 4 itens arquiteturais (runtime do cron, expiresAt fixo/config, hard vs soft delete LGPD, subdividir card em 3). Detalhes em project_card52_pending_decisions.md."
+      "rationale": "Card 5.1 + #150 entregues. Pré-requisito hard de #146 (audit_log_legal) destravado. Próximo: chamar @planner pra estruturar 5.2a (#145) com tasks INVEST + hard requirements consolidados das 4 decisões fechadas + 5 camadas defesa em profundidade do #150."
     },
     "phase_map": {
       "current": "Fase 5 — Storage",
@@ -135,24 +135,25 @@
     }
   ],
   "next_action_for_operator": {
-    "card": "#150 (pVasIL6l) — audit_log_legal 5 anos (movido pra Fase 5 como pré-req de 5.2b)",
-    "blocker": "Aguardando plano INVEST do @planner pra começar implementação",
-    "decisions_closed": [
+    "card": "#145 (DtBkVtVY, 5.2a) — Schema FileHistory + 5 endpoints opt-in + infra scheduling/lock",
+    "blocker": "Chamar @planner pra estruturar 5.2a com tasks INVEST",
+    "decisions_closed_in_phase5": [
       "#1 Runtime cron: A (node-cron + Redis lock) — voto 4/4 unânime",
       "#2 expiresAt: B.3 (env PRO_RETENTION_DAYS=30) — tiebreaker @devops",
       "#3 LGPD delete: C (two-phase) — voto 2/2 unânime",
       "#4 Subdivisão 5.2: B (5.2a/b/c) — voto 2/2 unânime",
-      "#5 Ordering: (a) — #150 antes de 5.2a/b/c — aprovado 2026-04-28"
+      "#5 Ordering: (a) — #150 antes de 5.2a/b/c — APLICADO (#150 done 2026-04-29)"
     ],
     "implementation_sequence_fase5": [
-      "1. #150 audit_log_legal (~150 LoC, 1-2h) — em planejamento agora",
-      "2. #145 5.2a schema + endpoints + infra scheduling/lock (~300-400 LoC)",
+      "1. #150 audit_log_legal — DONE (commit b076002, 2026-04-29)",
+      "2. #145 5.2a schema + endpoints + infra scheduling/lock (~300-400 LoC) — PRÓXIMO",
       "3. #146 5.2b cron purge (~250 LoC) ‖ #147 5.2c cron alerta (~250 LoC) [paralelos]"
     ],
-    "details_in_memory": "project_card52_decisions_closed.md",
+    "details_in_memory": "project_card52_decisions_closed.md + project_card150_done.md",
     "operator_pending_actions": [
       "Adicionar SUPABASE_CRON_KEY ao Card 9.5 (rotação pré-go-live)",
-      "Atualizar Card 7.10 quando chegar lá (remover purgas/consents/dsars do escopo, deixar só retenção operacional 90d)"
+      "Atualizar Card 7.10 quando chegar lá (remover purgas/consents/dsars do escopo, deixar só retenção operacional 90d)",
+      "Card #152 futuro (cron retenção 5y audit_log_legal): role dedicada audit_legal_purge_role com bypass explícito do trigger BEFORE UPDATE/DELETE (SECURITY DEFINER ou ALTER TABLE DISABLE TRIGGER em transação)"
     ]
   },
   "cards_created_2026_04_27_session": {
