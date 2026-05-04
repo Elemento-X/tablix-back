@@ -131,4 +131,13 @@ export const rateLimitMiddleware = {
   health: createRateLimitMiddleware('health'),
   usage: createRateLimitMiddleware('usage'),
   limits: createRateLimitMiddleware('limits'),
+  // Card #145 — 5.2a (history opt-in PRO)
+  historyOptIn: createRateLimitMiddleware('historyOptIn'),
+  historyList: createRateLimitMiddleware('historyList'),
+  historyDeleteOne: createRateLimitMiddleware('historyDeleteOne'),
+  historyDeleteAll: createRateLimitMiddleware('historyDeleteAll'),
+  // historyDeleteAllGlobalCap aplicado via createGlobalCapMiddleware direto
+  // em routes (pra deixar a ordem de aplicação explícita: cap → per-user)
+  adminJobs: createRateLimitMiddleware('adminJobs'),
+  // adminJobsGlobalCap idem
 }

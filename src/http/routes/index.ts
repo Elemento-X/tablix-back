@@ -5,6 +5,7 @@ import { webhookRoutes } from './webhook.routes'
 import { processRoutes } from './process.routes'
 import { healthRoutes } from './health.routes'
 import { usageRoutes } from './usage.routes'
+import { historyRoutes } from './history.routes'
 
 /**
  * Registra todas as rotas da aplicação
@@ -33,4 +34,10 @@ export async function registerRoutes(app: FastifyInstance) {
   // (front consome /usage e /limits como rotas separadas, sem agrupar
   // sob /usage/*).
   await app.register(usageRoutes)
+
+  // Rotas de histórico opt-in PRO (Card #145 — 5.2a — Fase 5 Storage)
+  // 6 endpoints: POST /history/enable, POST /history/disable,
+  // GET /history, GET /history/:id, DELETE /history/:id, DELETE /history.
+  // Sem prefix — endpoints já carregam /history no path.
+  await app.register(historyRoutes)
 }

@@ -150,10 +150,16 @@ export const disableHistoryResponseSchema = z.object({
      */
     purgeScheduledFor: z.string().datetime({ offset: true }),
     /**
-     * Quantidade de rows ativas no momento do disable. Útil pra UX:
+     * Quantidade de rows tiveram TTL encurtado neste batch. Útil pra UX:
      * "X arquivos serão apagados em N dias".
      */
     affectedRowCount: z.number().int().nonnegative(),
+    /**
+     * `true` se o batch atingiu o cap de 10k rows (F3 fix-pack @dba MÉDIO).
+     * Cliente pode repetir POST /history/disable pra processar o restante.
+     * User PRO denso (>10k rows ativas) precisa de múltiplos rounds.
+     */
+    truncated: z.boolean(),
   }),
 })
 
