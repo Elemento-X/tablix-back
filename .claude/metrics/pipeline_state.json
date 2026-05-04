@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "updated_at": "2026-04-29T20:30:00Z",
+  "updated_at": "2026-05-04T14:35:00Z",
   "current": null,
   "last_completed": {
     "card_id": "69f00e9a38044c23850bb3a4",
@@ -74,7 +74,7 @@
         "5.1 (#36, lGlZpdE7) — Adapter Supabase Storage (APPROVED 2026-04-27, commit 2ce90f2)"
       ],
       "next": [
-        "5.2a (#145, DtBkVtVY) — Schema FileHistory + 5 endpoints opt-in + infra scheduling/lock — DESTRAVADO (audit_log_legal pronto)",
+        "5.2a (#145, DtBkVtVY) — Schema FileHistory + 5 endpoints opt-in + infra scheduling/lock — DECISÕES FECHADAS 2026-05-02, plano v2.2, próximo F1.1",
         "5.2b (#146, FK94hRBQ) — Cron 03:00 retenção two-phase — bloqueado por 5.2a",
         "5.2c (#147, s3NLF6bv) — Cron 08:00 alerta quota + Resend — bloqueado por 5.2a (paraleliza com 5.2b)"
       ],
@@ -83,13 +83,13 @@
         "#150 (pVasIL6l) — audit_log_legal LGPD 5y (commit b076002, 2026-04-29)"
       ],
       "side_quests": [],
-      "rationale": "Card 5.1 + #150 entregues. Pré-requisito hard de #146 (audit_log_legal) destravado. Próximo: chamar @planner pra estruturar 5.2a (#145) com tasks INVEST + hard requirements consolidados das 4 decisões fechadas + 5 camadas defesa em profundidade do #150."
+      "rationale": "Card 5.1 + #150 entregues. Pré-requisito hard de #146 (audit_log_legal) destravado. Card #145 (5.2a) com plano v2.2 e 4 decisões fechadas em 2026-05-02. Próximo: iniciar F1.1 schema."
     },
     "phase_map": {
       "current": "Fase 5 — Storage",
       "next_phases": [
         "Fase 6 — Fila Assíncrona (BullMQ + smoke E2E + webhook outbound)",
-        "Fase 7 — Infra & Deploy (Fly.io + Cloudflare + multi-currency + Stripe live + bucket prod parity + rollback script)",
+        "Fase 7 — Infra & Deploy (Fly.io + Cloudflare + multi-currency + Stripe live + bucket prod parity + rollback script + criação do fly.toml)",
         "Fase 8 — CI/CD",
         "Fase 9 — Go-live & Docs (rotação 6 secrets + roles admin + endpoints admin + Stripe live + monitoramento 48h)",
         "Fase 10 — Cleanup técnico",
@@ -118,6 +118,14 @@
       "expires": "2026-07-23",
       "follow_up_card": "bump-testcontainers-when-dockerode-uuid-v14 (pending creation)",
       "follow_up_due": "2026-07-23"
+    },
+    {
+      "id": "WV-2026-006",
+      "subject": "Admin authz via env allowlist (Card #145 D#3, com 9 mitigations) — MÉDIO",
+      "expires": "2026-08-01",
+      "follow_up_card": "zoSjwuar (#157) roles-admin-enum",
+      "follow_up_due": "2026-08-01",
+      "kill_criteria": "enum UserRole separado + middleware unificado + ADMIN_USER_IDS removida"
     }
   ],
   "closed_waivers": [
@@ -136,7 +144,14 @@
   ],
   "next_action_for_operator": {
     "card": "#145 (DtBkVtVY, 5.2a) — Schema FileHistory + 5 endpoints opt-in + infra scheduling/lock",
-    "blocker": "Chamar @planner pra estruturar 5.2a com tasks INVEST",
+    "blocker": "DECISÕES FECHADAS 2026-05-02. Pronto pra iniciar F1.1 (schema). Plano v2.2 em .claude/plans/.",
+    "plano_file": ".claude/plans/2026-05-02-card-145-5.2a-history-optin-schema-endpoints-cron-infra.md",
+    "decisions_closed_2026_05_02": {
+      "D#1_delete_confirmation": "B — { confirmation: 'CONFIRM_DELETE_ALL' } literal z.literal() — @security ALTO se errar",
+      "D#2_retention_env": "B — env.PRO_RETENTION_DAYS SSOT + superRefine min(1).max(365) default 30 — @dba",
+      "D#3_admin_auth": "B com WV-2026-006 + 9 mitigations completas — @security (CRÍTICO sem / MÉDIO com)",
+      "D#4_optout_listagem": "A — 403 FEATURE_DISABLED + invariante cross-card GET /history/:id — @reviewer ALTO se errar"
+    },
     "decisions_closed_in_phase5": [
       "#1 Runtime cron: A (node-cron + Redis lock) — voto 4/4 unânime",
       "#2 expiresAt: B.3 (env PRO_RETENTION_DAYS=30) — tiebreaker @devops",
@@ -146,14 +161,19 @@
     ],
     "implementation_sequence_fase5": [
       "1. #150 audit_log_legal — DONE (commit b076002, 2026-04-29)",
-      "2. #145 5.2a schema + endpoints + infra scheduling/lock (~300-400 LoC) — PRÓXIMO",
-      "3. #146 5.2b cron purge (~250 LoC) ‖ #147 5.2c cron alerta (~250 LoC) [paralelos]"
+      "2. #145 5.2a F1 schema FileHistory + opt-in — DONE (commit 2df9426, 2026-05-04, pipeline F1 APROVADO unânime + 4 cards discovery #161-#164)",
+      "3. #145 5.2a F2 env + rate limits + contrato Zod cross-card — DONE (commit a306451, 2026-05-04, pipeline F2 APROVADO unânime, 3 BAIXOs @security críticos corrigidos no fix-pack)",
+      "4. #145 5.2a F3 module history (service + controller + routes) — PRÓXIMO",
+      "5. #145 5.2a F4 scheduler + lock distribuído + admin middleware — depende F3",
+      "6. #145 5.2a F5 observability + runbooks — depende F4",
+      "7. #146 5.2b cron purge (~250 LoC) ‖ #147 5.2c cron alerta (~250 LoC) [paralelos] — depende #145 done"
     ],
-    "details_in_memory": "project_card52_decisions_closed.md + project_card150_done.md",
+    "details_in_memory": "project_card52_decisions_closed.md + project_card150_done.md + project_card145_decisions_closed.md",
     "operator_pending_actions": [
       "Adicionar SUPABASE_CRON_KEY ao Card 9.5 (rotação pré-go-live)",
       "Atualizar Card 7.10 quando chegar lá (remover purgas/consents/dsars do escopo, deixar só retenção operacional 90d)",
-      "Card #152 futuro (cron retenção 5y audit_log_legal): role dedicada audit_legal_purge_role com bypass explícito do trigger BEFORE UPDATE/DELETE (SECURITY DEFINER ou ALTER TABLE DISABLE TRIGGER em transação)"
+      "Card #152 futuro (cron retenção 5y audit_log_legal): role dedicada audit_legal_purge_role com bypass explícito do trigger BEFORE UPDATE/DELETE (SECURITY DEFINER ou ALTER TABLE DISABLE TRIGGER em transação)",
+      "Validar fly.toml min_machines_running=1 quando Fase 7 começar (A-5 do plano #145 posponed)"
     ]
   },
   "cards_created_2026_04_27_session": {
@@ -163,7 +183,7 @@
         "shortLink": "DtBkVtVY",
         "name": "5.2a Schema + endpoints + infra scheduling/lock",
         "list": "Fase 5 — Storage",
-        "size": "P-M ~300-400 LoC"
+        "size": "G ~600-900 LoC"
       },
       {
         "id": 146,
@@ -205,16 +225,50 @@
       }
     ]
   },
+  "cards_created_2026_05_02_session": {
+    "discovery_from_card_145_decisions": [
+      {
+        "id": 157,
+        "shortLink": "zoSjwuar",
+        "name": "[DISCOVERY] roles-admin-enum — UserRole separado de Role billing + middleware unificado",
+        "list": "Backlog",
+        "severity": "ALTA",
+        "size": "M",
+        "labels": ["pipeline-discovery", "ALTO", "waiver"],
+        "origin": "Kill criteria do WV-2026-006 (Card #145 D#3)"
+      },
+      {
+        "id": 158,
+        "shortLink": "GkuIjKXF",
+        "name": "[DISCOVERY] signed-url-revoke-on-delete — Supabase signed URL viva 5min após DELETE",
+        "list": "Backlog",
+        "severity": "ALTA",
+        "size": "P",
+        "labels": ["pipeline-discovery", "SEGURANÇA", "ALTO"],
+        "origin": "R-9 elevado de BAIXO para ALTO pelo @security em rodada de decisões #145"
+      },
+      {
+        "id": 159,
+        "shortLink": "mRgerGHf",
+        "name": "[DISCOVERY] admin-jobs-list-endpoint — GET /admin/jobs/list status agregado",
+        "list": "Backlog",
+        "severity": "BAIXA",
+        "size": "P",
+        "labels": ["pipeline-discovery", "BAIXO"],
+        "origin": "@planner mapeou em #145 como utility complementar a POST /admin/jobs/run/:name"
+      }
+    ]
+  },
   "phases_active_status": {
     "Fase 5 — Storage": {
       "list_id": "69d7a7def8794179e29c6614",
-      "done": ["5.1 (#36, lGlZpdE7)"],
+      "done": ["5.1 (#36, lGlZpdE7)", "#150 (pVasIL6l)"],
       "pending": [
-        "5.2a (#145, DtBkVtVY) — bloqueador atual: ordering vs #150",
-        "5.2b (#146, FK94hRBQ) — depende 5.2a + #150",
+        "5.2a (#145, DtBkVtVY) — DECISÕES FECHADAS 2026-05-02, próximo F1.1 schema",
+        "5.2b (#146, FK94hRBQ) — depende 5.2a",
         "5.2c (#147, s3NLF6bv) — depende 5.2a"
       ]
     }
   },
-  "notes": "Snapshot atualizado em 2026-04-28T01:35 após sessão de decisões Card 5.2. 4 decisões fechadas com consenso unânime/quase-unânime do time (5 agentes paralelos consultados). 6 cards Trello criados (#145-150). Achado crítico LGPD do @security gerou #150 (audit_log_legal 5 anos, Art. 16 + 37 + CDC Art. 27). Próximo bloqueador: decidir ordem 5.2a vs #150 antes de @planner."
+  "notes": "Snapshot atualizado em 2026-05-04T14:35 após F1+F2 do Card #145 (5.2a) committados (2df9426 + a306451). F1 entregou schema/migrations/db-smoke (28 tests verdes). F2 entregou env/rate-limits/contrato Zod cross-card (51 tests novos, 1326 total). Pipeline F1 APROVADO unânime (smart re-run após @tester REPROVED_HARD ALTO db-smoke missing). Pipeline F2 APROVADO unânime (smart re-run após 3 BAIXOs funcionalmente críticos do @security: kill-switch z.coerce.boolean broken + ADMIN_USER_IDS uppercase bypass + RFC 9839 missing). 5 cards discovery acumulados na sessão (#160 RLS missing 7 tabelas + #161-#164 do pipeline F1+F2). Custo F1+F2 acumulado: ~$3.82 (~$1.97 F1 + ~$1.85 F2). Próximo: F3 module history (service + controller + routes)."
 }
