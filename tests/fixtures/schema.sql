@@ -19,6 +19,27 @@
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
 -- ----------------------------------------------------------------------------
+-- STUB: schema auth + auth.uid() (Supabase compat para Testcontainers)
+-- ----------------------------------------------------------------------------
+-- Em Supabase, `auth.uid()` retorna o UUID do user autenticado a partir do
+-- JWT. Em Testcontainers Postgres puro este schema não existe — RLS policies
+-- que referenciam `auth.uid()` falham no apply.
+--
+-- Stub mínimo: cria schema + função que retorna NULL. Permite que CREATE POLICY
+-- valide a definition (smoke test verifica existência via pg_policies). Para
+-- testar comportamento RLS runtime real (anon vs authenticated) é necessário
+-- ambiente Supabase + JWT real — fora do escopo dos integration tests.
+CREATE SCHEMA IF NOT EXISTS auth;
+CREATE OR REPLACE FUNCTION auth.uid() RETURNS UUID AS $$ SELECT NULL::UUID $$ LANGUAGE SQL STABLE;
+-- Role `authenticated` é criado pelo Supabase em prod. No container, criamos
+-- um stub pra permitir que CREATE POLICY ... TO authenticated não falhe.
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN
+    CREATE ROLE authenticated;
+  END IF;
+END $$;
+
+-- ----------------------------------------------------------------------------
 -- ENUMS
 -- ----------------------------------------------------------------------------
 CREATE TYPE "JobStatus"   AS ENUM ('PENDING', 'PROCESSING', 'COMPLETED', 'FAILED');
@@ -30,12 +51,15 @@ CREATE TYPE "TokenStatus" AS ENUM ('ACTIVE', 'CANCELLED', 'EXPIRED');
 -- TABLE: users
 -- ----------------------------------------------------------------------------
 CREATE TABLE "users" (
-  "id"                  UUID            NOT NULL DEFAULT gen_random_uuid(),
-  "email"               VARCHAR(255)    NOT NULL,
-  "role"                "Role"          NOT NULL DEFAULT 'FREE',
-  "stripe_customer_id"  VARCHAR(255),
-  "created_at"          TIMESTAMPTZ(3)  NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  "updated_at"          TIMESTAMPTZ(3)  NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  "id"                    UUID            NOT NULL DEFAULT gen_random_uuid(),
+  "email"                 VARCHAR(255)    NOT NULL,
+  "role"                  "Role"          NOT NULL DEFAULT 'FREE',
+  "stripe_customer_id"    VARCHAR(255),
+  "history_opt_in"        BOOLEAN         NOT NULL DEFAULT FALSE,
+  "history_opt_in_at"     TIMESTAMPTZ(3),
+  "history_opt_out_at"    TIMESTAMPTZ(3),
+  "created_at"            TIMESTAMPTZ(3)  NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  "updated_at"            TIMESTAMPTZ(3)  NOT NULL DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT "users_pkey" PRIMARY KEY ("id")
 );
 CREATE UNIQUE INDEX "users_email_key"              ON "users" ("email");
@@ -240,3 +264,79 @@ CREATE TRIGGER audit_log_legal_block_update
 CREATE TRIGGER audit_log_legal_block_delete
   BEFORE DELETE ON "audit_log_legal"
   FOR EACH ROW EXECUTE FUNCTION block_audit_log_legal_mutation();
+
+-- ----------------------------------------------------------------------------
+-- TABLE: file_history (Card #145 — 5.2a — Fase 5 Storage)
+-- ----------------------------------------------------------------------------
+-- Histórico opt-in PRO de arquivos processados. Soft-delete two-phase:
+-- deleted_at sentinela + cron #146 hard-delete. Plano:
+-- .claude/plans/2026-05-02-card-145-5.2a-history-optin-schema-endpoints-cron-infra.md
+--
+-- Decisões irreversíveis: D-B (deleted_at NULLABLE), D-C (expires_at em service),
+-- FK Cascade (operacional não jurídico — diferente de audit_log_legal RESTRICT),
+-- storage_path UNIQUE (defesa em profundidade vs race upload).
+--
+-- Inclui findings F1 fix-pack (2026-05-03): original_filename rejeita
+-- \x00-\x1F\x7F, regex storage_path date stricter month/day válidos.
+CREATE TABLE "file_history" (
+  "id"                  UUID            NOT NULL DEFAULT gen_random_uuid(),
+  "user_id"             UUID            NOT NULL,
+  "storage_path"        VARCHAR(255)    NOT NULL,
+  "original_filename"   VARCHAR(255)    NOT NULL,
+  "mime_type"           VARCHAR(127)    NOT NULL,
+  "file_size"           INTEGER         NOT NULL,
+  "expires_at"          TIMESTAMPTZ(3)  NOT NULL,
+  "deleted_at"          TIMESTAMPTZ(3),
+  "purge_attempts"      INTEGER         NOT NULL DEFAULT 0,
+  "created_at"          TIMESTAMPTZ(3)  NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT "file_history_pkey" PRIMARY KEY ("id"),
+  CONSTRAINT "file_history_storage_path_key" UNIQUE ("storage_path"),
+  CONSTRAINT "file_history_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "users"("id") ON UPDATE CASCADE ON DELETE CASCADE,
+  CONSTRAINT "file_history_file_size_positive_check" CHECK (
+    "file_size" > 0 AND "file_size" <= 104857600
+  ),
+  CONSTRAINT "file_history_purge_attempts_nonneg_check" CHECK (
+    "purge_attempts" >= 0
+  ),
+  CONSTRAINT "file_history_storage_path_format_check" CHECK (
+    "storage_path" ~ '^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])/[a-z0-9]{7,64}\.(csv|xlsx|xls)$'
+  ),
+  CONSTRAINT "file_history_mime_type_nonempty_check" CHECK (
+    length("mime_type") > 0
+  ),
+  CONSTRAINT "file_history_original_filename_check" CHECK (
+    length("original_filename") > 0
+    AND "original_filename" !~ '[\x00-\x1F\x7F]'
+  ),
+  CONSTRAINT "file_history_expires_at_after_created_check" CHECK (
+    "expires_at" >= "created_at"
+  )
+);
+ALTER TABLE "file_history" ENABLE ROW LEVEL SECURITY;
+CREATE INDEX "idx_filehistory_user_created"    ON "file_history" ("user_id", "created_at" DESC);
+CREATE INDEX "idx_filehistory_expires_active"  ON "file_history" ("expires_at") WHERE ("deleted_at" IS NULL);
+CREATE INDEX "idx_filehistory_purge_pending"   ON "file_history" ("deleted_at") WHERE ("deleted_at" IS NOT NULL);
+
+-- RLS policies — defense em profundidade. Backend usa service_role (bypass).
+-- Nota: auth.uid() vem de extension auth (Supabase). Em Testcontainers Postgres
+-- puro, auth.uid() não existe — policies são CRIADAS mas runtime testing requer
+-- mock de auth.uid() ou Supabase test environment. Smoke testa só a EXISTÊNCIA
+-- e definition (regression detection via pg_policies).
+CREATE POLICY "file_history_select_own_active"
+  ON "file_history"
+  FOR SELECT
+  TO authenticated
+  USING (auth.uid() = "user_id" AND "deleted_at" IS NULL);
+
+CREATE POLICY "file_history_insert_own"
+  ON "file_history"
+  FOR INSERT
+  TO authenticated
+  WITH CHECK (auth.uid() = "user_id");
+
+CREATE POLICY "file_history_update_own_active"
+  ON "file_history"
+  FOR UPDATE
+  TO authenticated
+  USING (auth.uid() = "user_id" AND "deleted_at" IS NULL)
+  WITH CHECK (auth.uid() = "user_id");

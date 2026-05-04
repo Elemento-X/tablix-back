@@ -22,18 +22,25 @@ model User {
   // `dbgenerated` impede o Prisma de gerar UUID no app (drift entre
   // inserts via Prisma vs SQL direto). Padrão estabelecido em audit_log
   // (Card 2.4) e replicado para User/Session/Token/Usage/Job na Fase 3.
-  id               String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  email            String   @unique @db.VarChar(255)
-  role             Role     @default(FREE)
-  stripeCustomerId String?  @unique @map("stripe_customer_id") @db.VarChar(255)
-  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt        DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  id               String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  email            String    @unique @db.VarChar(255)
+  role             Role      @default(FREE)
+  stripeCustomerId String?   @unique @map("stripe_customer_id") @db.VarChar(255)
+  // Feature opt-in PRO: histórico de arquivos. Card #145 (5.2a, Fase 5).
+  // Default false: feature OFF até user aceitar explicitamente. historyOptInAt
+  // e historyOptOutAt são trail auditável (LGPD Art. 8 — registro de consentimento).
+  historyOptIn     Boolean   @default(false) @map("history_opt_in")
+  historyOptInAt   DateTime? @map("history_opt_in_at") @db.Timestamptz(3)
+  historyOptOutAt  DateTime? @map("history_opt_out_at") @db.Timestamptz(3)
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt        DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   // Relacionamentos
-  tokens   Token[]
-  sessions Session[]
-  usages   Usage[]
-  jobs     Job[]
+  tokens      Token[]
+  sessions    Session[]
+  usages      Usage[]
+  jobs        Job[]
+  fileHistory FileHistory[]
 
   @@map("users")
 }
@@ -278,6 +285,79 @@ model AuditLogLegal {
   // `prisma migrate dev` (drop do indice); preferir `prisma db pull` ou
   // migration SQL ao editar esta model.
   @@map("audit_log_legal")
+}
+
+// ===========================================
+// FILE HISTORY - Histórico opt-in PRO de arquivos gerados
+// ===========================================
+// Feature opt-in (User.historyOptIn) que armazena metadata dos arquivos
+// processados. Card #145 (5.2a, Fase 5 Storage). Schema validado por @dba
+// em 2026-05-02 (sessão de decisões fechadas).
+//
+// IMPORTANTE - DECISÕES IRREVERSÍVEIS (consultar plano antes de mudar):
+// .claude/plans/2026-05-02-card-145-5.2a-history-optin-schema-endpoints-cron-infra.md
+//
+// (D-B) Soft delete via `deletedAt nullable` (NULL=ACTIVE, NOT NULL=PURGE_PENDING).
+//   Hard-delete pelo cron 5.2b (#146). Sem enum de status — estado derivado.
+//
+// (D-C) `expiresAt` calculado em service via env.PRO_RETENTION_DAYS.
+//   NOT NULL. NÃO usar trigger DB — permite tunar via env sem migration.
+//
+// (FK) onDelete: Cascade alinhado com Session/Job. FileHistory é dado
+//   operacional, NÃO prova jurídica (diferente de audit_log_legal #150 que
+//   é RESTRICT). Delete user → DB cascata + cron Storage 5.2b limpa órfãos.
+//
+// (storage_path UNIQUE) Defesa em profundidade contra race de upload paralelo
+//   ou bug de geração de path. UUID v4 já garante unicidade lógica;
+//   constraint DB protege contra silently overwriting Supabase Storage.
+//
+// CHECK constraints (defesa em profundidade — gerenciadas via SQL raw na
+// migration, Prisma não suporta declarativamente):
+//   - chk_file_size_positive: file_size > 0 AND file_size <= 104857600 (100MB)
+//   - chk_purge_attempts_nonneg: purge_attempts >= 0
+//
+// PARTIAL INDEXES via SQL raw (Prisma não suporta declarativamente):
+//   - idx_filehistory_expires_active: (expires_at) WHERE deleted_at IS NULL
+//     -- listagem active hot path + query da cron purge candidates
+//   - idx_filehistory_purge_pending: (deleted_at) WHERE deleted_at IS NOT NULL
+//     -- cron purge two-phase 5.2b
+// Não usar `prisma migrate dev` (drop dos partials); preferir `prisma db pull`
+// ou migration SQL ao editar esta model.
+
+model FileHistory {
+  id               String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId           String    @map("user_id") @db.Uuid
+  // Path no Supabase Storage no formato `{userId}/{yyyy-mm-dd UTC}/{jobId}.{ext}`
+  // (UserScopedPath branded em src/lib/storage/types.ts, montado por key-builder.ts).
+  // UNIQUE bloqueia overwrite silencioso. CHECK regex no DB valida formato.
+  storagePath      String    @unique @map("storage_path") @db.VarChar(255)
+  // Nome literal do upload do user. Pode conter PII (ex: cliente_2024.xlsx) —
+  // scrubbing é responsabilidade do logger (REDACT_PATHS) e Sentry, NÃO do DB.
+  // Validação Zod no controller: max 255, reject control chars \x00-\x1F.
+  originalFilename String    @map("original_filename") @db.VarChar(255)
+  // RFC 6838 max 127 chars por subtipo. Cache do MIME já validado pelo
+  // adapter no upload (ALLOWED_MIME_TYPES) — economiza round-trip Supabase
+  // metadata API na listagem (hot path PRO).
+  mimeType         String    @map("mime_type") @db.VarChar(127)
+  // SSOT de tamanho do arquivo. Adapter Card 5.1 getTotalSize() consome
+  // este campo (era fallback O(n) sobre Storage list). Int (max 2GB) é
+  // folgado pra cap PRO de 100MB. CHECK constraint garante invariante.
+  fileSize         Int       @map("file_size")
+  // Calculado em service via env.PRO_RETENTION_DAYS. Trigger da cron 5.2b.
+  expiresAt        DateTime  @map("expires_at") @db.Timestamptz(3)
+  // Sentinela two-phase: NULL=ACTIVE (visível ao user), NOT NULL=PURGE_PENDING
+  // (cron 5.2b apaga objeto físico depois). Nunca volta pra NULL.
+  deletedAt        DateTime? @map("deleted_at") @db.Timestamptz(3)
+  // Contador de tentativas do cron 5.2b. Usado pra dead-letter (>3 tentativas
+  // = alerta Sentry + mover pra fila manual). Default 0, monotonicamente crescente.
+  purgeAttempts    Int       @default(0) @map("purge_attempts")
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  // Cascade alinhado com Session/Job. Delete user → cascata DB + cron Storage.
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt(sort: Desc)], map: "idx_filehistory_user_created")
+  @@map("file_history")
 }
 
 // ===========================================

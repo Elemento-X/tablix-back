@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-04-29T01:14:08.067Z",
+  "generatedAt": "2026-05-03T16:31:44.315Z",
   "database": "container:postgres-17-alpine",
-  "fingerprint": "87a45b0cccc8af2de1dd6184fcc6f7bfaae054bbb8117206bbfaf7e0b97feaf3",
+  "fingerprint": "4ab240b889a4979a039f88c02aea261ef1174ab7e9cfbf046dba66a42c36110d",
   "model": {
     "extensions": [
       "pgcrypto"
@@ -193,6 +193,72 @@
         "reloptions": [
           "toast_tuple_target=4096"
         ]
+      },
+      {
+        "name": "file_history",
+        "columns": [
+          {
+            "name": "id",
+            "type": "uuid",
+            "nullable": false,
+            "default": "gen_random_uuid()"
+          },
+          {
+            "name": "user_id",
+            "type": "uuid",
+            "nullable": false,
+            "default": null
+          },
+          {
+            "name": "storage_path",
+            "type": "character varying(255)",
+            "nullable": false,
+            "default": null
+          },
+          {
+            "name": "original_filename",
+            "type": "character varying(255)",
+            "nullable": false,
+            "default": null
+          },
+          {
+            "name": "mime_type",
+            "type": "character varying(127)",
+            "nullable": false,
+            "default": null
+          },
+          {
+            "name": "file_size",
+            "type": "integer",
+            "nullable": false,
+            "default": null
+          },
+          {
+            "name": "expires_at",
+            "type": "timestamp with time zone(3)",
+            "nullable": false,
+            "default": null
+          },
+          {
+            "name": "deleted_at",
+            "type": "timestamp with time zone(3)",
+            "nullable": true,
+            "default": null
+          },
+          {
+            "name": "purge_attempts",
+            "type": "integer",
+            "nullable": false,
+            "default": "0"
+          },
+          {
+            "name": "created_at",
+            "type": "timestamp with time zone(3)",
+            "nullable": false,
+            "default": "CURRENT_TIMESTAMP"
+          }
+        ],
+        "reloptions": []
       },
       {
         "name": "jobs",
@@ -474,6 +540,24 @@
             "default": null
           },
           {
+            "name": "history_opt_in",
+            "type": "boolean",
+            "nullable": false,
+            "default": "false"
+          },
+          {
+            "name": "history_opt_in_at",
+            "type": "timestamp with time zone(3)",
+            "nullable": true,
+            "default": null
+          },
+          {
+            "name": "history_opt_out_at",
+            "type": "timestamp with time zone(3)",
+            "nullable": true,
+            "default": null
+          },
+          {
             "name": "created_at",
             "type": "timestamp with time zone(3)",
             "nullable": false,
@@ -544,6 +628,31 @@
         "table": "audit_log_legal",
         "name": "idx_audit_log_legal_user_ts",
         "definition": "CREATE INDEX idx_audit_log_legal_user_ts ON public.audit_log_legal USING btree (user_id, \"timestamp\" DESC)"
+      },
+      {
+        "table": "file_history",
+        "name": "file_history_pkey",
+        "definition": "CREATE UNIQUE INDEX file_history_pkey ON public.file_history USING btree (id)"
+      },
+      {
+        "table": "file_history",
+        "name": "file_history_storage_path_key",
+        "definition": "CREATE UNIQUE INDEX file_history_storage_path_key ON public.file_history USING btree (storage_path)"
+      },
+      {
+        "table": "file_history",
+        "name": "idx_filehistory_expires_active",
+        "definition": "CREATE INDEX idx_filehistory_expires_active ON public.file_history USING btree (expires_at) WHERE (deleted_at IS NULL)"
+      },
+      {
+        "table": "file_history",
+        "name": "idx_filehistory_purge_pending",
+        "definition": "CREATE INDEX idx_filehistory_purge_pending ON public.file_history USING btree (deleted_at) WHERE (deleted_at IS NOT NULL)"
+      },
+      {
+        "table": "file_history",
+        "name": "idx_filehistory_user_created",
+        "definition": "CREATE INDEX idx_filehistory_user_created ON public.file_history USING btree (user_id, created_at DESC)"
       },
       {
         "table": "jobs",
@@ -706,6 +815,60 @@
         "name": "audit_log_legal_resource_hash_size_check",
         "type": "c",
         "definition": "CHECK (((resource_hash IS NULL) OR (octet_length(resource_hash) = 32)))"
+      },
+      {
+        "table": "file_history",
+        "name": "file_history_expires_at_after_created_check",
+        "type": "c",
+        "definition": "CHECK ((expires_at >= created_at))"
+      },
+      {
+        "table": "file_history",
+        "name": "file_history_file_size_positive_check",
+        "type": "c",
+        "definition": "CHECK (((file_size > 0) AND (file_size <= 104857600)))"
+      },
+      {
+        "table": "file_history",
+        "name": "file_history_mime_type_nonempty_check",
+        "type": "c",
+        "definition": "CHECK ((length((mime_type)::text) > 0))"
+      },
+      {
+        "table": "file_history",
+        "name": "file_history_original_filename_check",
+        "type": "c",
+        "definition": "CHECK (((length((original_filename)::text) > 0) AND ((original_filename)::text !~ '[\\x00-\\x1F\\x7F]'::text)))"
+      },
+      {
+        "table": "file_history",
+        "name": "file_history_pkey",
+        "type": "p",
+        "definition": "PRIMARY KEY (id)"
+      },
+      {
+        "table": "file_history",
+        "name": "file_history_purge_attempts_nonneg_check",
+        "type": "c",
+        "definition": "CHECK ((purge_attempts >= 0))"
+      },
+      {
+        "table": "file_history",
+        "name": "file_history_storage_path_format_check",
+        "type": "c",
+        "definition": "CHECK (((storage_path)::text ~ '^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])/[a-z0-9]{7,64}\\.(csv|xlsx|xls)$'::text))"
+      },
+      {
+        "table": "file_history",
+        "name": "file_history_storage_path_key",
+        "type": "u",
+        "definition": "UNIQUE (storage_path)"
+      },
+      {
+        "table": "file_history",
+        "name": "file_history_user_id_fkey",
+        "type": "f",
+        "definition": "FOREIGN KEY (user_id) REFERENCES users(id) ON UPDATE CASCADE ON DELETE CASCADE"
       },
       {
         "table": "jobs",

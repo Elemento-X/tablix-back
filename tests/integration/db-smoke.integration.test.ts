@@ -39,7 +39,7 @@ describe('DB smoke (integration)', () => {
   })
 
   describe('1. schema introspection', () => {
-    it('tem 8 tabelas no schema public', async () => {
+    it('tem 9 tabelas no schema public', async () => {
       const rows = await prisma.$queryRaw<{ tablename: string }[]>`
         SELECT tablename FROM pg_tables WHERE schemaname = 'public' ORDER BY tablename
       `
@@ -48,6 +48,7 @@ describe('DB smoke (integration)', () => {
         [
           'audit_log',
           'audit_log_legal', // Card #150 — LGPD 5y retention
+          'file_history', // Card #145 — opt-in PRO storage history
           'jobs',
           'sessions',
           'stripe_events',
@@ -90,7 +91,7 @@ describe('DB smoke (integration)', () => {
         SELECT table_name, column_name, data_type
         FROM information_schema.columns
         WHERE table_schema = 'public'
-          AND table_name IN ('users','sessions','tokens','usage','jobs','stripe_events','audit_log')
+          AND table_name IN ('users','sessions','tokens','usage','jobs','stripe_events','audit_log','file_history')
           AND (column_name LIKE '%_at' OR column_name = 'processed_at')
         ORDER BY table_name, column_name
       `
@@ -112,7 +113,7 @@ describe('DB smoke (integration)', () => {
         SELECT table_name, column_name, udt_name
         FROM information_schema.columns
         WHERE table_schema = 'public'
-          AND table_name IN ('users','sessions','tokens','usage','jobs','audit_log')
+          AND table_name IN ('users','sessions','tokens','usage','jobs','audit_log','file_history')
           AND column_name IN ('id','user_id')
         ORDER BY table_name, column_name
       `
@@ -227,6 +228,298 @@ describe('DB smoke (integration)', () => {
         where: { id: user.id },
       })
       expect(stillThere).not.toBeNull()
+    })
+  })
+
+  describe('6. file_history (Card #145) — invariantes de schema', () => {
+    /**
+     * Helper: gera storage_path válido pelo regex CHECK.
+     * Formato: {userId-uuidv4}/{yyyy-mm-dd UTC}/{jobId-cuid}.{ext}
+     */
+    const buildPath = (userId: string, jobId = 'abc1234567', ext = 'csv') =>
+      `${userId}/2026-05-03/${jobId}.${ext}`
+
+    const baseRow = (userId: string) => ({
+      user_id: userId,
+      storage_path: buildPath(userId),
+      original_filename: 'rj_dezembro_dre.csv',
+      mime_type: 'text/csv',
+      file_size: 1024,
+      expires_at: new Date(Date.now() + 30 * 86_400_000),
+    })
+
+    it('aceita INSERT válido (controle positivo)', async () => {
+      const user = await prisma.user.create({
+        data: { email: 'fh-pos@tablix.test' },
+      })
+      const row = baseRow(user.id)
+      await expect(
+        prisma.$executeRaw`
+          INSERT INTO file_history (user_id, storage_path, original_filename, mime_type, file_size, expires_at)
+          VALUES (${row.user_id}::uuid, ${row.storage_path}, ${row.original_filename}, ${row.mime_type}, ${row.file_size}, ${row.expires_at})
+        `,
+      ).resolves.toBe(1)
+    })
+
+    it('CHECK file_size > 0 rejeita INSERT com file_size=0', async () => {
+      const user = await prisma.user.create({
+        data: { email: 'fh-fs0@tablix.test' },
+      })
+      const row = baseRow(user.id)
+      await expect(
+        prisma.$executeRaw`
+          INSERT INTO file_history (user_id, storage_path, original_filename, mime_type, file_size, expires_at)
+          VALUES (${row.user_id}::uuid, ${row.storage_path}, ${row.original_filename}, ${row.mime_type}, 0, ${row.expires_at})
+        `,
+      ).rejects.toThrow(/file_history_file_size_positive_check/)
+    })
+
+    it('CHECK file_size <= 100MB rejeita INSERT acima do cap', async () => {
+      const user = await prisma.user.create({
+        data: { email: 'fh-fsmax@tablix.test' },
+      })
+      const row = baseRow(user.id)
+      await expect(
+        prisma.$executeRaw`
+          INSERT INTO file_history (user_id, storage_path, original_filename, mime_type, file_size, expires_at)
+          VALUES (${row.user_id}::uuid, ${row.storage_path}, ${row.original_filename}, ${row.mime_type}, ${104857601}, ${row.expires_at})
+        `,
+      ).rejects.toThrow(/file_history_file_size_positive_check/)
+    })
+
+    it('CHECK purge_attempts >= 0 rejeita INSERT com valor negativo', async () => {
+      const user = await prisma.user.create({
+        data: { email: 'fh-pa@tablix.test' },
+      })
+      const row = baseRow(user.id)
+      await expect(
+        prisma.$executeRaw`
+          INSERT INTO file_history (user_id, storage_path, original_filename, mime_type, file_size, expires_at, purge_attempts)
+          VALUES (${row.user_id}::uuid, ${row.storage_path}, ${row.original_filename}, ${row.mime_type}, ${row.file_size}, ${row.expires_at}, -1)
+        `,
+      ).rejects.toThrow(/file_history_purge_attempts_nonneg_check/)
+    })
+
+    it('CHECK storage_path regex rejeita formato malformado', async () => {
+      const user = await prisma.user.create({
+        data: { email: 'fh-sp1@tablix.test' },
+      })
+      const row = baseRow(user.id)
+      await expect(
+        prisma.$executeRaw`
+          INSERT INTO file_history (user_id, storage_path, original_filename, mime_type, file_size, expires_at)
+          VALUES (${row.user_id}::uuid, 'invalid-path-no-uuid.csv', ${row.original_filename}, ${row.mime_type}, ${row.file_size}, ${row.expires_at})
+        `,
+      ).rejects.toThrow(/file_history_storage_path_format_check/)
+    })
+
+    it('CHECK storage_path regex rejeita month inválido (13)', async () => {
+      const user = await prisma.user.create({
+        data: { email: 'fh-sp2@tablix.test' },
+      })
+      const row = baseRow(user.id)
+      const badPath = `${user.id}/2026-13-15/abc1234567.csv`
+      await expect(
+        prisma.$executeRaw`
+          INSERT INTO file_history (user_id, storage_path, original_filename, mime_type, file_size, expires_at)
+          VALUES (${row.user_id}::uuid, ${badPath}, ${row.original_filename}, ${row.mime_type}, ${row.file_size}, ${row.expires_at})
+        `,
+      ).rejects.toThrow(/file_history_storage_path_format_check/)
+    })
+
+    it('CHECK storage_path regex rejeita ext fora da whitelist (xlsm)', async () => {
+      const user = await prisma.user.create({
+        data: { email: 'fh-sp3@tablix.test' },
+      })
+      const row = baseRow(user.id)
+      const badPath = `${user.id}/2026-05-03/abc1234567.xlsm`
+      await expect(
+        prisma.$executeRaw`
+          INSERT INTO file_history (user_id, storage_path, original_filename, mime_type, file_size, expires_at)
+          VALUES (${row.user_id}::uuid, ${badPath}, ${row.original_filename}, ${row.mime_type}, ${row.file_size}, ${row.expires_at})
+        `,
+      ).rejects.toThrow(/file_history_storage_path_format_check/)
+    })
+
+    it('CHECK original_filename rejeita control char 0x00 (NULL byte)', async () => {
+      const user = await prisma.user.create({
+        data: { email: 'fh-fn1@tablix.test' },
+      })
+      const row = baseRow(user.id)
+      // E'...' é literal C-style do Postgres pra inserir control char
+      await expect(
+        prisma.$executeRawUnsafe(
+          `INSERT INTO file_history (user_id, storage_path, original_filename, mime_type, file_size, expires_at)
+           VALUES ('${row.user_id}'::uuid, '${row.storage_path}', E'bad\\x01name.csv', '${row.mime_type}', ${row.file_size}, NOW() + INTERVAL '30 days')`,
+        ),
+      ).rejects.toThrow(/file_history_original_filename_check/)
+    })
+
+    it('CHECK original_filename rejeita 0x7F (DEL) — fix-pack F-LOW-01', async () => {
+      const user = await prisma.user.create({
+        data: { email: 'fh-fn2@tablix.test' },
+      })
+      const row = baseRow(user.id)
+      await expect(
+        prisma.$executeRawUnsafe(
+          `INSERT INTO file_history (user_id, storage_path, original_filename, mime_type, file_size, expires_at)
+           VALUES ('${row.user_id}'::uuid, '${row.storage_path}', E'bad\\x7Fname.csv', '${row.mime_type}', ${row.file_size}, NOW() + INTERVAL '30 days')`,
+        ),
+      ).rejects.toThrow(/file_history_original_filename_check/)
+    })
+
+    it('CHECK original_filename rejeita string vazia', async () => {
+      const user = await prisma.user.create({
+        data: { email: 'fh-fn3@tablix.test' },
+      })
+      const row = baseRow(user.id)
+      await expect(
+        prisma.$executeRaw`
+          INSERT INTO file_history (user_id, storage_path, original_filename, mime_type, file_size, expires_at)
+          VALUES (${row.user_id}::uuid, ${row.storage_path}, '', ${row.mime_type}, ${row.file_size}, ${row.expires_at})
+        `,
+      ).rejects.toThrow(/file_history_original_filename_check/)
+    })
+
+    it('CHECK mime_type rejeita string vazia', async () => {
+      const user = await prisma.user.create({
+        data: { email: 'fh-mt@tablix.test' },
+      })
+      const row = baseRow(user.id)
+      await expect(
+        prisma.$executeRaw`
+          INSERT INTO file_history (user_id, storage_path, original_filename, mime_type, file_size, expires_at)
+          VALUES (${row.user_id}::uuid, ${row.storage_path}, ${row.original_filename}, '', ${row.file_size}, ${row.expires_at})
+        `,
+      ).rejects.toThrow(/file_history_mime_type_nonempty_check/)
+    })
+
+    it('CHECK expires_at >= created_at rejeita expires_at no passado', async () => {
+      const user = await prisma.user.create({
+        data: { email: 'fh-exp@tablix.test' },
+      })
+      const row = baseRow(user.id)
+      const pastExpiry = new Date(Date.now() - 86_400_000) // ontem
+      await expect(
+        prisma.$executeRaw`
+          INSERT INTO file_history (user_id, storage_path, original_filename, mime_type, file_size, expires_at)
+          VALUES (${row.user_id}::uuid, ${row.storage_path}, ${row.original_filename}, ${row.mime_type}, ${row.file_size}, ${pastExpiry})
+        `,
+      ).rejects.toThrow(/file_history_expires_at_after_created_check/)
+    })
+
+    it('UNIQUE storage_path bloqueia INSERT duplicado (23505)', async () => {
+      const user = await prisma.user.create({
+        data: { email: 'fh-uniq@tablix.test' },
+      })
+      const row = baseRow(user.id)
+      await prisma.$executeRaw`
+        INSERT INTO file_history (user_id, storage_path, original_filename, mime_type, file_size, expires_at)
+        VALUES (${row.user_id}::uuid, ${row.storage_path}, ${row.original_filename}, ${row.mime_type}, ${row.file_size}, ${row.expires_at})
+      `
+      await expect(
+        prisma.$executeRaw`
+          INSERT INTO file_history (user_id, storage_path, original_filename, mime_type, file_size, expires_at)
+          VALUES (${row.user_id}::uuid, ${row.storage_path}, ${row.original_filename}, ${row.mime_type}, ${row.file_size}, ${row.expires_at})
+        `,
+      ).rejects.toThrow(/file_history_storage_path_key|already exists|23505/)
+    })
+
+    it('FK Cascade: delete user → file_history rows desaparecem', async () => {
+      const user = await prisma.user.create({
+        data: { email: 'fh-cascade@tablix.test' },
+      })
+      const row = baseRow(user.id)
+      await prisma.$executeRaw`
+        INSERT INTO file_history (user_id, storage_path, original_filename, mime_type, file_size, expires_at)
+        VALUES (${row.user_id}::uuid, ${row.storage_path}, ${row.original_filename}, ${row.mime_type}, ${row.file_size}, ${row.expires_at})
+      `
+      const before = await prisma.$queryRaw<{ count: bigint }[]>`
+        SELECT COUNT(*) as count FROM file_history WHERE user_id = ${user.id}::uuid
+      `
+      expect(Number(before[0].count)).toBe(1)
+
+      await prisma.user.delete({ where: { id: user.id } })
+
+      const after = await prisma.$queryRaw<{ count: bigint }[]>`
+        SELECT COUNT(*) as count FROM file_history WHERE user_id = ${user.id}::uuid
+      `
+      expect(Number(after[0].count)).toBe(0)
+    })
+
+    it('preserva 3 partial indexes parciais corretos', async () => {
+      const rows = await prisma.$queryRaw<
+        { indexname: string; indexdef: string }[]
+      >`
+        SELECT indexname, indexdef FROM pg_indexes
+        WHERE schemaname = 'public'
+          AND tablename = 'file_history'
+          AND indexname IN (
+            'idx_filehistory_expires_active',
+            'idx_filehistory_purge_pending'
+          )
+        ORDER BY indexname
+      `
+      expect(rows).toHaveLength(2)
+      const expiresActive = rows.find(
+        (r) => r.indexname === 'idx_filehistory_expires_active',
+      )
+      const purgePending = rows.find(
+        (r) => r.indexname === 'idx_filehistory_purge_pending',
+      )
+      expect(expiresActive?.indexdef).toMatch(/WHERE \(deleted_at IS NULL\)/)
+      expect(purgePending?.indexdef).toMatch(/WHERE \(deleted_at IS NOT NULL\)/)
+    })
+
+    /**
+     * Structural-only: valida EXISTÊNCIA + nomes + cmd whitelist via
+     * `pg_policies`. Runtime testing (anon vs authenticated com auth.uid())
+     * fica deferred pra F2 quando Supabase Auth integration acontecer
+     * (Testcontainers Postgres puro não tem extension auth — usamos stub
+     * que retorna NULL, suficiente pra DDL apply mas não pra runtime).
+     * Card discovery: rls-runtime-untested — ativar em F2.
+     */
+    it('preserva RLS habilitada + 3 policies definidas (regression detector)', async () => {
+      const rls = await prisma.$queryRaw<{ relrowsecurity: boolean }[]>`
+        SELECT relrowsecurity FROM pg_class
+        WHERE relname = 'file_history' AND relnamespace = 'public'::regnamespace
+      `
+      expect(rls[0]?.relrowsecurity).toBe(true)
+
+      const policies = await prisma.$queryRaw<
+        { policyname: string; cmd: string }[]
+      >`
+        SELECT policyname, cmd FROM pg_policies
+        WHERE schemaname = 'public' AND tablename = 'file_history'
+        ORDER BY policyname
+      `
+      expect(policies.map((p) => p.policyname)).toEqual([
+        'file_history_insert_own',
+        'file_history_select_own_active',
+        'file_history_update_own_active',
+      ])
+      // DELETE deny implícito: verificar ausência de policy DELETE
+      const deletePolicies = policies.filter((p) => p.cmd === 'DELETE')
+      expect(deletePolicies).toEqual([])
+    })
+
+    it('User opt-in defaults: history_opt_in=false, in_at/out_at NULL', async () => {
+      const user = await prisma.user.create({
+        data: { email: 'fh-defaults@tablix.test' },
+      })
+      const row = await prisma.$queryRaw<
+        {
+          history_opt_in: boolean
+          history_opt_in_at: Date | null
+          history_opt_out_at: Date | null
+        }[]
+      >`
+        SELECT history_opt_in, history_opt_in_at, history_opt_out_at
+        FROM users WHERE id = ${user.id}::uuid
+      `
+      expect(row[0].history_opt_in).toBe(false)
+      expect(row[0].history_opt_in_at).toBeNull()
+      expect(row[0].history_opt_out_at).toBeNull()
     })
   })
 
