@@ -33,6 +33,25 @@ const createLimiter = (requests: number, window: Duration, prefix: string) => {
  *           /health/live é exclusão total (sem rate limit, ver health.routes.ts)
  * - usage: GET /usage (60/min) - Card 4.1, polling do front (use-usage hook)
  * - limits: GET /limits (100/min) - Card 4.1, mais leve que usage (estático por plan)
+ *
+ * History opt-in PRO (Card #145 — 5.2a — Fase 5 Storage):
+ * - historyOptIn: POST /history/enable e /history/disable (10 req/min) — operação
+ *                 de baixa frequência por user (mudança de preferência)
+ * - historyList: GET /history e /history/:id (60 req/min) — polling-friendly
+ * - historyDeleteOne: DELETE /history/:id (5 req/min) — anti-abuse de delete em loop
+ * - historyDeleteAll: DELETE /history (1 req / 5min POR USER) — operação destrutiva
+ *                 irreversível; atrito proposital. Residual D#1 do WV-2026-006.
+ * - historyDeleteAllGlobalCap: DELETE /history (5 req / 5min AGREGADO) — anti
+ *                 denial-of-wallet (Supabase delete API é paga; cap global protege
+ *                 contra N users × 1 req = N chamadas Storage/min). Identifier fixo.
+ *                 Padrão estabelecido em checkoutGlobalCap (memory feedback_denial_of_wallet_cap).
+ *
+ * Admin jobs (Card #145 D#3 mitigation 6):
+ * - adminJobs: POST /admin/jobs/run/:name (5 req/min POR ADMIN) — endpoint nominativo,
+ *                 atacante sabe que existe. Limit estrito.
+ * - adminJobsGlobalCap: POST /admin/jobs/run/:name (20 req/min AGREGADO) — defense
+ *                 em profundidade contra credential leak (1 admin comprometido = 5/min;
+ *                 5 admins comprometidos = 20/min total bate o cap).
  */
 export const rateLimiters = {
   global: createLimiter(100, '1m', 'global'),
@@ -46,6 +65,18 @@ export const rateLimiters = {
   health: createLimiter(60, '1m', 'health'),
   usage: createLimiter(60, '1m', 'usage'),
   limits: createLimiter(100, '1m', 'limits'),
+  // Card #145 — 5.2a
+  historyOptIn: createLimiter(10, '1m', 'history-optin'),
+  historyList: createLimiter(60, '1m', 'history-list'),
+  historyDeleteOne: createLimiter(5, '1m', 'history-delete-one'),
+  historyDeleteAll: createLimiter(1, '5m', 'history-delete-all'),
+  historyDeleteAllGlobalCap: createLimiter(
+    5,
+    '5m',
+    'history-delete-all-global-cap',
+  ),
+  adminJobs: createLimiter(5, '1m', 'admin-jobs'),
+  adminJobsGlobalCap: createLimiter(20, '1m', 'admin-jobs-global-cap'),
 } as const
 
 export type RateLimiterType = keyof typeof rateLimiters

@@ -100,6 +100,80 @@ const envSchema = z
       .optional(),
     SUPABASE_STORAGE_KEY: z.string().optional(),
     SUPABASE_STORAGE_BUCKET: z.string().optional(),
+
+    // History opt-in feature (Card #145 — 5.2a — Fase 5 Storage).
+    // 4 envs alinhadas com o plano fechado em 2026-05-02.
+    //
+    // HISTORY_FEATURE_ENABLED: kill-switch global. Default `false` em todos
+    //   os ambientes (feature OFF até user ativar opt-in E env=true). Test
+    //   também default false pra não disparar cron em test runs (R-5).
+    //
+    // CRON_PURGE_ENABLED: kill-switch específico do cron #146 (5.2b).
+    //   Default false. Só ativa em prod quando 5.2b for implementado.
+    //
+    // PRO_RETENTION_DAYS: SSOT de retenção (D#2 fechada 2026-05-02).
+    //   Range 1-365: < 1 quebra purge-on-disable (expira no passado);
+    //   > 365 é risco LGPD (retenção excessiva sem justificativa legal).
+    //   Default 30. Service via env.PRO_RETENTION_DAYS — NUNCA process.env.
+    //
+    // ADMIN_USER_IDS: allowlist de admin endpoints (Card #145 D#3 + WV-2026-006).
+    //   CSV de UUIDs (mitigations 1+2 do D#3): Zod boot fail-fast em prod com
+    //   UUID inválido, max 5 admins. Em dev/test pode ser vazio.
+    //   Em prod, fail-fast se vazio (superRefine abaixo).
+    //   Workaround temporário até enum UserRole separado (card #157).
+    // F2 fix-pack @security BAIXO: `z.coerce.boolean("false")` retorna `true`
+    // (qualquer string não-vazia é truthy em JS). Operador escrevendo
+    // `HISTORY_FEATURE_ENABLED="false"` no .env LIGARIA a feature — kill-switch
+    // quebrado. Solução: enum estrito com transform explícito.
+    HISTORY_FEATURE_ENABLED: z
+      .enum(['true', 'false'])
+      .default('false')
+      .transform((v) => v === 'true'),
+    CRON_PURGE_ENABLED: z
+      .enum(['true', 'false'])
+      .default('false')
+      .transform((v) => v === 'true'),
+    PRO_RETENTION_DAYS: z.coerce.number().int().min(1).max(365).default(30),
+    ADMIN_USER_IDS: z
+      .string()
+      .optional()
+      .default('')
+      .transform((val, ctx) => {
+        if (!val.trim()) return [] as string[]
+        const parts = val
+          .split(',')
+          .map((s) => s.trim())
+          .filter(Boolean)
+        const result: string[] = []
+        // F2 fix-pack @security BAIXO: enforcing UUID lowercase strict.
+        // Postgres gen_random_uuid() emite lowercase; operador colando UUID
+        // uppercase passaria z.string().uuid() (case-insensitive) mas falharia
+        // comparação no admin middleware → admin bypass silencioso.
+        const lowercaseUuidRegex =
+          /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
+        for (const p of parts) {
+          if (!lowercaseUuidRegex.test(p)) {
+            // Mensagem genérica — NUNCA incluir o valor parcial recebido
+            // (segue mesmo pattern de redaction do JWT_SECRET, evita leak
+            // do allowlist em logs de boot failure).
+            ctx.addIssue({
+              code: z.ZodIssueCode.custom,
+              message:
+                'ADMIN_USER_IDS contém valor que não é UUID v4 lowercase válido. Use CSV de UUIDs v4 (RFC 4122, lowercase) separados por vírgula.',
+            })
+            return z.NEVER
+          }
+          result.push(p)
+        }
+        if (result.length > 5) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: `ADMIN_USER_IDS aceita no máximo 5 admins (recebido ${result.length}). Esta é a mitigation 2 do WV-2026-006.`,
+          })
+          return z.NEVER
+        }
+        return result
+      }),
   })
   .superRefine((data, ctx) => {
     // JWT_SECRET: rejeitar placeholders conhecidos
@@ -237,6 +311,20 @@ const envSchema = z
           path: ['SUPABASE_STORAGE_BUCKET'],
           message:
             'SUPABASE_STORAGE_BUCKET é obrigatório em produção (Storage Card 5.1)',
+        })
+      }
+
+      // ADMIN_USER_IDS obrigatório em produção quando HISTORY_FEATURE_ENABLED
+      // (Card #145 D#3 mitigation 1 + WV-2026-006). Sem isso, admin endpoints
+      // ficariam acessíveis a NINGUÉM em prod — mas pior, defense em
+      // profundidade falha se um dia trocar pra "empty allowlist = wildcard".
+      // Fail-fast no boot.
+      if (data.HISTORY_FEATURE_ENABLED && data.ADMIN_USER_IDS.length === 0) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['ADMIN_USER_IDS'],
+          message:
+            'ADMIN_USER_IDS é obrigatório em produção quando HISTORY_FEATURE_ENABLED=true (Card #145 D#3 + WV-2026-006). CSV de UUIDs separados por vírgula, mínimo 1, máximo 5.',
         })
       }
     }

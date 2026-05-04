@@ -6,6 +6,10 @@ export const ErrorCodes = {
   SUBSCRIPTION_EXPIRED: 'SUBSCRIPTION_EXPIRED',
   UNAUTHORIZED: 'UNAUTHORIZED',
   FORBIDDEN: 'FORBIDDEN',
+  // Feature opt-in desabilitada (Card #145 D#4 — 5.2a). Retorna 403 com
+  // details.feature pra cliente exibir mensagem específica. Invariante
+  // cross-card: GET /history E /history/:id seguem mesma regra.
+  FEATURE_DISABLED: 'FEATURE_DISABLED',
 
   // Limites
   LIMIT_EXCEEDED: 'LIMIT_EXCEEDED',
@@ -90,6 +94,17 @@ export const Errors = {
 
   forbidden: (message = 'Permissão insuficiente para este recurso') =>
     new AppError(ErrorCodes.FORBIDDEN, message, 403),
+
+  // Feature desabilitada (Card #145 D#4). Mensagem default em PT-BR
+  // genérica; caller pode customizar. details.feature é discriminator
+  // estável pro cliente exibir UI específica.
+  featureDisabled: (
+    feature: string,
+    message = 'Funcionalidade desabilitada nas suas preferências.',
+  ) =>
+    new AppError(ErrorCodes.FEATURE_DISABLED, message, 403, {
+      feature,
+    }),
 
   limitExceeded: (limit: string, actual: string, file?: string) =>
     new AppError(ErrorCodes.LIMIT_EXCEEDED, 'Limite excedido', 400, {
