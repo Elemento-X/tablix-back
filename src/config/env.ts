@@ -134,6 +134,18 @@ const envSchema = z
       .default('false')
       .transform((v) => v === 'true'),
     PRO_RETENTION_DAYS: z.coerce.number().int().min(1).max(365).default(30),
+
+    // Card #145 F4 fix-pack @security F-ALTO-02: secret separada do JWT_SECRET
+    // pra step-up reauth (Mit 8 D#3). Comprometer JWT_SECRET NÃO deve
+    // comprometer step-up MFA (defesa em profundidade — chave única por
+    // propósito). Min 32 chars (mesma força do JWT_SECRET). Obrigatório em
+    // prod quando HISTORY_FEATURE_ENABLED=true (admin endpoints expostos).
+    ADMIN_STEPUP_SECRET: z.string().min(32).optional(),
+
+    // Card #145 F4 fix-pack @devops: sleep grace antes de app.close em
+    // SIGTERM. Fly.io HC interval ~10-15s; default 2s anterior era subdim.
+    // Configurável pra ajustar quando fly.toml chegar (Fase 7).
+    SHUTDOWN_DRAIN_MS: z.coerce.number().int().positive().default(15_000),
     ADMIN_USER_IDS: z
       .string()
       .optional()
@@ -325,6 +337,32 @@ const envSchema = z
           path: ['ADMIN_USER_IDS'],
           message:
             'ADMIN_USER_IDS é obrigatório em produção quando HISTORY_FEATURE_ENABLED=true (Card #145 D#3 + WV-2026-006). CSV de UUIDs separados por vírgula, mínimo 1, máximo 5.',
+        })
+      }
+
+      // ADMIN_STEPUP_SECRET obrigatório em prod quando feature ativa (F4
+      // @security F-ALTO-02). Sem secret separada, step-up reauth colapsa
+      // junto com JWT_SECRET em comprometimento.
+      if (data.HISTORY_FEATURE_ENABLED && !data.ADMIN_STEPUP_SECRET) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['ADMIN_STEPUP_SECRET'],
+          message:
+            'ADMIN_STEPUP_SECRET é obrigatório em produção quando HISTORY_FEATURE_ENABLED=true (Card #145 F4 @security F-ALTO-02). Min 32 chars, separada do JWT_SECRET.',
+        })
+      }
+
+      // Defense em profundidade: ADMIN_STEPUP_SECRET nunca pode ser igual ao
+      // JWT_SECRET (operador acidentalmente reutilizando). Detecta drift cedo.
+      if (
+        data.ADMIN_STEPUP_SECRET &&
+        data.ADMIN_STEPUP_SECRET === data.JWT_SECRET
+      ) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['ADMIN_STEPUP_SECRET'],
+          message:
+            "ADMIN_STEPUP_SECRET NÃO pode ser igual ao JWT_SECRET (CWE-321 secret reuse cross-purpose). Gere secret nova: node -e \"console.log(require('crypto').randomBytes(48).toString('base64url'))\"",
         })
       }
     }

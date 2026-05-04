@@ -7,21 +7,34 @@ import './instrument'
 import { buildApp } from './app'
 import { env } from './config/env'
 import { setShutdownRequested } from './lib/health'
+import { shutdownScheduler } from './scheduler/cron'
 
 async function start() {
   const app = await buildApp()
 
-  // Graceful shutdown — Card 2.3: sinaliza readiness degraded ANTES de
-  // fechar, para que o proxy/orquestrador pare de rotear tráfego novo.
-  // Delay de 2s dá tempo para o próximo probe detectar o 503 e remover
-  // a instância do pool antes de drenarmos conexões existentes.
+  // Graceful shutdown — Card 2.3 + Card #145 F4 fix-pack @devops:
+  // ordem corrigida pra padrão Kubernetes/Fly.io.
+  //
+  // 1. setShutdownRequested(true) — /health/ready vira 503
+  // 2. Sleep SHUTDOWN_DRAIN_MS (default 15s, configurável) — orquestrador
+  //    Fly.io HC interval ~10-15s; 2s anterior era subdimensionado.
+  // 3. app.close() — drena HTTP in-flight (não aceita novos)
+  // 4. shutdownScheduler(30s) — para schedules + espera batch + libera
+  //    locks distribuídos (Redis client ainda vivo nessa fase)
+  // 5. exit 0
+  //
+  // Justificativa da ordem: HTTP precisa parar de aceitar requests novos
+  // ANTES do scheduler shutdown (request poderia disparar runJobOnce via
+  // admin endpoint mid-shutdown). Scheduler depois drena batch + libera
+  // locks em paralelo ao Redis client ainda conectado.
   const signals: NodeJS.Signals[] = ['SIGTERM', 'SIGINT']
   for (const signal of signals) {
     process.on(signal, async () => {
       app.log.info(`Received ${signal}, shutting down gracefully`)
       setShutdownRequested(true)
-      await new Promise((resolve) => setTimeout(resolve, 2000))
+      await new Promise((resolve) => setTimeout(resolve, env.SHUTDOWN_DRAIN_MS))
       await app.close()
+      await shutdownScheduler(30_000)
       process.exit(0)
     })
   }

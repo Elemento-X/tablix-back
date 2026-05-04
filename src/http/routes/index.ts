@@ -6,6 +6,7 @@ import { processRoutes } from './process.routes'
 import { healthRoutes } from './health.routes'
 import { usageRoutes } from './usage.routes'
 import { historyRoutes } from './history.routes'
+import { adminRoutes } from '../../scheduler/admin.routes'
 
 /**
  * Registra todas as rotas da aplicação
@@ -40,4 +41,10 @@ export async function registerRoutes(app: FastifyInstance) {
   // GET /history, GET /history/:id, DELETE /history/:id, DELETE /history.
   // Sem prefix — endpoints já carregam /history no path.
   await app.register(historyRoutes)
+
+  // Rotas admin do scheduler (Card #145 — 5.2a F4 + WV-2026-006)
+  // 2 endpoints: POST /admin/jobs/run/:name, GET /admin/jobs/list.
+  // Auth completa: JWT + ADMIN_USER_IDS allowlist + step-up reauth (D#3 9 mit).
+  // Sem prefix — endpoints já carregam /admin/jobs no path.
+  await app.register(adminRoutes)
 }
