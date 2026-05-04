@@ -3,6 +3,8 @@ import { authRoutes } from './auth.routes'
 import { billingRoutes } from './billing.routes'
 import { webhookRoutes } from './webhook.routes'
 import { processRoutes } from './process.routes'
+import { healthRoutes } from './health.routes'
+import { usageRoutes } from './usage.routes'
 
 /**
  * Registra todas as rotas da aplicação
@@ -13,6 +15,10 @@ export async function registerRoutes(app: FastifyInstance) {
   // Pois configura content type parser diferente (raw body para Stripe)
   await app.register(webhookRoutes, { prefix: '/webhooks' })
 
+  // Health checks (Card 2.3) — /health, /health/live, /health/ready
+  // Públicas por design (probes do orquestrador). Sem auth.
+  await app.register(healthRoutes, { prefix: '/health' })
+
   // Rotas de autenticação
   await app.register(authRoutes, { prefix: '/auth' })
 
@@ -22,6 +28,9 @@ export async function registerRoutes(app: FastifyInstance) {
   // Rotas de processamento
   await app.register(processRoutes, { prefix: '/process' })
 
-  // Futuras rotas serão adicionadas aqui:
-  // await app.register(usageRoutes, { prefix: '/usage' })
+  // Rotas de usage & limits (Card 4.1) — GET /usage, GET /limits
+  // Não tem prefix dedicado porque são endpoints distintos no top-level
+  // (front consome /usage e /limits como rotas separadas, sem agrupar
+  // sob /usage/*).
+  await app.register(usageRoutes)
 }

@@ -14,6 +14,33 @@ export const createCheckoutBodySchema = z.object({
     .enum(['monthly', 'yearly'])
     .default('monthly')
     .describe('Tipo de plano: mensal ou anual'),
+  currency: z
+    .enum(['BRL', 'USD', 'EUR'])
+    .default('BRL')
+    .describe('Moeda do checkout: BRL, USD ou EUR'),
+})
+
+// Header Idempotency-Key (Card #74 3.4). Opcional.
+// @security finding ciclo 2: regex UUID v4 estrito (versão "4" + variant
+// 8/9/a/b) — `.uuid()` do Zod aceita v1/v3/v5 também, e UUID v1 carrega
+// MAC+timestamp (~60 bits efetivos = previsível). Regex v4-only fecha
+// collision-DoS residual com keys parcialmente previsíveis. UUID v4 tem
+// 122 bits de entropia. Alinhado com recomendação Stripe; fecha vetores
+// CWE-770 + CWE-330.
+const UUID_V4_REGEX =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+
+export const createCheckoutHeadersSchema = z.object({
+  'idempotency-key': z
+    .string()
+    .regex(
+      UUID_V4_REGEX,
+      'Idempotency-Key deve ser UUID v4 (122 bits entropia)',
+    )
+    .optional()
+    .describe(
+      'Chave de idempotência para retry seguro. DEVE ser UUID v4 estrito — keys de baixa entropia ou de outras versões UUID (v1/v3/v5) são rejeitadas para prevenir collision-DoS.',
+    ),
 })
 
 export const createCheckoutResponseSchema = z.object({
@@ -52,13 +79,19 @@ export type CreatePortalResponse = z.infer<typeof createPortalResponseSchema>
 // ============================================
 
 const priceInfoSchema = z.object({
-  priceId: z.string().nullable().describe('ID do preço no Stripe'),
   available: z.boolean().describe('Se o preço está configurado'),
 })
 
-export const pricesResponseSchema = z.object({
+const currencyPricesSchema = z.object({
+  currency: z.string().describe('Código da moeda (BRL, USD, EUR)'),
   monthly: priceInfoSchema,
   yearly: priceInfoSchema,
+})
+
+export const pricesResponseSchema = z.object({
+  currencies: z
+    .array(currencyPricesSchema)
+    .describe('Preços disponíveis por moeda'),
 })
 
 export type PricesResponse = z.infer<typeof pricesResponseSchema>

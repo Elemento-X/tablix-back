@@ -13,51 +13,104 @@ datasource db {
 }
 
 // ===========================================
-// TOKENS - Tokens de acesso Pro
+// USERS - Identidade do usuario
 // ===========================================
-// Armazena tokens gerados apos pagamento no Stripe
-// Token vinculado ao fingerprint no primeiro uso
+// Entidade central de identidade, desacoplada de billing
 
-model Token {
-  id                    String    @id @default(uuid())
-  token                 String    @unique @db.VarChar(64)
-  fingerprint           String?   @db.VarChar(64) // NULL ate primeiro uso
-  stripeCustomerId      String    @map("stripe_customer_id") @db.VarChar(255)
-  stripeSubscriptionId  String?   @map("stripe_subscription_id") @db.VarChar(255)
-  plan                  Plan      @default(PRO)
-  status                TokenStatus @default(ACTIVE)
-  email                 String    @db.VarChar(255)
-  createdAt             DateTime  @default(now()) @map("created_at")
-  activatedAt           DateTime? @map("activated_at") // Quando vinculou ao fingerprint
-  expiresAt             DateTime? @map("expires_at") // NULL se assinatura ativa
+model User {
+  // UUID nativo (16 bytes) + gen_random_uuid() no DB é SSOT do id.
+  // `dbgenerated` impede o Prisma de gerar UUID no app (drift entre
+  // inserts via Prisma vs SQL direto). Padrão estabelecido em audit_log
+  // (Card 2.4) e replicado para User/Session/Token/Usage/Job na Fase 3.
+  id               String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  email            String   @unique @db.VarChar(255)
+  role             Role     @default(FREE)
+  stripeCustomerId String?  @unique @map("stripe_customer_id") @db.VarChar(255)
+  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt        DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   // Relacionamentos
-  usages                Usage[]
-  jobs                  Job[]
+  tokens   Token[]
+  sessions Session[]
+  usages   Usage[]
+  jobs     Job[]
 
-  @@index([token])
+  @@map("users")
+}
+
+// ===========================================
+// SESSIONS - Sessoes ativas do usuario
+// ===========================================
+// Cada login cria uma Session. JWT referencia session.id.
+// Logout revoga a session (seta revokedAt).
+
+model Session {
+  id               String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId           String    @map("user_id") @db.Uuid
+  fingerprint      String?   @db.VarChar(64)
+  userAgent        String?   @map("user_agent") @db.VarChar(512)
+  ipAddress        String?   @map("ip_address") @db.VarChar(45)
+  refreshTokenHash String    @unique @map("refresh_token_hash") @db.VarChar(64)
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  lastActivityAt   DateTime  @default(now()) @map("last_activity_at") @db.Timestamptz(3)
+  expiresAt        DateTime  @map("expires_at") @db.Timestamptz(3)
+  revokedAt        DateTime? @map("revoked_at") @db.Timestamptz(3)
+
+  // Relacionamento
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt], map: "idx_sessions_expires_at")
+  @@index([revokedAt], map: "idx_sessions_revoked_at")
+  @@map("sessions")
+}
+
+// ===========================================
+// TOKENS - Tokens de acesso Pro (ativacao)
+// ===========================================
+// Token gerado apos pagamento no Stripe, enviado por email.
+// Mecanismo de ativacao, nao identidade.
+
+model Token {
+  id                   String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId               String      @map("user_id") @db.Uuid
+  token                String      @unique @db.VarChar(64)
+  fingerprint          String?     @db.VarChar(64)
+  stripeSubscriptionId String?     @map("stripe_subscription_id") @db.VarChar(255)
+  plan                 Plan        @default(PRO)
+  status               TokenStatus @default(ACTIVE)
+  createdAt            DateTime    @default(now()) @map("created_at") @db.Timestamptz(3)
+  activatedAt          DateTime?   @map("activated_at") @db.Timestamptz(3)
+  expiresAt            DateTime?   @map("expires_at") @db.Timestamptz(3)
+
+  // Relacionamento — RESTRICT: cancelar subscription antes de deletar user
+  user User @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@unique([userId, stripeSubscriptionId], map: "uq_tokens_user_subscription")
+  // NOTA: índice `tokens_token_idx` (BTREE em token) era redundante com
+  // `tokens_token_key` UNIQUE — droppado em Fase 3 Migration C. UNIQUE
+  // serve queries de leitura tão bem quanto BTREE comum.
   @@index([fingerprint])
-  @@index([stripeCustomerId], map: "idx_tokens_stripe_customer")
+  @@index([userId], map: "idx_tokens_user")
   @@map("tokens")
 }
 
 // ===========================================
-// USAGE - Uso mensal (para limites do Pro)
+// USAGE - Uso mensal (para limites do plano)
 // ===========================================
-// Controla quantas unificacoes o usuario Pro fez no mes
+// Controla quantas unificacoes o usuario fez no mes
 
 model Usage {
-  id                String   @id @default(uuid())
-  tokenId           String   @map("token_id")
+  id                String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId            String   @map("user_id") @db.Uuid
   period            String   @db.VarChar(7) // Formato: 'YYYY-MM'
   unificationsCount Int      @default(0) @map("unifications_count")
-  createdAt         DateTime @default(now()) @map("created_at")
+  createdAt         DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
 
-  // Relacionamento
-  token             Token    @relation(fields: [tokenId], references: [id], onDelete: Cascade)
+  // Relacionamento — RESTRICT: preservar historico de billing
+  user User @relation(fields: [userId], references: [id], onDelete: Restrict)
 
-  @@unique([tokenId, period])
-  @@index([tokenId, period], map: "idx_usage_token_period")
+  @@unique([userId, period])
   @@map("usage")
 }
 
@@ -67,26 +120,174 @@ model Usage {
 // Para arquivos >10MB que precisam de processamento em fila
 
 model Job {
-  id              String    @id @default(uuid())
-  tokenId         String    @map("token_id")
-  status          JobStatus @default(PENDING)
-  inputFiles      Json      @map("input_files") // Metadados dos arquivos
-  outputFileUrl   String?   @map("output_file_url") @db.VarChar(500)
-  errorMessage    String?   @map("error_message")
-  createdAt       DateTime  @default(now()) @map("created_at")
-  startedAt       DateTime? @map("started_at")
-  completedAt     DateTime? @map("completed_at")
+  id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId        String    @map("user_id") @db.Uuid
+  status        JobStatus @default(PENDING)
+  inputFiles    Json      @map("input_files")
+  outputFileUrl String?   @map("output_file_url") @db.VarChar(500)
+  errorMessage  String?   @map("error_message")
+  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  startedAt     DateTime? @map("started_at") @db.Timestamptz(3)
+  completedAt   DateTime? @map("completed_at") @db.Timestamptz(3)
 
   // Relacionamento
-  token           Token     @relation(fields: [tokenId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
+  @@index([userId], map: "idx_jobs_user")
   @@index([status], map: "idx_jobs_status")
   @@map("jobs")
 }
 
 // ===========================================
+// STRIPE EVENTS - Idempotencia de webhooks
+// ===========================================
+// Registra event.id processados para deduplicacao.
+// Insert duplicado gera P2002 (unique violation) = evento ja processado.
+
+model StripeEvent {
+  id          String   @id @db.VarChar(255) // event.id do Stripe (evt_...)
+  type        String   @db.VarChar(255)
+  processedAt DateTime @default(now()) @map("processed_at") @db.Timestamptz(3)
+
+  @@index([processedAt], map: "idx_stripe_events_processed_at")
+  @@map("stripe_events")
+}
+
+// ===========================================
+// AUDIT LOG - Trilha forense de eventos criticos
+// ===========================================
+// Registra eventos auditaveis (auth, webhooks, billing) para investigacao.
+// Emissao fire-and-forget via src/lib/audit/audit.service.ts com redundancia
+// tripla (Prisma + Sentry breadcrumb + pino log). Retencao: 90 dias.
+// NUNCA armazenar PII direta: actor eh userId/customerId; metadata passa
+// pelos REDACT_PATHS do pino antes de persistir.
+
+model AuditLog {
+  // UUID nativo (16 bytes) + gen_random_uuid() no DB é SSOT do id.
+  // `dbgenerated` impede o Prisma de gerar UUID no app (drift entre
+  // inserts via Prisma vs SQL direto).
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  action    String   @db.VarChar(50)
+  actor     String?  @db.VarChar(255) // userId, "system" ou "stripe"
+  ip        String?  @db.VarChar(45)
+  userAgent String?  @map("user_agent") @db.VarChar(512)
+  success   Boolean
+  metadata  Json?
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  @@index([action], map: "idx_audit_log_action")
+  @@index([actor, createdAt(sort: Desc)], map: "idx_audit_log_actor_created_at")
+  @@index([createdAt], map: "idx_audit_log_created_at")
+  // NOTA: `idx_audit_log_failures` é um PARTIAL INDEX (`WHERE success = false`)
+  // gerenciado via raw SQL em supabase/migrations/20260419230228_add_audit_log.sql.
+  // Prisma não suporta partial indexes declarativamente. Não usar
+  // `prisma migrate dev` (drop do índice); preferir `prisma db pull` ou
+  // migrations SQL quando editar esta model.
+  @@map("audit_log")
+}
+
+// ===========================================
+// AUDIT LOG LEGAL - Trilha LGPD com retencao 5 anos
+// ===========================================
+// SEPARADA do audit_log operacional (90d). Eventos legais (purge/consent/dsar)
+// exigem retencao 5 anos por LGPD Art. 16/37 + CDC Art. 27 (prazo prescricional
+// reparacao por fato do servico). Card #150 / Fase 5.
+//
+// IMPORTANTE - DECISOES IRREVERSIVEIS (consultar plano antes de mudar):
+// .claude/plans/2026-04-28-card-150-audit-log-legal.md
+//
+// (D-5) userId NAO TEM FOREIGN KEY pra users.id. INTENCIONAL.
+//   Razao: o evento legal precisa SOBREVIVER ao delete do user (essa eh a
+//   prova juridica da purga). FK ON DELETE SET NULL = "purga de quem?"
+//   absurdo legalmente. FK RESTRICT trava o cron de delete user.
+//   NAO ADICIONAR @relation por reflexo.
+//
+// (R-7) NAO REUSAR cron de retencao do audit_log (90d) nesta tabela.
+//   Cron de 5 anos vive em card proprio (#152). Cron 90d apagando registros
+//   legais = perda de prova juridica = nao-conformidade LGPD critica.
+//
+// (D-1) Service `recordLegalEvent` eh AWAIT (nao fire-and-forget como
+//   AuditLog). Falha de DB DEVE bloquear caller. LGPD nao tolera evento
+//   silenciosamente perdido.
+//
+// (D-2/D-4) event_type, actor, outcome, legal_basis sao WHITELIST via
+//   CHECK constraint SQL + `as const` no TS. Defesa em profundidade.
+//   Adicionar valor exige migration nova (vide audit-legal.types.ts).
+//
+// (resource_hash) bytea 32 bytes = SHA-256(userId:storagePath). FREEZED v1.
+//   Mudanca de formula = nova coluna resourceHashV2, NUNCA mutar v1.
+//   Implementacao: src/lib/audit-hash.ts (funcao pura, PROIBIDO logar input).
+//   Algoritmo registrado em resource_hash_algo (default 'sha256v1') pra
+//   permitir migracao futura sem ambiguidade.
+
+model AuditLogLegal {
+  // UUID nativo (16 bytes) + gen_random_uuid() no DB. SSOT no banco.
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+
+  // eventId vem do CALLER (idempotency-key style). UNIQUE permite cron
+  // retentar sem duplicar evento (P2002 → service faz lookup e retorna).
+  eventId String @unique @map("event_id") @db.Uuid
+
+  // Whitelist via CHECK SQL: purge_pending|purge_completed|purge_failed|
+  // consent_given|consent_withdrawn|dsar_request|dsar_fulfilled
+  eventType String @map("event_type") @db.VarChar(40)
+
+  timestamp DateTime @default(now()) @db.Timestamptz(3)
+
+  // SEM FK (D-5). String Uuid solta proposital.
+  userId String @map("user_id") @db.Uuid
+
+  resourceType String @map("resource_type") @db.VarChar(40)
+  resourceId   String @map("resource_id") @db.VarChar(64)
+
+  // Whitelist via CHECK SQL: regex `^[a-z_]+$` length 3-60.
+  // Ex: retention_expired, user_request_art_18, consent_withdrawn
+  legalBasis String @map("legal_basis") @db.VarChar(60)
+
+  // Whitelist via CHECK SQL: cron_purge_worker|user_self_service|admin_panel
+  actor String @db.VarChar(40)
+
+  // Prova de respeito ao prazo de retencao no momento da purga.
+  expiresAtOriginal DateTime? @map("expires_at_original") @db.Timestamptz(3)
+
+  // SHA-256(userId:storagePath) em bytea (32 bytes). NUNCA path real.
+  // CHECK SQL: octet_length = 32.
+  resourceHash Bytes? @map("resource_hash")
+
+  // Algoritmo do resource_hash. Default 'sha256v1'. Permite versionamento
+  // futuro sem ambiguidade (defense in depth do hash freezed).
+  resourceHashAlgo String @default("sha256v1") @map("resource_hash_algo") @db.VarChar(8)
+
+  // Whitelist via CHECK SQL: success|failure
+  outcome String @db.VarChar(16)
+
+  // Obrigatorio se outcome='failure' (validado em Zod superRefine).
+  errorCode String? @map("error_code") @db.VarChar(80)
+
+  // JSONB com metadata adicional. PII passa por scrubObject SSOT antes
+  // de persistir. Cap 1024 bytes serializados (igual audit_log).
+  metadata Json?
+
+  @@index([userId, timestamp(sort: Desc)], map: "idx_audit_log_legal_user_ts")
+  @@index([eventType, timestamp(sort: Desc)], map: "idx_audit_log_legal_event_type_ts")
+  // NOTA: 2 PARTIAL INDEXES gerenciados via raw SQL na migration:
+  //   - `idx_audit_log_legal_failures` (outcome='failure') -- forensics
+  //   - `idx_audit_log_legal_hash_pending` (event_type IN purge_*, resource_hash IS NOT NULL)
+  //     -- cron #146 correlation hot path
+  // Prisma nao suporta partial indexes declarativamente. Nao usar
+  // `prisma migrate dev` (drop do indice); preferir `prisma db pull` ou
+  // migration SQL ao editar esta model.
+  @@map("audit_log_legal")
+}
+
+// ===========================================
 // ENUMS
 // ===========================================
+
+enum Role {
+  FREE
+  PRO
+}
 
 enum Plan {
   PRO

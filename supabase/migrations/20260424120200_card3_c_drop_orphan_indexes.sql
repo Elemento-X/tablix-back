@@ -1,0 +1,70 @@
+-- Migration: card3_c_drop_orphan_indexes
+-- Version: 20260424120200
+-- Card: Fase 3 — Hardening de schema (Migration C de 3)
+--
+-- Contexto:
+--   Dois índices duplicam funcionalmente outros índices UNIQUE
+--   já existentes nas mesmas colunas:
+--
+--   1. tokens_token_idx (token)         — duplica tokens_token_key UNIQUE (token)
+--   2. idx_usage_token_period (user_id, period)
+--                                       — duplica usage_user_id_period_key UNIQUE (user_id, period)
+--
+--   UNIQUE indexes servem queries de leitura tão bem quanto BTREE
+--   comum. Manter ambos custa: espaço, INSERT mais lento (PG mantém
+--   N índices em cada write), VACUUM mais demorado, planner com
+--   espaço de busca maior.
+--
+-- Validação empírica pré-migração (via pg_stat_user_indexes):
+--   Os 4 índices (2 UNIQUE + 2 redundantes) têm idx_scan=0 — nenhum
+--   foi usado ainda em produção (banco vazio). Não há risco de
+--   degradar query existente porque NENHUMA query depende deles.
+--   Quando o tráfego começar (Fase 8), o planner escolherá o UNIQUE
+--   (estatísticas idênticas, escolha determinística por nome).
+--
+-- IMPORTANTE — Execução fora de transação:
+--   DROP INDEX CONCURRENTLY NÃO PODE rodar dentro de transação
+--   (Postgres recusa: "DROP INDEX CONCURRENTLY cannot run inside
+--   a transaction block"). MCP `apply_migration` envolve cada
+--   chamada em BEGIN/COMMIT implícito → falha garantida.
+--
+--   Esta migration DEVE ser aplicada via `mcp__supabase__execute_sql`
+--   (sem transação implícita), ou via `psql` direto contra DIRECT_URL
+--   em modo autocommit (`\set AUTOCOMMIT on`).
+--
+--   Documentação completa em docs/runbooks/database-migration.md.
+--
+-- Por que CONCURRENTLY (mesmo em tabela vazia):
+--   - Estabelece padrão operacional para futuras migrations em
+--     tabelas com tráfego (Fase 8+).
+--   - Custo zero hoje (banco vazio = sem competição por lock).
+--   - Self-documenting: leitor entende que é operação online.
+--
+-- Pós-migration:
+--   - Validar via pg_index.indisvalid que nenhum índice ficou em
+--     estado INVALID (acontece se DROP CONCURRENTLY falhar no meio).
+--   - Regenerar tests/fixtures/schema.sql via test:schema:verify.
+--
+-- Rollback:
+--   Trivial: CREATE INDEX CONCURRENTLY recriando os 2 índices com
+--   suas definições originais. Procedimento em
+--   docs/runbooks/database-rollback.md.
+--
+-- @owner: @dba + @devops
+-- @cards: Fase 3 (descoberta em auditoria pré-go-live)
+
+SET lock_timeout = '5s';
+
+DROP INDEX CONCURRENTLY IF EXISTS public."tokens_token_idx";
+DROP INDEX CONCURRENTLY IF EXISTS public."idx_usage_token_period";
+
+-- Validação pós (executar manualmente):
+--
+--   SELECT indexrelid::regclass AS index_name, indisvalid
+--   FROM pg_index
+--   WHERE indrelid IN ('public.tokens'::regclass, 'public.usage'::regclass);
+--
+--   Esperado:
+--     - tokens_token_idx e idx_usage_token_period AUSENTES da lista.
+--     - Nenhum índice restante com indisvalid=false (sinal de DROP
+--       CONCURRENTLY interrompido — exigiria DROP INDEX manual).

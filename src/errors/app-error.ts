@@ -5,10 +5,12 @@ export const ErrorCodes = {
   TOKEN_ALREADY_USED: 'TOKEN_ALREADY_USED',
   SUBSCRIPTION_EXPIRED: 'SUBSCRIPTION_EXPIRED',
   UNAUTHORIZED: 'UNAUTHORIZED',
+  FORBIDDEN: 'FORBIDDEN',
 
   // Limites
   LIMIT_EXCEEDED: 'LIMIT_EXCEEDED',
   RATE_LIMITED: 'RATE_LIMITED',
+  IP_UNRESOLVABLE: 'IP_UNRESOLVABLE',
 
   // Processamento
   PROCESSING_FAILED: 'PROCESSING_FAILED',
@@ -18,6 +20,15 @@ export const ErrorCodes = {
   CHECKOUT_FAILED: 'CHECKOUT_FAILED',
   WEBHOOK_FAILED: 'WEBHOOK_FAILED',
   PORTAL_FAILED: 'PORTAL_FAILED',
+  CURRENCY_UNAVAILABLE: 'CURRENCY_UNAVAILABLE',
+
+  // Idempotency (Card #74)
+  IDEMPOTENCY_CONFLICT: 'IDEMPOTENCY_CONFLICT',
+  IDEMPOTENCY_IN_PROGRESS: 'IDEMPOTENCY_IN_PROGRESS',
+
+  // LGPD Audit Legal (Card #150) — falha de persistência de evento legal.
+  // AWAIT obrigatório (D-1): caller (cron purge, DSAR) deve abortar em falha.
+  LEGAL_AUDIT_PERSIST_FAILED: 'LEGAL_AUDIT_PERSIST_FAILED',
 
   // Geral
   VALIDATION_ERROR: 'VALIDATION_ERROR',
@@ -77,6 +88,9 @@ export const Errors = {
   unauthorized: (message = 'Não autorizado') =>
     new AppError(ErrorCodes.UNAUTHORIZED, message, 401),
 
+  forbidden: (message = 'Permissão insuficiente para este recurso') =>
+    new AppError(ErrorCodes.FORBIDDEN, message, 403),
+
   limitExceeded: (limit: string, actual: string, file?: string) =>
     new AppError(ErrorCodes.LIMIT_EXCEEDED, 'Limite excedido', 400, {
       limit,
@@ -87,6 +101,9 @@ export const Errors = {
   rateLimited: (
     message = 'Muitas requisições. Tente novamente em alguns minutos.',
   ) => new AppError(ErrorCodes.RATE_LIMITED, message, 429),
+
+  ipUnresolvable: (message = 'Requisição inválida') =>
+    new AppError(ErrorCodes.IP_UNRESOLVABLE, message, 400),
 
   processingFailed: (message = 'Erro no processamento') =>
     new AppError(ErrorCodes.PROCESSING_FAILED, message, 500),
@@ -104,6 +121,39 @@ export const Errors = {
 
   portalFailed: (message = 'Erro ao gerar portal') =>
     new AppError(ErrorCodes.PORTAL_FAILED, message, 500),
+
+  currencyUnavailable: (currency: string, interval: string) =>
+    new AppError(
+      ErrorCodes.CURRENCY_UNAVAILABLE,
+      'Plano não disponível para esta moeda',
+      422,
+      {
+        currency,
+        interval,
+      },
+    ),
+
+  // Idempotency (Card #74) — mesma Idempotency-Key com body diferente.
+  // Alinhado com Stripe spec (422 Unprocessable Entity).
+  idempotencyConflict: (
+    message = 'Idempotency-Key já usada com payload diferente',
+  ) => new AppError(ErrorCodes.IDEMPOTENCY_CONFLICT, message, 422),
+
+  // Outro worker já está processando a mesma key (lock detido).
+  // Cliente deve retentar após alguns segundos (Retry-After header).
+  idempotencyInProgress: (
+    message = 'Requisição similar já está sendo processada',
+  ) => new AppError(ErrorCodes.IDEMPOTENCY_IN_PROGRESS, message, 409),
+
+  // LGPD Audit Legal (Card #150). 500 — falha de infra crítica.
+  // Caller (cron #146 purge, DSAR handler) DEVE abortar a operação:
+  // sem prova jurídica do evento legal, não pode prosseguir com o efeito
+  // (delete no Storage, export DSAR, etc).
+  legalAuditPersistFailed: (
+    message = 'Falha ao persistir evento legal de auditoria',
+    details?: ErrorDetails,
+  ) =>
+    new AppError(ErrorCodes.LEGAL_AUDIT_PERSIST_FAILED, message, 500, details),
 
   validationError: (message: string, details?: ErrorDetails) =>
     new AppError(ErrorCodes.VALIDATION_ERROR, message, 400, details),

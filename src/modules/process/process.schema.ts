@@ -21,19 +21,35 @@ export const processSyncInputSchema = z.object({
 export type ProcessSyncInput = z.infer<typeof processSyncInputSchema>
 
 // ============================================
-// POST /process/sync - RESPONSE
+// POST /process/sync - RESPONSE (binary)
 // ============================================
 
-export const processSyncResponseSchema = z.object({
-  file: z.string().describe('Arquivo de saída codificado em base64'),
-  fileName: z.string().describe('Nome do arquivo gerado'),
-  fileSize: z.number().int().describe('Tamanho do arquivo em bytes'),
-  rowsCount: z.number().int().describe('Total de linhas no arquivo'),
-  columnsCount: z.number().int().describe('Total de colunas no arquivo'),
-  format: z.enum(['xlsx', 'csv']).describe('Formato do arquivo'),
-})
+// Response é binário (Buffer) com metadata nos headers:
+//   Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet
+//   Content-Disposition: attachment; filename="unified-2026-04-11.xlsx"
+//   X-Tablix-Rows: 150
+//   X-Tablix-Columns: 5
+//   X-Tablix-File-Size: 12345
+//   X-Tablix-Format: xlsx
+//   X-Tablix-File-Name: unified-2026-04-11.xlsx
 
-export type ProcessSyncResponse = z.infer<typeof processSyncResponseSchema>
+// Schema pro Swagger (indica resposta binária)
+export const processSyncResponseSchema = z
+  .string()
+  .describe(
+    'Arquivo binário. Metadata nos headers X-Tablix-Rows, X-Tablix-Columns, X-Tablix-File-Size, X-Tablix-Format, X-Tablix-File-Name.',
+  )
+
+/** Metadata retornada pelo service junto com o buffer */
+export interface ProcessSyncResult {
+  buffer: Buffer
+  fileName: string
+  fileSize: number
+  rowsCount: number
+  columnsCount: number
+  format: string
+  mimeType: string
+}
 
 // ============================================
 // SHARED ERROR SCHEMAS

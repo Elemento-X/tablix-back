@@ -1,46 +1,283 @@
 import 'dotenv/config'
 import { z } from 'zod'
 
-const envSchema = z.object({
-  // Serverr
-  PORT: z.coerce.number().default(3333),
-  NODE_ENV: z
-    .enum(['development', 'production', 'test'])
-    .default('development'),
-  API_URL: z.string().url().optional(),
+const isProd = process.env.NODE_ENV === 'production'
 
-  // Database
-  DATABASE_URL: z.string().url(),
-  DIRECT_URL: z.string().url().optional(),
+const envSchema = z
+  .object({
+    // Server
+    PORT: z.coerce.number().default(3333),
+    NODE_ENV: z
+      .enum(['development', 'production', 'test'])
+      .default('development'),
+    API_URL: z.string().url().optional(),
 
-  // Redis (Upstash)
-  UPSTASH_REDIS_REST_URL: z.string().url().optional(),
-  UPSTASH_REDIS_REST_TOKEN: z.string().optional(),
+    // Database
+    DATABASE_URL: z.string().url(),
+    DIRECT_URL: z.string().url().optional(),
 
-  // Stripe
-  STRIPE_SECRET_KEY: z.string().optional(),
-  STRIPE_WEBHOOK_SECRET: z.string().optional(),
-  STRIPE_PRO_MONTHLY_PRICE_ID: z.string().optional(),
-  STRIPE_PRO_YEARLY_PRICE_ID: z.string().optional(),
+    // Redis (Upstash)
+    UPSTASH_REDIS_REST_URL: z.string().url().optional(),
+    UPSTASH_REDIS_REST_TOKEN: z.string().optional(),
 
-  // Email
-  EMAIL_PROVIDER: z.enum(['resend', 'sendgrid']).default('resend'),
-  RESEND_API_KEY: z.string().optional(),
-  FROM_EMAIL: z.string().default('Tablix <noreply@tablix.com.br>'),
+    // Stripe
+    STRIPE_SECRET_KEY: z.string().optional(),
+    STRIPE_WEBHOOK_SECRET: z.string().optional(),
 
-  // JWT
-  JWT_SECRET: z.string().min(32),
-  JWT_EXPIRES_IN: z.string().default('30d'),
+    // Price IDs por moeda (psychological pricing por mercado)
+    STRIPE_PRO_MONTHLY_BRL_PRICE_ID: z.string().optional(),
+    STRIPE_PRO_YEARLY_BRL_PRICE_ID: z.string().optional(),
+    STRIPE_PRO_MONTHLY_USD_PRICE_ID: z.string().optional(),
+    STRIPE_PRO_YEARLY_USD_PRICE_ID: z.string().optional(),
+    STRIPE_PRO_MONTHLY_EUR_PRICE_ID: z.string().optional(),
+    STRIPE_PRO_YEARLY_EUR_PRICE_ID: z.string().optional(),
 
-  // Frontend
-  FRONTEND_URL: z.string().url().default('http://localhost:3000'),
-})
+    // Email
+    EMAIL_PROVIDER: z.enum(['resend', 'sendgrid']).default('resend'),
+    RESEND_API_KEY: z.string().optional(),
+    FROM_EMAIL: z.string().default('Tablix <noreply@tablix.com.br>'),
+
+    // JWT
+    JWT_SECRET: z.string().min(32),
+    JWT_ACCESS_TOKEN_EXPIRES_IN: z.string().default('15m'),
+    JWT_REFRESH_TOKEN_EXPIRES_IN: z.string().default('30d'),
+
+    // Frontend
+    FRONTEND_URL: z.string().url().default('http://localhost:3000'),
+
+    // Health checks (Card 2.3) — timeouts e cache tunable sem rebuild
+    // Defaults seguros; override em prod via env var se Supabase/Upstash
+    // em região distante ou com cold start atípico.
+    HEALTH_TIMEOUT_DB_MS: z.coerce.number().int().positive().default(1000),
+    HEALTH_TIMEOUT_REDIS_MS: z.coerce.number().int().positive().default(500),
+    HEALTH_CACHE_TTL_MS: z.coerce.number().int().positive().default(2000),
+
+    // Logging (Card 2.1) — override opcional do nível default por NODE_ENV
+    LOG_LEVEL: z
+      .enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace'])
+      .optional(),
+
+    // Sentry (Card 2.2) — error tracking + performance
+    SENTRY_DSN: z
+      .string()
+      .url()
+      .regex(
+        /^https:\/\/[a-f0-9]+@[a-z0-9.-]+\.ingest\.(us|de)\.sentry\.io\/\d+$/,
+        'SENTRY_DSN deve seguir o formato padrão https://<key>@<host>.ingest.<region>.sentry.io/<project_id>',
+      )
+      .optional()
+      .or(z.literal('')),
+    SENTRY_ENVIRONMENT: z
+      .enum(['development', 'staging', 'production'])
+      .default('development'),
+    SENTRY_RELEASE: z.string().optional().or(z.literal('')),
+    // F2 (@security): sample rates sem default fixo. Defaults seguros por
+    // NODE_ENV são aplicados na superRefine abaixo (prod=0.1 traces / 0.05
+    // profiles, staging=0.5 / 0.1, dev=1.0 / 1.0). 100% em prod = denial-of-
+    // wallet + superfície amplificada de PII em profiling stacks.
+    SENTRY_TRACES_SAMPLE_RATE: z.coerce.number().min(0).max(1).optional(),
+    SENTRY_PROFILES_SAMPLE_RATE: z.coerce.number().min(0).max(1).optional(),
+    SENTRY_AUTH_TOKEN: z.string().optional().or(z.literal('')),
+    SENTRY_ORG: z.string().optional(),
+    SENTRY_PROJECT: z.string().optional(),
+
+    // Supabase Storage (Card 5.1 — Fase 5)
+    // Auth dedicada ao Storage (NÃO reusar service_role do Prisma DB).
+    // Decisão @planner D4 + @security hard-req #9: isolamento de uso reduz
+    // blast radius operacional + permite rotação independente.
+    //
+    // SUPABASE_URL: regex anchor previne SSRF via config drift (atacante
+    // interno troca pra https://attacker.com e adapter manda secret key
+    // pro host). Mesmo padrão de SENTRY_DSN. Suporta domínios `.supabase.co`
+    // (default) e `.supabase.in` (regiões alternativas).
+    SUPABASE_URL: z
+      .string()
+      .url()
+      .regex(
+        /^https:\/\/[a-z0-9-]+\.supabase\.(co|in)$/i,
+        'SUPABASE_URL deve seguir https://<project-ref>.supabase.(co|in)',
+      )
+      .optional(),
+    SUPABASE_STORAGE_KEY: z.string().optional(),
+    SUPABASE_STORAGE_BUCKET: z.string().optional(),
+  })
+  .superRefine((data, ctx) => {
+    // JWT_SECRET: rejeitar placeholders conhecidos
+    const jwtPlaceholders = [
+      'your-super-secret',
+      'change-in-production',
+      'CHANGE_ME',
+      'GENERATE_ME',
+      // Marcador de test-only usado em helpers (ex: tests/helpers/jwt-mock).
+      // Vazar esse valor pra prod = JWT forjável por qualquer um com acesso
+      // ao repo. Rejeita no boot independente de NODE_ENV.
+      'FAKE_TEST_KEY',
+    ]
+    if (jwtPlaceholders.some((p) => data.JWT_SECRET.includes(p))) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['JWT_SECRET'],
+        message:
+          "JWT_SECRET contém valor placeholder. Gere um secret real: node -e \"console.log(require('crypto').randomBytes(48).toString('base64url'))\"",
+      })
+    }
+
+    if (isProd) {
+      // Stripe obrigatório em produção
+      if (!data.STRIPE_SECRET_KEY) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['STRIPE_SECRET_KEY'],
+          message: 'STRIPE_SECRET_KEY é obrigatório em produção',
+        })
+      }
+      if (!data.STRIPE_WEBHOOK_SECRET) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['STRIPE_WEBHOOK_SECRET'],
+          message: 'STRIPE_WEBHOOK_SECRET é obrigatório em produção',
+        })
+      }
+
+      // Redis obrigatório em produção (rate limiting + concurrency guard)
+      if (!data.UPSTASH_REDIS_REST_URL) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['UPSTASH_REDIS_REST_URL'],
+          message:
+            'UPSTASH_REDIS_REST_URL é obrigatório em produção (rate limiting)',
+        })
+      }
+      if (!data.UPSTASH_REDIS_REST_TOKEN) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['UPSTASH_REDIS_REST_TOKEN'],
+          message:
+            'UPSTASH_REDIS_REST_TOKEN é obrigatório em produção (rate limiting)',
+        })
+      }
+
+      // Price IDs obrigatórios em produção (multi-currency)
+      const priceIdVars = [
+        'STRIPE_PRO_MONTHLY_BRL_PRICE_ID',
+        'STRIPE_PRO_YEARLY_BRL_PRICE_ID',
+        'STRIPE_PRO_MONTHLY_USD_PRICE_ID',
+        'STRIPE_PRO_YEARLY_USD_PRICE_ID',
+        'STRIPE_PRO_MONTHLY_EUR_PRICE_ID',
+        'STRIPE_PRO_YEARLY_EUR_PRICE_ID',
+      ] as const
+      for (const varName of priceIdVars) {
+        if (!data[varName]) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: [varName],
+            message: `${varName} é obrigatório em produção`,
+          })
+        }
+      }
+
+      // Email obrigatório em produção
+      if (!data.RESEND_API_KEY) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['RESEND_API_KEY'],
+          message: 'RESEND_API_KEY é obrigatório em produção',
+        })
+      }
+
+      // Sentry obrigatório em produção (error tracking + alerting)
+      if (!data.SENTRY_DSN) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['SENTRY_DSN'],
+          message:
+            'SENTRY_DSN é obrigatório em produção (error tracking + LGPD)',
+        })
+      }
+
+      // FRONTEND_URL deve ser HTTPS em produção (CORS seguro, sem localhost)
+      const frontendHostname = (() => {
+        try {
+          return new URL(data.FRONTEND_URL).hostname
+        } catch {
+          return ''
+        }
+      })()
+      if (
+        frontendHostname === 'localhost' ||
+        !data.FRONTEND_URL.startsWith('https://')
+      ) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['FRONTEND_URL'],
+          message:
+            'FRONTEND_URL deve ser HTTPS em produção (não pode ser localhost)',
+        })
+      }
+
+      // Supabase Storage obrigatório em produção (Card 5.1 — Fase 5)
+      if (!data.SUPABASE_URL) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['SUPABASE_URL'],
+          message: 'SUPABASE_URL é obrigatório em produção (Storage Card 5.1)',
+        })
+      }
+      if (!data.SUPABASE_STORAGE_KEY) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['SUPABASE_STORAGE_KEY'],
+          message:
+            'SUPABASE_STORAGE_KEY é obrigatório em produção (Storage Card 5.1)',
+        })
+      }
+      if (!data.SUPABASE_STORAGE_BUCKET) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['SUPABASE_STORAGE_BUCKET'],
+          message:
+            'SUPABASE_STORAGE_BUCKET é obrigatório em produção (Storage Card 5.1)',
+        })
+      }
+    }
+  })
 
 const _env = envSchema.safeParse(process.env)
 
 if (_env.success === false) {
-  console.error('Invalid environment variables!', _env.error.format())
+  // Card #72 (@security MÉDIO): nunca emitir `_env.error.format()` —
+  // inclui o VALOR recebido de cada campo. Se uma env var sensível
+  // (JWT_SECRET, STRIPE_SECRET_KEY, DATABASE_URL) falhar a validação
+  // com valor parcial preenchido, o stderr → log aggregator (CloudWatch,
+  // Datadog, Logtail) vaza o secret. Lista apenas path + mensagem.
+  const issues = _env.error.issues
+    .map((i) => `  - ${i.path.join('.') || '(root)'}: ${i.message}`)
+    .join('\n')
+  console.error(`Invalid environment variables:\n${issues}`)
   throw new Error('Invalid environment variables!')
 }
 
-export const env = _env.data
+// F2 (@security): aplica defaults prod-safe de sample rate por NODE_ENV.
+// Zod superRefine não pode mutar data; resolvemos pós-parse. Prod é
+// conservador (0.1 traces / 0.05 profiles) pra evitar denial-of-wallet e
+// reduzir superfície de PII em profiling stacks.
+function resolveSentryDefaults(nodeEnv: 'development' | 'production' | 'test') {
+  switch (nodeEnv) {
+    case 'production':
+      return { traces: 0.1, profiles: 0.05 }
+    case 'test':
+      return { traces: 0, profiles: 0 }
+    case 'development':
+      return { traces: 1.0, profiles: 1.0 }
+  }
+}
+
+const _sentryDefaults = resolveSentryDefaults(_env.data.NODE_ENV)
+
+export const env = {
+  ..._env.data,
+  SENTRY_TRACES_SAMPLE_RATE:
+    _env.data.SENTRY_TRACES_SAMPLE_RATE ?? _sentryDefaults.traces,
+  SENTRY_PROFILES_SAMPLE_RATE:
+    _env.data.SENTRY_PROFILES_SAMPLE_RATE ?? _sentryDefaults.profiles,
+}

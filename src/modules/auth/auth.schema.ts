@@ -2,7 +2,6 @@ import { z } from 'zod'
 import {
   errorResponseSchema,
   usageSchema,
-  limitsSchema,
   planSchema,
 } from '../../schemas/common.schema'
 
@@ -24,10 +23,12 @@ export const validateTokenBodySchema = z.object({
 })
 
 export const validateTokenResponseSchema = z.object({
-  jwt: z.string().describe('JWT de sessão para usar em requests autenticados'),
+  accessToken: z.string().describe('JWT de sessão (15min)'),
+  refreshToken: z.string().describe('Refresh token (30d)'),
   user: z.object({
+    id: z.string().uuid(),
     email: z.string().email(),
-    plan: planSchema,
+    role: planSchema,
     status: z.enum(['ACTIVE', 'CANCELLED', 'EXPIRED']),
   }),
 })
@@ -43,11 +44,12 @@ export const refreshBodySchema = z.object({
   refreshToken: z
     .string()
     .min(1, 'Refresh token é obrigatório')
-    .describe('JWT expirado para renovação'),
+    .describe('Refresh token para renovação'),
 })
 
 export const refreshResponseSchema = z.object({
-  jwt: z.string().describe('Novo JWT de sessão'),
+  accessToken: z.string().describe('Novo JWT de sessão (15min)'),
+  refreshToken: z.string().describe('Novo refresh token (30d)'),
 })
 
 export type RefreshBody = z.infer<typeof refreshBodySchema>
@@ -59,11 +61,10 @@ export type RefreshResponse = z.infer<typeof refreshResponseSchema>
 
 export const meResponseSchema = z.object({
   user: z.object({
+    id: z.string().uuid(),
     email: z.string().email(),
-    plan: planSchema,
-    status: z.enum(['ACTIVE', 'CANCELLED', 'EXPIRED']),
+    role: planSchema,
     usage: usageSchema,
-    limits: limitsSchema,
   }),
 })
 
@@ -80,13 +81,18 @@ export const logoutResponseSchema = z.object({
 export type LogoutResponse = z.infer<typeof logoutResponseSchema>
 
 // ============================================
+// POST /auth/logout-all
+// ============================================
+
+export const logoutAllResponseSchema = z.object({
+  success: z.literal(true),
+  sessionsRevoked: z.number().int().min(0),
+})
+
+export type LogoutAllResponse = z.infer<typeof logoutAllResponseSchema>
+
+// ============================================
 // SHARED ERROR SCHEMAS
 // ============================================
 
 export { errorResponseSchema }
-
-// Backwards compatibility
-export const validateTokenSchema = validateTokenBodySchema
-export const refreshTokenSchema = refreshBodySchema
-export type ValidateTokenInput = ValidateTokenBody
-export type RefreshTokenInput = RefreshBody
