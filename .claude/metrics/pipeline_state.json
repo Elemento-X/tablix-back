@@ -1,33 +1,33 @@
 {
   "schema_version": 1,
-  "updated_at": "2026-05-04T14:35:00Z",
+  "updated_at": "2026-05-17T22:10:00Z",
   "current": null,
   "last_completed": {
-    "card_id": "69f00e9a38044c23850bb3a4",
-    "card_short_link": "pVasIL6l",
-    "card_id_short": 150,
-    "card_title": "[CRITICO LGPD] audit_log_legal com retencao 5 anos (purge/consent/dsar)",
+    "card_id": "69f00e470bf383269a4b8242",
+    "card_short_link": "DtBkVtVY",
+    "card_id_short": 145,
+    "card_title": "5.2a - Schema FileHistory + 5 endpoints opt-in + infra scheduling/lock (FECHADO F1+F2+F3+F4+F5)",
     "phase": "Fase 5 — Storage",
     "decision": "APPROVED",
     "cycles": 2,
-    "done_at": "2026-04-29T20:30:00Z",
-    "commit": "b076002",
-    "lead_time_hours": 42.93,
-    "mttr_hours": 4.0,
-    "cost_usd": 2.1,
+    "done_at": "2026-05-17T22:00:00Z",
+    "commit": "ac12e14",
+    "lead_time_hours": 0.92,
+    "mttr_hours": 0.55,
+    "cost_usd": 5.1,
     "fast_path": false,
     "waivers_applied": [],
-    "cards_discovered": 3,
-    "notes": "Card #150 audit_log_legal LGPD 5y. 2 ciclos: ciclo 1 REPROVED_HARD@security (1 ALTO bloqueador F-HIGH-01 logger sem redact REDACT_PATHS) + APPROVED_WITH_CONDITIONS@tester (2 ALTOs F-ALTO-01/02) + APPROVED@dba; fix-pack atomico (commit b076002) cobriu 100% findings (REDACT logger + trigger append-only + raceCondition discriminator + Promise.all 5x test + RLS funcional + parity Zod-SQL + fast-check property-based + crypto.randomUUID + Sentry breadcrumb error level + dead code removido); ciclo 2 smart re-run: APPROVED unanime sem condicoes/waivers/escalation. 1275 unit + 29 integration + 11 db-smoke verdes. Coverage src/modules/audit-legal + audit-hash.ts: 100/100/100/100. 5 camadas defesa em profundidade (Zod+CHECK+RLS+trigger+REDACT). Cards descoberta #154/#155/#156 no Backlog. Push origin/feat/Maclean OK. Pre-requisito de #146 (5.2b cron purge) destravado."
+    "cards_discovered": 9,
+    "notes": "Card #145 (5.2a) F5 — observability + runbooks (FECHA o card, F1+F2+F3+F4+F5 done). 5 fases sequenciais entregues. F5: scheduler/metrics.ts + scheduler/observability.ts (emitSchedulerEvent + capContextSize cap 4KB) + 5 runbooks (cron-stuck/lock-stuck/purge-overshoot/history-rollback/signed-url-survives-delete) + scripts/compute-stepup.sh stub. 2 ciclos: ciclo 1 REPROVED_HARD convergente (@security 1 ALTO M3 audit signed URL missing; @devops 1 CRÍTICO + 4 ALTO runbooks com bugs objetivos — CONCURRENTLY dentro de BEGIN, upstash-cli inexistente, Sentry breadcrumbs não searchable, métricas process-scoped sem nota). Fix-pack atômico ~45min: M3 hashStoragePathForAudit SHA-256 + emit storage.signed_url.created, capContextSize circular guard, ALERTABLE_EVENTS expandido pra 9 (+cron.run.failure +cron.lock.redis_unavailable), throttle inflight 5min, enum dead removido em 3 lugares, runbooks corrigidos (SQL 2 passos, Upstash REST API, queries fly logs+admin/jobs/list, proibição DISABLE TRIGGER LGPD 5y). Ciclo 2 APPROVED unânime smart re-run (@tester+@security+@devops+@reviewer); 0 CRÍTICO/ALTO/MÉDIO bloqueante. 1464/1464 unit verdes. Coverage F5: 100/100/100/100. 9 cards discovery #169-#177 no Backlog. Commit ac12e14 (origin/feat/Maclean). Destrava #146 5.2b (cron purge) ‖ #147 5.2c (cron alerta) — paralelos."
   },
   "previously_completed": {
-    "card_id": "69d7a876658cb64e3a52c7fa",
-    "card_short_link": "lGlZpdE7",
-    "card_id_short": 36,
-    "card_title": "5.1 - Adapter de storage (Supabase Storage)",
+    "card_id": "69f00e9a38044c23850bb3a4",
+    "card_short_link": "pVasIL6l",
+    "card_id_short": 150,
+    "card_title": "[CRITICO LGPD] audit_log_legal com retencao 5 anos",
     "decision": "APPROVED",
-    "done_at": "2026-04-27T03:35:00Z",
-    "commit": "2ce90f2"
+    "done_at": "2026-04-29T20:30:00Z",
+    "commit": "b076002"
   },
   "phases": {
     "completed": [
@@ -71,19 +71,21 @@
       "started_at": "2026-04-26T23:30:00Z",
       "in_progress": [],
       "done": [
-        "5.1 (#36, lGlZpdE7) — Adapter Supabase Storage (APPROVED 2026-04-27, commit 2ce90f2)"
+        "5.1 (#36, lGlZpdE7) — Adapter Supabase Storage (APPROVED 2026-04-27, commit 2ce90f2)",
+        "#150 (pVasIL6l) — audit_log_legal LGPD 5y (APPROVED 2026-04-29, commit b076002)",
+        "5.2a (#145, DtBkVtVY) — FECHADO 2026-05-17 (F1+F2+F3+F4+F5, commit ac12e14)"
       ],
       "next": [
-        "5.2a (#145, DtBkVtVY) — Schema FileHistory + 5 endpoints opt-in + infra scheduling/lock — DECISÕES FECHADAS 2026-05-02, plano v2.2, próximo F1.1",
-        "5.2b (#146, FK94hRBQ) — Cron 03:00 retenção two-phase — bloqueado por 5.2a",
-        "5.2c (#147, s3NLF6bv) — Cron 08:00 alerta quota + Resend — bloqueado por 5.2a (paraleliza com 5.2b)"
+        "5.2b (#146, FK94hRBQ) — Cron 03:00 retenção two-phase — DESTRAVADO (depende 5.2a done)",
+        "5.2c (#147, s3NLF6bv) — Cron 08:00 alerta quota + Resend — DESTRAVADO (paraleliza com 5.2b)"
       ],
       "done_in_phase": [
         "5.1 (#36, lGlZpdE7) — Adapter Supabase Storage (commit 2ce90f2)",
-        "#150 (pVasIL6l) — audit_log_legal LGPD 5y (commit b076002, 2026-04-29)"
+        "#150 (pVasIL6l) — audit_log_legal LGPD 5y (commit b076002, 2026-04-29)",
+        "5.2a (#145, DtBkVtVY) — Schema+endpoints+infra+observability+runbooks (commit ac12e14, 2026-05-17)"
       ],
       "side_quests": [],
-      "rationale": "Card 5.1 + #150 entregues. Pré-requisito hard de #146 (audit_log_legal) destravado. Card #145 (5.2a) com plano v2.2 e 4 decisões fechadas em 2026-05-02. Próximo: iniciar F1.1 schema."
+      "rationale": "Card 5.2a FECHADO em 5 fases sequenciais (F1 schema, F2 env/contrato, F3 module, F4 scheduler+lock+admin, F5 observability+runbooks). Pipeline QA v2 2 ciclos (REPROVED_HARD@security+@devops → APPROVED unânime após fix-pack atômico). Destrava 5.2b ‖ 5.2c (paralelos). Próximo trabalho: escolher 5.2b OU 5.2c (ou começar ambos em sequência). 9 cards discovery #169-#177 no Backlog."
     },
     "phase_map": {
       "current": "Fase 5 — Storage",
@@ -108,9 +110,12 @@
     {
       "id": "WV-2026-004",
       "subject": "Multi-currency price arbitrage (F-HIGH-01) — Card 7.7 Fase 7",
-      "expires": "2026-05-15",
+      "expires": "2026-09-15",
+      "previous_expires": "2026-05-15",
+      "renewed_at": "2026-05-17",
+      "renewal_reason": "Card 7.7 ainda na Fase 7 (Infra & Deploy, não iniciada). Pré-requisito Cloudflare CF-IPCountry depende do fly.toml ser criado. Risco real = zero (single-user pré-go-live).",
       "follow_up_card": "ufMAjDlV (7.7)",
-      "follow_up_due": "2026-05-15"
+      "follow_up_due": "2026-09-15"
     },
     {
       "id": "WV-2026-005",
