@@ -22,9 +22,21 @@ describe('admin.routes — invariantes de contract', () => {
   it('cronHealthResponseSchema é exportado e estável', async () => {
     const { cronHealthResponseSchema } =
       await import('../../../src/scheduler/health')
-    // Schema básico pra contrato — bate com api-contract.md envelope { data }
+    // Schema básico pra contrato — bate com api-contract.md envelope { data }.
+    // F5 (Card #145) adicionou campo `metrics` (snapshot dos counters/gauges
+    // in-memory). Mudança aqui é breaking pra dashboard admin.
     const sample = {
-      data: { jobs: [], totalJobs: 0 },
+      data: {
+        jobs: [],
+        totalJobs: 0,
+        metrics: {
+          runsTotal: [],
+          lockContentionTotal: [],
+          lockExpiredTotal: [],
+          lastDurationMs: [],
+          retentionDaysCurrent: 30,
+        },
+      },
     }
     expect(cronHealthResponseSchema.safeParse(sample).success).toBe(true)
   })

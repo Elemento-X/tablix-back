@@ -32,6 +32,8 @@ import { randomUUID } from 'node:crypto'
 import { env } from '../config/env'
 import { logger } from '../lib/logger'
 import { acquireLock } from './lock'
+import { incLockContention, incRunsTotal, setLastDurationMs } from './metrics'
+import { emitSchedulerEvent } from './observability'
 import type {
   CronJobDefinition,
   JobRunMeta,
@@ -64,6 +66,17 @@ const HEARTBEAT_INTERVAL_MS = 60 * 1000
  * Logger emite alerta Sentry via observability layer (F5).
  */
 const INFLIGHT_RUNS_CAP = 100
+
+/**
+ * Throttle do alerta `cron.run.inflight_cap_exceeded` — F5 fix-pack
+ * @devops MÉDIO. Sem throttle, cron disparando a cada 5s com cap excedido
+ * gera 12+ captureMessages/min no Sentry (mesma issue mas N events).
+ * 5min de throttle preserva o sinal (primeiro alert é completo) e elimina
+ * o flood. Estado in-memory por process; restart zera (aceitável — pior
+ * caso é mais 1 alert pós-restart).
+ */
+const INFLIGHT_CAP_ALERT_THROTTLE_MS = 5 * 60 * 1000
+const lastInflightCapAlertByJob = new Map<string, number>()
 
 // ============================================
 // STATE (in-memory, scoped por process)
@@ -164,10 +177,13 @@ async function runJob(job: CronJobDefinition): Promise<JobRunMeta> {
       durationMs: 0,
     }
     recordRun(job.name, finalMeta)
-    logger.info(
-      { jobName: job.name, runId },
-      'cron.run.skipped.feature_disabled',
-    )
+    incRunsTotal(job.name, 'skipped')
+    emitSchedulerEvent({
+      level: 'info',
+      event: 'cron.run.skipped.feature_disabled',
+      jobName: job.name,
+      context: { runId },
+    })
     return finalMeta
   }
 
@@ -181,6 +197,8 @@ async function runJob(job: CronJobDefinition): Promise<JobRunMeta> {
       durationMs: 0,
     }
     recordRun(job.name, finalMeta)
+    // Sem emit (test env não polui Sentry — beforeSend já dropa, mas
+    // counter local também não tem valor analítico).
     return finalMeta
   }
 
@@ -195,10 +213,14 @@ async function runJob(job: CronJobDefinition): Promise<JobRunMeta> {
       durationMs: 0,
     }
     recordRun(job.name, finalMeta)
-    logger.info(
-      { jobName: job.name, runId },
-      'cron.run.skipped.lock_not_acquired',
-    )
+    incRunsTotal(job.name, 'skipped')
+    incLockContention(job.name)
+    emitSchedulerEvent({
+      level: 'info',
+      event: 'cron.run.skipped.lock_not_acquired',
+      jobName: job.name,
+      context: { runId },
+    })
     return finalMeta
   }
 
@@ -221,10 +243,15 @@ async function runJob(job: CronJobDefinition): Promise<JobRunMeta> {
           }
         }
       })().catch((err) => {
-        logger.error(
-          { jobName: handle.jobName, token: handle.token, err },
-          'cron.heartbeat.unexpected_error',
-        )
+        emitSchedulerEvent({
+          level: 'error',
+          event: 'cron.heartbeat.unexpected_error',
+          jobName: handle.jobName,
+          context: {
+            errCode: err instanceof Error ? err.name : 'unknown',
+            errMessage: sanitizeErrorMessage(err),
+          },
+        })
         lockLost = true
       })
     }, HEARTBEAT_INTERVAL_MS)
@@ -247,10 +274,14 @@ async function runJob(job: CronJobDefinition): Promise<JobRunMeta> {
         durationMs: Date.now() - startedAt.getTime(),
       }
       recordRun(job.name, finalMeta)
-      logger.warn(
-        { jobName: job.name, runId, token: lock.token },
-        'cron.run.expired',
-      )
+      incRunsTotal(job.name, 'expired')
+      // Token omitido do context (secret operacional — fencing UUID).
+      emitSchedulerEvent({
+        level: 'warning',
+        event: 'cron.run.expired',
+        jobName: job.name,
+        context: { runId, durationMs: finalMeta.durationMs },
+      })
       return finalMeta
     }
 
@@ -261,14 +292,16 @@ async function runJob(job: CronJobDefinition): Promise<JobRunMeta> {
       durationMs: Date.now() - startedAt.getTime(),
     }
     recordRun(job.name, finalMeta)
-    logger.info(
-      {
-        jobName: job.name,
-        runId,
-        durationMs: finalMeta.durationMs,
-      },
-      'cron.run.success',
-    )
+    incRunsTotal(job.name, 'success')
+    // Gauge atualiza APENAS em success — failure/expired têm duration
+    // truncada (handler abortou cedo), distorceria o gauge de saúde.
+    setLastDurationMs(job.name, finalMeta.durationMs ?? 0)
+    emitSchedulerEvent({
+      level: 'info',
+      event: 'cron.run.success',
+      jobName: job.name,
+      context: { runId, durationMs: finalMeta.durationMs },
+    })
     return finalMeta
   } catch (err) {
     const finalMeta: JobRunMeta = {
@@ -279,20 +312,23 @@ async function runJob(job: CronJobDefinition): Promise<JobRunMeta> {
       durationMs: Date.now() - startedAt.getTime(),
     }
     recordRun(job.name, finalMeta)
+    incRunsTotal(job.name, 'failure')
     // F4 fix-pack @security F-MED-03: NUNCA passar `err` cru pro logger.
     // err.message Postgres pode incluir valores de UNIQUE violations
     // (ex: "duplicate key ... value (email='vitima@x.com')"). REDACT_PATHS
     // do Card 2.2 cobre paths conhecidos, NÃO err.message arbitrário.
     // Pattern Card #150: log err.code/name + sanitized message only.
-    logger.error(
-      {
-        jobName: job.name,
+    emitSchedulerEvent({
+      level: 'error',
+      event: 'cron.run.failure',
+      jobName: job.name,
+      context: {
         runId,
         errCode: err instanceof Error ? err.name : 'unknown',
         errMessage: sanitizeErrorMessage(err),
+        durationMs: finalMeta.durationMs,
       },
-      'cron.run.failure',
-    )
+    })
     return finalMeta
   } finally {
     // (6) Cleanup — sempre: para heartbeat + libera lock
@@ -361,16 +397,26 @@ export function registerCronJob(definition: CronJobDefinition): void {
       // 100 é folga 10x sobre cenário esperado (5 jobs × ~20 runs concorrentes
       // em pior caso). Excedê-lo é bug — alerta + drop pra evitar OOM.
       if (inFlightRuns.size >= INFLIGHT_RUNS_CAP) {
-        logger.error(
-          {
+        // F5 fix-pack @devops MÉDIO: throttle 5min/job impede flood Sentry
+        // quando cap permanece estourado por minutos (cron disparando 12+
+        // vezes em 1min, todos hit no cap → 12+ captureMessages duplicados).
+        const now = Date.now()
+        const lastAlert = lastInflightCapAlertByJob.get(definition.name) ?? 0
+        if (now - lastAlert >= INFLIGHT_CAP_ALERT_THROTTLE_MS) {
+          lastInflightCapAlertByJob.set(definition.name, now)
+          emitSchedulerEvent({
+            level: 'error',
+            event: 'cron.run.inflight_cap_exceeded',
             jobName: definition.name,
-            inFlightSize: inFlightRuns.size,
-            cap: INFLIGHT_RUNS_CAP,
-          },
-          'cron.run.inflight_cap_exceeded',
-        )
+            context: {
+              inFlightSize: inFlightRuns.size,
+              cap: INFLIGHT_RUNS_CAP,
+            },
+          })
+        }
         // Não rejeita o run em curso (já pegou o lock); apenas para de
-        // acumular novos pra observability detectar. Sentry pega via logger.
+        // acumular novos pra observability detectar. Sentry alerta via
+        // captureMessage do emitSchedulerEvent (ALERTABLE_EVENTS).
       }
       inFlightRuns.add(wrappedPromise)
     },

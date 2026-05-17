@@ -18,6 +18,7 @@
 import { z } from 'zod'
 
 import { getSchedulerHealth } from './cron'
+import { getSchedulerMetrics } from './metrics'
 
 // ============================================
 // SCHEMAS (DTO público)
@@ -36,13 +37,13 @@ const jobRunSummarySchema = z.object({
   /** Duração em ms. `null` durante execução em curso. */
   durationMs: z.number().int().nonnegative().nullable(),
   /** Razão do skip (whitelist), `null` se status !== 'skipped'. */
+  // F5 fix-pack @security BAIXO: removido 'redis_unavailable' — dead enum
+  // value (lock.ts emite cron.lock.redis_unavailable como event, mas o
+  // runner sempre seta skipReason='lock_not_acquired' independente da
+  // causa). Se distinção for necessária no futuro, expor via campo
+  // separado, não via enum stretching.
   skipReason: z
-    .enum([
-      'feature_disabled',
-      'test_env',
-      'lock_not_acquired',
-      'redis_unavailable',
-    ])
+    .enum(['feature_disabled', 'test_env', 'lock_not_acquired'])
     .nullable(),
 })
 
@@ -55,11 +56,52 @@ export const jobHealthSchema = z.object({
   successRate: z.number().min(0).max(1),
 })
 
+// Métricas in-memory expostas no DTO admin (Card #145 F5 — T5.1).
+// Shapes ESPELHAM `SchedulerMetricsSnapshot` (metrics.ts) — mudança lá
+// é breaking aqui também.
+const runStatusEnum = z.enum(['success', 'failure', 'skipped', 'expired'])
+
+const metricsSchema = z.object({
+  /** Counter de runs por (jobName, status). Status whitelist. */
+  runsTotal: z.array(
+    z.object({
+      jobName: z.string().min(1).max(80),
+      status: runStatusEnum,
+      count: z.number().int().nonnegative(),
+    }),
+  ),
+  /** Counter de skips por `lock_not_acquired` por jobName. */
+  lockContentionTotal: z.array(
+    z.object({
+      jobName: z.string().min(1).max(80),
+      count: z.number().int().nonnegative(),
+    }),
+  ),
+  /** Counter de releases pós-TTL (R-8) por jobName. */
+  lockExpiredTotal: z.array(
+    z.object({
+      jobName: z.string().min(1).max(80),
+      count: z.number().int().nonnegative(),
+    }),
+  ),
+  /** Última duração com sucesso (ms) por jobName. */
+  lastDurationMs: z.array(
+    z.object({
+      jobName: z.string().min(1).max(80),
+      durationMs: z.number().int().nonnegative(),
+    }),
+  ),
+  /** Gauge fixo derivado de env.PRO_RETENTION_DAYS. */
+  retentionDaysCurrent: z.number().int().positive().max(365),
+})
+
 export const cronHealthResponseSchema = z.object({
   data: z.object({
     jobs: z.array(jobHealthSchema),
     /** Quantidade total de jobs registrados. */
     totalJobs: z.number().int().nonnegative(),
+    /** Snapshot in-memory de counters/gauges (F5 observability). */
+    metrics: metricsSchema,
   }),
 })
 
@@ -78,6 +120,7 @@ export type JobHealth = z.infer<typeof jobHealthSchema>
  */
 export function getCronHealthSnapshot(): CronHealthResponse {
   const internal = getSchedulerHealth()
+  const metrics = getSchedulerMetrics()
 
   return {
     data: {
@@ -100,6 +143,13 @@ export function getCronHealthSnapshot(): CronHealthResponse {
         successRate: j.successRate,
       })),
       totalJobs: internal.jobs.length,
+      metrics: {
+        runsTotal: metrics.runsTotal,
+        lockContentionTotal: metrics.lockContentionTotal,
+        lockExpiredTotal: metrics.lockExpiredTotal,
+        lastDurationMs: metrics.lastDurationMs,
+        retentionDaysCurrent: metrics.retentionDaysCurrent,
+      },
     },
   }
 }

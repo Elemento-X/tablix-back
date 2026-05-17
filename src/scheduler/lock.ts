@@ -29,6 +29,8 @@ import { randomUUID } from 'node:crypto'
 
 import { redis } from '../config/redis'
 import { logger } from '../lib/logger'
+import { incLockExpired } from './metrics'
+import { emitSchedulerEvent } from './observability'
 import type { LockHandle } from './types'
 
 // ============================================
@@ -120,7 +122,11 @@ export async function acquireLock(
   if (!redis) {
     // Fail-open quando Redis offline. Caller trata como skip.
     // Em prod isso é gap (card discovery #167 endereça health gate).
-    logger.warn({ jobName }, 'cron.lock.redis_unavailable.fail_open')
+    emitSchedulerEvent({
+      level: 'warning',
+      event: 'cron.lock.redis_unavailable',
+      jobName,
+    })
     return null
   }
 
@@ -132,24 +138,30 @@ export async function acquireLock(
   const result = await redis.set(key, token, { nx: true, px: ttlMs })
 
   if (result !== 'OK') {
-    // Outro worker detém o lock. Não loga warn — caso esperado em
+    // Outro worker detém o lock. Não emite warn — caso esperado em
     // multi-instance (single-machine só vê isso se cron disparar
-    // duas vezes seguidas antes da primeira terminar).
-    logger.debug({ jobName, key }, 'cron.lock.not_acquired')
+    // duas vezes seguidas antes da primeira terminar). Counter de
+    // contention é incrementado pelo runner (cron.ts) que tem o contexto
+    // do runId — aqui é só info.
+    emitSchedulerEvent({
+      level: 'info',
+      event: 'cron.lock.not_acquired',
+      jobName,
+      context: { key },
+    })
     return null
   }
 
   const acquiredAt = new Date()
 
-  logger.info(
-    {
-      jobName,
-      token,
-      ttlMs,
-      acquiredAt: acquiredAt.toISOString(),
-    },
-    'cron.lock.acquired',
-  )
+  // Token NÃO vai pro context — secret operacional (fencing UUID v4).
+  // Caller (cron.ts) tem acesso via LockHandle mas não emite em logs.
+  emitSchedulerEvent({
+    level: 'info',
+    event: 'cron.lock.acquired',
+    jobName,
+    context: { ttlMs, acquiredAt: acquiredAt.toISOString() },
+  })
 
   return {
     token,
@@ -182,16 +194,38 @@ export async function releaseLock(
     const result = await redis.eval(RELEASE_LOCK_SCRIPT, [key], [token])
 
     if (result === 1) {
-      logger.info({ jobName, token }, 'cron.lock.released')
+      // Token NÃO vai pro context — secret operacional.
+      emitSchedulerEvent({
+        level: 'info',
+        event: 'cron.lock.released',
+        jobName,
+      })
     } else {
       // R-8 do plano: GC longo > TTL lock. Sentry alerta dispara
-      // no observability layer; aqui só loga.
-      logger.warn({ jobName, token }, 'cron.lock.expired_without_release')
+      // via emitSchedulerEvent (ALERTABLE_EVENTS).
+      incLockExpired(jobName)
+      emitSchedulerEvent({
+        level: 'warning',
+        event: 'cron.lock.expired_without_release',
+        jobName,
+      })
     }
   } catch (err) {
     // Falha de Redis durante release. Lock vai expirar naturalmente
-    // pelo TTL — sem ação do caller. Log pra observability.
-    logger.error({ jobName, token, err }, 'cron.lock.release_failed')
+    // pelo TTL — sem ação do caller. err.code/name + sanitized only
+    // (pattern Card #150 — Postgres/Redis err.message pode vazar valor).
+    emitSchedulerEvent({
+      level: 'error',
+      event: 'cron.lock.release_failed',
+      jobName,
+      context: {
+        errCode: err instanceof Error ? err.name : 'unknown',
+        errMessage:
+          err instanceof Error
+            ? err.message.slice(0, 200).replace(/[\r\n\t]/g, ' ')
+            : 'unknown',
+      },
+    })
   }
 }
 
@@ -226,14 +260,32 @@ async function heartbeatLock(
     const renewed = result === 1
 
     if (!renewed) {
-      logger.warn({ jobName, token }, 'cron.lock.heartbeat_lost')
+      // Token NÃO vai pro context — secret operacional.
+      emitSchedulerEvent({
+        level: 'warning',
+        event: 'cron.lock.heartbeat_lost',
+        jobName,
+      })
     } else {
-      logger.debug({ jobName, token, ttlMs }, 'cron.lock.heartbeat_ok')
+      // heartbeat_ok é debug-noise no Sentry — log direto via logger.debug
+      // pra não inflar breadcrumbs (heartbeat dispara 1×/min por job).
+      logger.debug({ jobName, ttlMs }, 'cron.lock.heartbeat_ok')
     }
 
     return renewed
   } catch (err) {
-    logger.error({ jobName, token, err }, 'cron.lock.heartbeat_failed')
+    emitSchedulerEvent({
+      level: 'error',
+      event: 'cron.lock.heartbeat_failed',
+      jobName,
+      context: {
+        errCode: err instanceof Error ? err.name : 'unknown',
+        errMessage:
+          err instanceof Error
+            ? err.message.slice(0, 200).replace(/[\r\n\t]/g, ' ')
+            : 'unknown',
+      },
+    })
     return false
   }
 }

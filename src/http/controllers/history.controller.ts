@@ -22,6 +22,8 @@
  * @owner: @planner + @reviewer
  * @card: #145 (5.2a) F3
  */
+import { createHash } from 'node:crypto'
+
 import { FastifyRequest, FastifyReply } from 'fastify'
 
 import { Errors } from '../../errors/app-error'
@@ -66,6 +68,19 @@ import type {
  * Card #158 endereça revogação imediata. 60s minimiza janela de leak.
  */
 const SIGNED_URL_TTL_SECONDS = 60
+
+/**
+ * Hash SHA-256 do storage path para audit trail forense (M3 do runbook
+ * `signed-url-survives-delete.md`, Card #145 F5 fix-pack). NUNCA logar
+ * path cru — vaza estrutura interna (`history/{userId}/{jobId}.{ext}`)
+ * e pode incluir partes do userId/jobId (PII indireta).
+ *
+ * Hash determinístico permite correlacionar logs de signed URL emitidos
+ * com audit_log_legal (purge_pending) em investigação LGPD pós-incidente.
+ */
+function hashStoragePathForAudit(storagePath: string): string {
+  return createHash('sha256').update(storagePath).digest('hex')
+}
 
 /**
  * Idempotency-Key constraints (Card #74 pattern). Header obrigatório em
@@ -266,6 +281,20 @@ export async function getOneHistoryHandler(
     ext,
     expiresInSeconds: SIGNED_URL_TTL_SECONDS,
   })
+
+  // M3 (Card #145 F5 fix-pack — runbook signed-url-survives-delete.md):
+  // audit trail local de signed URLs emitidas. Documenta R-9 (janela de
+  // exposição pós-DELETE) com pathHash SHA-256 (NÃO path cru). Cruzar
+  // com audit_log_legal (purge_pending) em forense LGPD.
+  logger.info(
+    {
+      userId: request.user.userId,
+      pathHash: hashStoragePathForAudit(row.storagePath),
+      ttlSeconds: SIGNED_URL_TTL_SECONDS,
+      jobId,
+    },
+    'storage.signed_url.created',
+  )
 
   reply.header('Cache-Control', 'private, no-store')
   reply.header('Vary', 'Authorization')

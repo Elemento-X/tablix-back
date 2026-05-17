@@ -155,14 +155,13 @@ export interface JobRunMeta {
    * Razão do skip se `status === 'skipped'`. Whitelist:
    *  - `feature_disabled` — kill-switch off
    *  - `test_env` — NODE_ENV=test
-   *  - `lock_not_acquired` — outro worker detém
-   *  - `redis_unavailable` — fail-open quando Redis offline
+   *  - `lock_not_acquired` — outro worker detém OU Redis offline (fail-open).
+   *    A distinção fica em `event` do log scheduler (`cron.lock.redis_unavailable`
+   *    vs `cron.lock.not_acquired`), não em `skipReason` do JobRunMeta —
+   *    F5 fix-pack @security BAIXO removeu enum value `redis_unavailable`
+   *    (era dead — runner nunca o setava).
    */
-  skipReason?:
-    | 'feature_disabled'
-    | 'test_env'
-    | 'lock_not_acquired'
-    | 'redis_unavailable'
+  skipReason?: 'feature_disabled' | 'test_env' | 'lock_not_acquired'
 }
 
 /**

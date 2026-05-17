@@ -76,13 +76,10 @@ const jobRunResultSchema = z.object({
     finishedAt: z.string().datetime({ offset: true }).nullable(),
     durationMs: z.number().int().nonnegative().nullable(),
     error: z.string().max(200).nullable(),
+    // F5 fix-pack @security BAIXO: removido 'redis_unavailable' — espelha
+    // sanitização do enum em health.ts (dead enum value).
     skipReason: z
-      .enum([
-        'feature_disabled',
-        'test_env',
-        'lock_not_acquired',
-        'redis_unavailable',
-      ])
+      .enum(['feature_disabled', 'test_env', 'lock_not_acquired'])
       .nullable(),
   }),
 })

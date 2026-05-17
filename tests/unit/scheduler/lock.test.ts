@@ -16,6 +16,14 @@ vi.mock('../../../src/config/redis', () => ({
     get: vi.fn(),
   },
 }))
+// F5 fix-pack @tester MÉDIO: mockar observability + metrics permite asserts
+// de wire E evita ruído de log/Sentry real em CI.
+vi.mock('../../../src/scheduler/observability', () => ({
+  emitSchedulerEvent: vi.fn(),
+}))
+vi.mock('../../../src/scheduler/metrics', () => ({
+  incLockExpired: vi.fn(),
+}))
 
 import { redis } from '../../../src/config/redis'
 import {
@@ -23,6 +31,8 @@ import {
   releaseLock,
   __testing,
 } from '../../../src/scheduler/lock'
+import { incLockExpired } from '../../../src/scheduler/metrics'
+import { emitSchedulerEvent } from '../../../src/scheduler/observability'
 
 const validUuidV4 =
   /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
@@ -89,11 +99,20 @@ describe('lock — releaseLock (Lua CAS)', () => {
     )
   })
 
-  it('Lua retorna 0 (token errado / expirou) → não throw', async () => {
+  it('Lua retorna 0 (token errado / expirou) → não throw + incrementa lockExpired + emit warning', async () => {
     vi.mocked(redis!.eval).mockResolvedValue(0)
     await expect(
       releaseLock('history-purge', 'wrong-token'),
     ).resolves.toBeUndefined()
+    // F5 wire assertions
+    expect(incLockExpired).toHaveBeenCalledWith('history-purge')
+    expect(emitSchedulerEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        level: 'warning',
+        event: 'cron.lock.expired_without_release',
+        jobName: 'history-purge',
+      }),
+    )
   })
 
   it('Redis throws → não escala (catch + log)', async () => {

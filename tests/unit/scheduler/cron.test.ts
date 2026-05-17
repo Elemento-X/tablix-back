@@ -26,9 +26,26 @@ vi.mock('node-cron', () => ({
     schedule: vi.fn(() => ({ stop: vi.fn() })),
   },
 }))
+// F5 fix-pack @tester MÉDIO: mockar observability + metrics evita ruído
+// de log/Sentry real durante teste E permite asserts de wire (regressão
+// silenciosa se chamada ao counter for removida em refactor futuro).
+vi.mock('../../../src/scheduler/observability', () => ({
+  emitSchedulerEvent: vi.fn(),
+}))
+vi.mock('../../../src/scheduler/metrics', () => ({
+  incRunsTotal: vi.fn(),
+  incLockContention: vi.fn(),
+  setLastDurationMs: vi.fn(),
+}))
 
 import { acquireLock } from '../../../src/scheduler/lock'
 import { __testing } from '../../../src/scheduler/cron'
+import {
+  incLockContention,
+  incRunsTotal,
+  setLastDurationMs,
+} from '../../../src/scheduler/metrics'
+import { emitSchedulerEvent } from '../../../src/scheduler/observability'
 import type {
   CronJobDefinition,
   LockHandle,
@@ -66,26 +83,45 @@ beforeEach(() => {
 })
 
 describe('runJob — kill-switch + skipReasons', () => {
-  it('skip se enabled=false → status=skipped, reason=feature_disabled', async () => {
+  it('skip se enabled=false → status=skipped, reason=feature_disabled + metric+emit', async () => {
     const job = makeJob({ enabled: false })
     const meta = await runJob(job)
     expect(meta.status).toBe('skipped')
     expect(meta.skipReason).toBe('feature_disabled')
     expect(acquireLock).not.toHaveBeenCalled()
+    // F5 wire assertions
+    expect(incRunsTotal).toHaveBeenCalledWith('mock-job', 'skipped')
+    expect(emitSchedulerEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        level: 'info',
+        event: 'cron.run.skipped.feature_disabled',
+        jobName: 'mock-job',
+      }),
+    )
   })
 
-  it('skip se acquireLock retorna null → reason=lock_not_acquired', async () => {
+  it('skip se acquireLock retorna null → reason=lock_not_acquired + contention metric', async () => {
     vi.mocked(acquireLock).mockResolvedValue(null)
     const job = makeJob()
     const meta = await runJob(job)
     expect(meta.status).toBe('skipped')
     expect(meta.skipReason).toBe('lock_not_acquired')
     expect(job.handler).not.toHaveBeenCalled()
+    // F5 wire assertions
+    expect(incRunsTotal).toHaveBeenCalledWith('mock-job', 'skipped')
+    expect(incLockContention).toHaveBeenCalledWith('mock-job')
+    expect(emitSchedulerEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        level: 'info',
+        event: 'cron.run.skipped.lock_not_acquired',
+        jobName: 'mock-job',
+      }),
+    )
   })
 })
 
 describe('runJob — handler success path', () => {
-  it('chama handler com lock + status=success + release no finally', async () => {
+  it('chama handler com lock + status=success + release no finally + wire metrics', async () => {
     const lock = makeMockLock()
     vi.mocked(acquireLock).mockResolvedValue(lock)
     const job = makeJob()
@@ -95,6 +131,19 @@ describe('runJob — handler success path', () => {
     expect(meta.error).toBeUndefined()
     expect(meta.durationMs).toBeGreaterThanOrEqual(0)
     expect(lock.release).toHaveBeenCalled()
+    // F5 wire assertions
+    expect(incRunsTotal).toHaveBeenCalledWith('mock-job', 'success')
+    expect(setLastDurationMs).toHaveBeenCalledWith(
+      'mock-job',
+      expect.any(Number),
+    )
+    expect(emitSchedulerEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        level: 'info',
+        event: 'cron.run.success',
+        jobName: 'mock-job',
+      }),
+    )
   })
 
   it('runId é UUID v4', async () => {
@@ -107,7 +156,7 @@ describe('runJob — handler success path', () => {
 })
 
 describe('runJob — handler failure path', () => {
-  it('handler throws → status=failure + release ainda + error sanitizado', async () => {
+  it('handler throws → status=failure + release + wire failure metric/emit', async () => {
     const lock = makeMockLock()
     vi.mocked(acquireLock).mockResolvedValue(lock)
     const job = makeJob({
@@ -117,6 +166,17 @@ describe('runJob — handler failure path', () => {
     expect(meta.status).toBe('failure')
     expect(meta.error).toBe('boom')
     expect(lock.release).toHaveBeenCalled()
+    // F5 wire assertions
+    expect(incRunsTotal).toHaveBeenCalledWith('mock-job', 'failure')
+    // setLastDurationMs NÃO deve ser chamado em failure (gauge só em success)
+    expect(setLastDurationMs).not.toHaveBeenCalled()
+    expect(emitSchedulerEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        level: 'error',
+        event: 'cron.run.failure',
+        jobName: 'mock-job',
+      }),
+    )
   })
 
   it('release chamado mesmo se handler throws (finally garantia)', async () => {
