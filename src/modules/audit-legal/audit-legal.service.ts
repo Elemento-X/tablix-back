@@ -113,9 +113,38 @@ function prepareMetadata(
  * @throws ZodError em input invalido
  * @throws AppError(LEGAL_AUDIT_PERSIST_FAILED) em falha de DB nao-recuperavel
  */
+/**
+ * Card #146 F5 fix-pack (ciclo 1 — CRÍTICO @dba a5f3b2e9c1d4 + @security a7c3f1e2b58d):
+ * aceita `tx?: Prisma.TransactionClient` opcional. Quando caller está dentro
+ * de `prisma.$transaction`, DEVE passar `tx` pra garantir que o INSERT do audit
+ * acontece NA MESMA TRANSAÇÃO do caller — sem isso, o INSERT vai pra conexão
+ * separada e abre 3 modos de falha LGPD:
+ *
+ *   1. Audit órfão: `recordLegalEvent` commita (conexão B) → tx pai falha
+ *      (network blip, statement_timeout) → audit_log_legal diz "purga"
+ *      mas a row de origem NÃO foi soft-deletada. Inversão LGPD: prova
+ *      sem evento.
+ *   2. Pool exhaustion: tx pai mantém conexão; cada `recordLegalEvent`
+ *      pega outra conexão do pool. 500 rows × 2 conexões = pool exausto
+ *      em pgbouncer transaction mode (typically ≤15 conexões).
+ *   3. xmin horizon: tx pai longa segura snapshot; bloqueia autovacuum
+ *      em TODAS as tabelas do banco.
+ *
+ * Pattern: caller dentro de `$transaction(async (tx) => ...)` passa `tx`.
+ * Caller fora de tx (ex: handler HTTP, cron sem batch tx) omite — falls
+ * back pro `prisma` global (autocommit).
+ *
+ * @param tx opcional. Cliente de transação Prisma quando caller está dentro
+ *           de `prisma.$transaction`. Omitir = `prisma` global (autocommit).
+ */
 export async function recordLegalEvent(
   input: LegalEventInput,
+  tx?: Prisma.TransactionClient,
 ): Promise<AuditLogLegal> {
+  // SSOT do client: se tx fornecida, usa; senão prisma global.
+  // Atribuição AQUI evita drift entre create/findUnique de uma chamada.
+  const db = tx ?? prisma
+
   // (1) Validacao Zod
   const validated = legalEventInputSchema.parse(input)
 
@@ -173,7 +202,7 @@ export async function recordLegalEvent(
 
   // (4) INSERT
   try {
-    const created = await prisma.auditLogLegal.create({
+    const created = await db.auditLogLegal.create({
       data: {
         eventId: validated.eventId,
         eventType: validated.eventType,
@@ -198,7 +227,7 @@ export async function recordLegalEvent(
       err instanceof PrismaNs.PrismaClientKnownRequestError &&
       err.code === 'P2002'
     ) {
-      const existing = await prisma.auditLogLegal.findUnique({
+      const existing = await db.auditLogLegal.findUnique({
         where: { eventId: validated.eventId },
       })
       if (existing != null) {

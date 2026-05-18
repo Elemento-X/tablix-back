@@ -52,13 +52,15 @@ describe('bootstrapCronJobs — registra 3 jobs', () => {
     expect(registerCronJobMock).toHaveBeenCalledTimes(3)
   })
 
-  it('registra history-purge com schedule 06:00 UTC (= 03:00 BRT) + TTL 15min', () => {
+  it('registra history-purge com schedule 06:00 UTC (= 03:00 BRT) + TTL 30min', () => {
+    // Card #146 fix-pack ciclo 1 (@dba ALTO #4): TTL bumped 15min→30min
+    // pra cobrir worst-case 100k rows/dia (~17min estimado pelo plano §6 D-G).
     bootstrapCronJobs()
     const calls = registerCronJobMock.mock.calls.map((c) => c[0])
     const historyPurge = calls.find((c) => c.name === 'history-purge')
     expect(historyPurge).toBeDefined()
     expect(historyPurge.schedule).toBe('0 6 * * *')
-    expect(historyPurge.lockTtlMs).toBe(15 * 60 * 1000)
+    expect(historyPurge.lockTtlMs).toBe(30 * 60 * 1000)
     expect(historyPurge.idempotent).toBe(true)
   })
 

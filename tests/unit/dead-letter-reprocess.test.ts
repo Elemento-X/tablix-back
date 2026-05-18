@@ -98,10 +98,17 @@ describe('dead-letter-reprocess — constants', () => {
     expect(REPROCESS_LIMIT).toBe(3)
   })
 
-  it('sanitizeErrorMessage strip CR/LF/TAB e trunca 200', () => {
+  it('sanitizeErrorMessage strip CR/LF/TAB e trunca 100 + corta ":" (anti-Prisma leak)', () => {
+    // Card #146 fix-pack ciclo 1 (@security MÉDIO): hardening contra Prisma SQL leak.
     expect(sanitizeErrorMessage(new Error('a\nb\rc\td'))).toBe('a b c d')
-    expect(sanitizeErrorMessage(new Error('x'.repeat(500))).length).toBe(200)
+    expect(sanitizeErrorMessage(new Error('x'.repeat(500))).length).toBe(100)
     expect(sanitizeErrorMessage('non-Error')).toBe('unknown error')
+    // Prisma format: prefixo antes do ":" preservado, SQL com PII descartado
+    expect(
+      sanitizeErrorMessage(
+        new Error('Invalid prisma.user.update() invocation: id="leak-uuid"'),
+      ),
+    ).toBe('Invalid prisma.user.update() invocation')
   })
 })
 

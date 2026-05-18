@@ -42,12 +42,20 @@ export function bootstrapCronJobs(): void {
 
   // Job 1: history-purge (Card #146 F3)
   // Schedule: 03:00 BRT (UTC-3 = '0 6 * * *' UTC) — vale de tráfego.
+  // Card #146 fix-pack ciclo 1 (@dba ALTO #4): lockTtlMs bumped 15min→30min.
+  // Justificativa: plano §6 D-G estima ~5s/batch × 200 batches (100k rows/dia)
+  // = ~17min worst-case. 15min original era subdimensionado — heartbeat 60s
+  // renova durante execução, MAS se DB lento estourar statement_timeout 30s
+  // mid-batch, próximo heartbeat pode chegar tarde. 30min = 2x worst-case
+  // estimado (folga 2x sobre projeção 100k rows/dia). Operacional pré-go-live
+  // com volume baixo: TTL maior é seguro (sem rows pendentes = lock libera
+  // rápido naturalmente).
   registerCronJob({
     name: 'history-purge',
     schedule: '0 6 * * *', // 03:00 BRT daily
     enabled: historyEnabled,
     handler: purgeExpiredFiles,
-    lockTtlMs: 15 * 60 * 1000, // 15min TTL — heartbeat 60s renova
+    lockTtlMs: 30 * 60 * 1000, // 30min TTL — cobre worst-case 100k rows/dia
     idempotent: true, // two-phase + reconciliação são naturalmente idempotentes
   })
 

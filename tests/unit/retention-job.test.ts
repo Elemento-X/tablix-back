@@ -136,9 +136,23 @@ describe('sanitizeErrorMessage', () => {
     expect(sanitizeErrorMessage(err)).toBe('line1 line2 line3 end')
   })
 
-  it('trunca em 200 chars', () => {
+  it('trunca em 100 chars (Card #146 fix-pack ciclo 1 — anti-Prisma SQL leak)', () => {
     const err = new Error('a'.repeat(500))
-    expect(sanitizeErrorMessage(err).length).toBe(200)
+    expect(sanitizeErrorMessage(err).length).toBe(100)
+  })
+
+  it('corta no primeiro ":" (Prisma format: "Invalid prisma.X.Y() invocation: <SQL>")', () => {
+    const err = new Error(
+      'Invalid prisma.fileHistory.update() invocation: WHERE id="abc-uuid-PII"',
+    )
+    const sanitized = sanitizeErrorMessage(err)
+    expect(sanitized).toBe('Invalid prisma.fileHistory.update() invocation')
+    expect(sanitized).not.toContain('abc-uuid-PII')
+  })
+
+  it('errors sem ":" mantém msg inteira (truncada)', () => {
+    const err = new Error('Storage 5xx network timeout')
+    expect(sanitizeErrorMessage(err)).toBe('Storage 5xx network timeout')
   })
 
   it('non-Error retorna "unknown error"', () => {
@@ -274,6 +288,7 @@ describe('purgeExpiredFiles — storage 404 idempotência', () => {
         eventType: 'purge_completed',
         metadata: expect.objectContaining({ storageNotFound: true }),
       }),
+      expect.anything(), // tx — Card #146 fix-pack ciclo 1 (CRÍTICO @dba)
     )
     // NÃO incrementou purge_attempts
     expect(prismaMock.fileHistory.update).not.toHaveBeenCalled()
@@ -339,6 +354,7 @@ describe('purgeExpiredFiles — dead-letter move', () => {
         outcome: 'failure',
         errorCode: 'STORAGE_DELETE_THRESHOLD_REACHED',
       }),
+      expect.anything(), // tx — Card #146 fix-pack ciclo 1 (CRÍTICO @dba)
     )
     // Emit cron.purge.dead_letter ALERTABLE
     expect(emitMock).toHaveBeenCalledWith(
@@ -385,6 +401,152 @@ describe('purgeExpiredFiles — gauge overdue alert', () => {
       (c) => c[0]?.event === 'cron.purge.pending_overdue',
     )
     expect(overdueCalls).toHaveLength(0)
+  })
+})
+
+describe('purgeExpiredFiles — Fase C reconciliação (Card #146 fix-pack — @tester ALTO #3)', () => {
+  it('Fase A vazia + Fase C com batch → processStorageDeletes chamado pra cada row do reconcile', async () => {
+    const reconcileRow = makeRow({
+      id: 'reconcile-row-1',
+      purgeAttempts: 2, // < 5 = candidato reconcile
+    })
+
+    prismaMock.$queryRaw
+      .mockResolvedValueOnce([]) // Fase A vazia
+      .mockResolvedValueOnce([reconcileRow]) // Fase C 1 row
+      .mockResolvedValueOnce([]) // Fase C 2ª iteração vazia
+      .mockResolvedValueOnce([]) // Fase D vazia
+      .mockResolvedValueOnce([{ count: 0n }]) // gauge
+
+    adapterMock.removeByPath.mockResolvedValue({
+      deleted: true,
+      notFound: false,
+    })
+
+    await purgeExpiredFiles(makeLock())
+
+    expect(adapterMock.removeByPath).toHaveBeenCalledWith(
+      reconcileRow.storagePath,
+    )
+    // Hard-delete + audit purge_completed
+    expect(prismaMock.fileHistory.delete).toHaveBeenCalledWith({
+      where: { id: reconcileRow.id },
+    })
+    const completedCalls = recordLegalEventMock.mock.calls.filter(
+      (c) => c[0]?.eventType === 'purge_completed',
+    )
+    expect(completedCalls).toHaveLength(1)
+  })
+})
+
+describe('purgeExpiredFiles — catch global (Card #146 fix-pack — @tester ALTO #2)', () => {
+  it('erro inesperado em selectAndSoftDeleteBatch → captureException + recordRunEnd failure + re-throw', async () => {
+    const fatalErr = new Error('Postgres connection lost')
+    // Mock $transaction reject pra forçar entrar no catch global
+    prismaMock.$transaction.mockRejectedValueOnce(fatalErr)
+    // gauge query também não roda (handler throw antes)
+
+    await expect(purgeExpiredFiles(makeLock())).rejects.toThrow(
+      'Postgres connection lost',
+    )
+
+    // Sentry.captureException foi chamado com tags do job
+    expect(sentryMock.captureException).toHaveBeenCalledWith(
+      fatalErr,
+      expect.objectContaining({
+        tags: expect.objectContaining({
+          jobName: 'history-purge',
+        }),
+      }),
+    )
+
+    // cron_runs.update com status='failure' + errorCode + errorMessage
+    expect(prismaMock.cronRun.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          status: 'failure',
+          errorCode: 'Error',
+          errorMessage: expect.stringContaining('Postgres connection lost'),
+        }),
+      }),
+    )
+  })
+})
+
+describe('purgeExpiredFiles — double-failure (Card #146 fix-pack — @tester MÉDIO)', () => {
+  it('Storage throw + INCR purge_attempts throw → handler NÃO crashea, log error', async () => {
+    const row = makeRow({ purgeAttempts: 1 })
+    prismaMock.$queryRaw
+      .mockResolvedValueOnce([row])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([{ count: 0n }])
+
+    adapterMock.removeByPath.mockRejectedValue(new Error('Storage 5xx'))
+    // INCR purge_attempts também falha
+    prismaMock.fileHistory.update.mockRejectedValueOnce(
+      new Error('DB connection drop'),
+    )
+
+    // Handler NÃO deve crashear (cenário double-failure aceito como graceful)
+    await expect(purgeExpiredFiles(makeLock())).resolves.not.toThrow()
+
+    // cron_runs.update SUCESSO (handler chegou ao fim do happy path,
+    // double-failure foi absorvida internamente)
+    expect(prismaMock.cronRun.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          status: 'success',
+        }),
+      }),
+    )
+  })
+})
+
+describe('purgeExpiredFiles — moveToDeadLetter catch (Card #146 fix-pack — @tester MÉDIO)', () => {
+  it('Prisma P2002 UNIQUE violation absorvida + handler segue (não crashea)', async () => {
+    const row1 = makeRow({ id: 'dl-row-1', purgeAttempts: 7 })
+
+    // Sequência: Fase A vazia (tx 1, default), Fase C vazia, Fase D 1 row.
+    prismaMock.$queryRaw
+      .mockResolvedValueOnce([]) // Fase A SELECT (dentro de tx default)
+      .mockResolvedValueOnce([]) // Fase C SELECT
+      .mockResolvedValueOnce([row1]) // Fase D SELECT
+      .mockResolvedValueOnce([{ count: 0n }]) // gauge
+
+    // moveToDeadLetter abre $transaction pra essa row.
+    // Sequência das chamadas de $transaction:
+    //   1ª = Fase A (default callback → retorna [] cedo)
+    //   2ª = Fase D row1 → throw P2002 (catch interno absorve)
+    const p2002 = new Error(
+      'Unique constraint failed on field active_per_origin',
+    )
+    Object.assign(p2002, { code: 'P2002' })
+
+    // 1ª = default (já configurado no beforeEach)
+    // 2ª = throw
+    let transactionCallCount = 0
+    prismaMock.$transaction.mockImplementation(async (cb: unknown) => {
+      transactionCallCount++
+      if (transactionCallCount === 2) {
+        // Fase D — simula P2002
+        throw p2002
+      }
+      // Fase A / outros
+      if (typeof cb === 'function') return cb(prismaMock)
+      return cb
+    })
+
+    // Handler NÃO deve crashear — catch interno de moveToDeadLetter absorve
+    await expect(purgeExpiredFiles(makeLock())).resolves.not.toThrow()
+
+    // cron_runs.update SUCCESS (handler chegou ao fim apesar da row falhar)
+    expect(prismaMock.cronRun.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ status: 'success' }),
+      }),
+    )
   })
 })
 

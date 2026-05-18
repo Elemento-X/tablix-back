@@ -151,12 +151,28 @@ interface PurgeResult {
 // ============================================
 
 /**
- * Sanitiza err.message (max 200 chars, sem CR/LF/TAB). Pattern Card #150
- * + scheduler/cron.ts sanitizeErrorMessage.
+ * Sanitiza err.message (max 100 chars, sem CR/LF/TAB, sem fragmentos Prisma SQL).
+ * Pattern Card #150 + scheduler/cron.ts sanitizeErrorMessage.
+ *
+ * Card #146 fix-pack ciclo 1 (@security MÉDIO c5d1a8f7e93b + f4a8c2d6b91e):
+ * Prisma error messages tipo `Invalid prisma.fileHistory.update() invocation:
+ * <query SQL com WHERE id="abc-uuid">` vazam UUID parametrizado mesmo após
+ * cap 200 chars (cap original cortava DEPOIS do trecho com PII). Hardening:
+ *   1. Cap 100 (não 200) — força msg sintética curta no logger
+ *   2. Split em `:` e pegar só PREFIXO (`Invalid prisma.X.Y() invocation`)
+ *      antes do trecho com query — Prisma sempre tem `:` separador
+ *   3. Replace CR/LF/TAB (defesa contra log injection)
+ *
+ * Para errors NÃO-Prisma (Storage 5xx, network), o split em `:` mantém
+ * a mensagem inteira (sem `:` = pega 1ª parte = tudo). Aceitável: erros
+ * de rede tem msg curta e sem PII típica.
  */
 function sanitizeErrorMessage(err: unknown): string {
   if (err instanceof Error) {
-    return err.message.slice(0, 200).replace(/[\r\n\t]/g, ' ')
+    // Pega prefixo antes do primeiro `:` (Prisma usa `:` antes da query).
+    // Se não houver `:`, mantém a msg inteira (split[0] = msg cru).
+    const prefix = err.message.split(':')[0] ?? ''
+    return prefix.slice(0, 100).replace(/[\r\n\t]/g, ' ')
   }
   return 'unknown error'
 }
@@ -280,26 +296,34 @@ async function selectAndSoftDeleteBatch(): Promise<ExpiredFileRow[]> {
 
     // Audit purge_pending pra CADA row. AWAIT — falha aborta tx → rollback
     // automático Postgres → reentrância safe (Prisma rollback + sem soft-delete).
+    //
+    // Card #146 F5 fix-pack (ciclo 1 CRÍTICO @dba a5f3b2e9c1d4): passa `tx`
+    // pra recordLegalEvent SSOT na MESMA conexão da tx pai. Sem isso,
+    // audit INSERT ia pra conexão separada (audit órfão + pool exhaustion +
+    // xmin horizon).
     for (const row of rows) {
-      await recordLegalEvent({
-        eventId: randomUUID(),
-        eventType: LegalEventType.PURGE_PENDING,
-        userId: row.userId,
-        resourceType: 'file_history',
-        resourceId: row.id,
-        legalBasis: 'retention_expired',
-        actor: LegalActor.CRON_PURGE_WORKER,
-        outcome: LegalOutcome.SUCCESS,
-        expiresAtOriginal: row.expiresAt,
-        resourceHash: new Uint8Array(
-          hashResourceV1(row.userId, row.storagePath),
-        ),
-        metadata: {
-          pathHash: hashStoragePathForAudit(row.storagePath),
-          jobName: JOB_NAME,
-          phase: 'soft_delete',
+      await recordLegalEvent(
+        {
+          eventId: randomUUID(),
+          eventType: LegalEventType.PURGE_PENDING,
+          userId: row.userId,
+          resourceType: 'file_history',
+          resourceId: row.id,
+          legalBasis: 'retention_expired',
+          actor: LegalActor.CRON_PURGE_WORKER,
+          outcome: LegalOutcome.SUCCESS,
+          expiresAtOriginal: row.expiresAt,
+          resourceHash: new Uint8Array(
+            hashResourceV1(row.userId, row.storagePath),
+          ),
+          metadata: {
+            pathHash: hashStoragePathForAudit(row.storagePath),
+            jobName: JOB_NAME,
+            phase: 'soft_delete',
+          },
         },
-      })
+        tx,
+      )
     }
 
     // Soft-delete o batch inteiro num único UPDATE.
@@ -350,31 +374,39 @@ async function processStorageDeletes(
 
       // Sucesso (deletado OU 404 idempotente) → hard-delete + audit completed.
       // Wrap em tx pequena (só DB) pra atomicidade audit + delete.
+      // Card #146 fix-pack ciclo 1: recordLegalEvent recebe `tx` — mesma
+      // conexão da tx pai (D-1 LGPD atômico). Risco INVERTIDO se sem tx:
+      // DELETE commitaria sem audit purge_completed = row apagada sem prova
+      // LGPD (catástrofe forense).
       await prisma.$transaction(async (tx) => {
+        await tx.$executeRawUnsafe(`SET LOCAL lock_timeout = '${LOCK_TIMEOUT}'`)
         await tx.$executeRawUnsafe(
           `SET LOCAL statement_timeout = '${STATEMENT_TIMEOUT}'`,
         )
         await tx.fileHistory.delete({ where: { id: row.id } })
-        await recordLegalEvent({
-          eventId: randomUUID(),
-          eventType: LegalEventType.PURGE_COMPLETED,
-          userId: row.userId,
-          resourceType: 'file_history',
-          resourceId: row.id,
-          legalBasis: 'retention_expired',
-          actor: LegalActor.CRON_PURGE_WORKER,
-          outcome: LegalOutcome.SUCCESS,
-          expiresAtOriginal: row.expiresAt,
-          resourceHash: new Uint8Array(
-            hashResourceV1(row.userId, row.storagePath),
-          ),
-          metadata: {
-            pathHash: hashStoragePathForAudit(row.storagePath),
-            jobName: JOB_NAME,
-            phase: 'storage_deleted',
-            storageNotFound: result.notFound,
+        await recordLegalEvent(
+          {
+            eventId: randomUUID(),
+            eventType: LegalEventType.PURGE_COMPLETED,
+            userId: row.userId,
+            resourceType: 'file_history',
+            resourceId: row.id,
+            legalBasis: 'retention_expired',
+            actor: LegalActor.CRON_PURGE_WORKER,
+            outcome: LegalOutcome.SUCCESS,
+            expiresAtOriginal: row.expiresAt,
+            resourceHash: new Uint8Array(
+              hashResourceV1(row.userId, row.storagePath),
+            ),
+            metadata: {
+              pathHash: hashStoragePathForAudit(row.storagePath),
+              jobName: JOB_NAME,
+              phase: 'storage_deleted',
+              storageNotFound: result.notFound,
+            },
           },
-        })
+          tx,
+        )
       })
       hardDeleted++
     } catch (err) {
@@ -483,6 +515,9 @@ async function moveToDeadLetter(): Promise<number> {
   for (const row of rows) {
     try {
       await prisma.$transaction(async (tx) => {
+        // Card #146 fix-pack ciclo 1 (@dba MÉDIO): lock_timeout antes do
+        // statement_timeout pra consistência defensiva com selectAndSoftDeleteBatch.
+        await tx.$executeRawUnsafe(`SET LOCAL lock_timeout = '${LOCK_TIMEOUT}'`)
         await tx.$executeRawUnsafe(
           `SET LOCAL statement_timeout = '${STATEMENT_TIMEOUT}'`,
         )
@@ -508,28 +543,34 @@ async function moveToDeadLetter(): Promise<number> {
         // DELETE da origem.
         await tx.fileHistory.delete({ where: { id: row.id } })
 
-        // Audit purge_failed (5y LGPD).
-        await recordLegalEvent({
-          eventId: randomUUID(),
-          eventType: LegalEventType.PURGE_FAILED,
-          userId: row.userId,
-          resourceType: 'file_history',
-          resourceId: row.id,
-          legalBasis: 'retention_expired',
-          actor: LegalActor.CRON_PURGE_WORKER,
-          outcome: LegalOutcome.FAILURE,
-          errorCode: 'STORAGE_DELETE_THRESHOLD_REACHED',
-          expiresAtOriginal: row.expiresAt,
-          resourceHash: new Uint8Array(
-            hashResourceV1(row.userId, row.storagePath),
-          ),
-          metadata: {
-            pathHash: hashStoragePathForAudit(row.storagePath),
-            jobName: JOB_NAME,
-            phase: 'moved_to_dead_letter',
-            purgeAttempts: row.purgeAttempts,
+        // Audit purge_failed (5y LGPD). Card #146 fix-pack ciclo 1: passa `tx`
+        // pra recordLegalEvent — sem isso, audit INSERT vai pra conexão
+        // separada e DELETE da origem pode commitar sem audit purge_failed
+        // (catástrofe forense: row sumiu sem prova de tentativa).
+        await recordLegalEvent(
+          {
+            eventId: randomUUID(),
+            eventType: LegalEventType.PURGE_FAILED,
+            userId: row.userId,
+            resourceType: 'file_history',
+            resourceId: row.id,
+            legalBasis: 'retention_expired',
+            actor: LegalActor.CRON_PURGE_WORKER,
+            outcome: LegalOutcome.FAILURE,
+            errorCode: 'STORAGE_DELETE_THRESHOLD_REACHED',
+            expiresAtOriginal: row.expiresAt,
+            resourceHash: new Uint8Array(
+              hashResourceV1(row.userId, row.storagePath),
+            ),
+            metadata: {
+              pathHash: hashStoragePathForAudit(row.storagePath),
+              jobName: JOB_NAME,
+              phase: 'moved_to_dead_letter',
+              purgeAttempts: row.purgeAttempts,
+            },
           },
-        })
+          tx,
+        )
       })
       moved++
     } catch (err) {

@@ -39,6 +39,7 @@ import {
   healthVerboseResponseSchema,
   errorResponseSchema,
 } from '../../modules/health/health.schema'
+import { getSchedulerHealth } from '../../scheduler/cron'
 
 /**
  * Timestamp do boot do processo. Capturado uma vez no module load —
@@ -129,11 +130,24 @@ export async function healthRoutes(app: FastifyInstance) {
       const snapshot = await getReadinessSnapshot()
       reply.header('Cache-Control', 'no-store')
 
+      // Card #146 fix-pack ciclo 1 (@devops ALTO #1): scheduler watchdog
+      // in-memory pra dashboard. NÃO é alerta automático — é dado pra
+      // operador detectar cron silenciado (lastRunStartedAt antigo).
+      // Sentry Cron Monitoring é roadmap (Card #174 no Backlog).
+      const schedulerHealth = getSchedulerHealth()
       const httpStatus = snapshot.status === 'ok' ? 200 : 503
       return reply.status(httpStatus).send({
         data: {
           ...snapshot,
           uptimeSeconds: Math.floor((Date.now() - BOOT_AT) / 1000),
+          scheduler: {
+            jobsRegistered: schedulerHealth.jobs.length,
+            lastRuns: schedulerHealth.jobs.map((j) => ({
+              jobName: j.jobName,
+              lastRunStartedAt: j.lastRun?.startedAt.toISOString() ?? null,
+              lastRunStatus: j.lastRun?.status ?? null,
+            })),
+          },
         },
       })
     },

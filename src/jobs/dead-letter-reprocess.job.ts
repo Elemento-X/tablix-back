@@ -49,11 +49,16 @@ const BATCH_SIZE = 100
 const REPROCESS_LIMIT = 3
 
 /**
- * Sanitiza err.message (max 200 chars, sem CR/LF/TAB).
+ * Sanitiza err.message (max 100 chars, sem CR/LF/TAB, sem fragmentos Prisma SQL).
+ *
+ * Card #146 fix-pack ciclo 1 (@security MÉDIO): mesma defesa do
+ * retention.job.ts contra Prisma SQL leak (msg começa com query parametrizada
+ * após `:`).
  */
 function sanitizeErrorMessage(err: unknown): string {
   if (err instanceof Error) {
-    return err.message.slice(0, 200).replace(/[\r\n\t]/g, ' ')
+    const prefix = err.message.split(':')[0] ?? ''
+    return prefix.slice(0, 100).replace(/[\r\n\t]/g, ' ')
   }
   return 'unknown error'
 }

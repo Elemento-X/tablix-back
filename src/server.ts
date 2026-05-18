@@ -5,6 +5,7 @@
 // primeiro. Padrão oficial do Sentry v10 para Node.
 import './instrument'
 import { buildApp } from './app'
+import { captureException } from './config/sentry'
 import { env } from './config/env'
 import { setShutdownRequested } from './lib/health'
 import { shutdownScheduler } from './scheduler/cron'
@@ -17,7 +18,24 @@ async function start() {
   // dead-letter-reprocess) ANTES de app.listen. Em NODE_ENV=test,
   // registerCronJob é no-op (R-5 do plano #145 F4 — cron NÃO dispara em
   // test runs).
-  bootstrapCronJobs()
+  //
+  // Card #146 fix-pack ciclo 1 (@devops MÉDIO + @security MÉDIO): wrap em
+  // try/catch DEGRADED MODE. Exception em bootstrap (env corrompido,
+  // import quebrado por refactor futuro) NÃO deve crashar app inteiro —
+  // crons offline é degradação aceitável (LGPD purge acumula mas
+  // gauge/Sentry alertam); app HTTP offline é catástrofe (auth, billing,
+  // signed URLs param). Alerta Sentry CRITICAL pra forçar investigação.
+  try {
+    bootstrapCronJobs()
+  } catch (err) {
+    app.log.error(
+      { err: err instanceof Error ? err.message : String(err) },
+      'scheduler.bootstrap.failed.degraded_mode',
+    )
+    captureException(err, { route: '/scheduler/bootstrap' })
+    // NÃO process.exit — app HTTP segue. Operador investiga via Sentry +
+    // GET /admin/jobs/list (lista vazia confirma cron offline).
+  }
 
   // Graceful shutdown — Card 2.3 + Card #145 F4 fix-pack @devops:
   // ordem corrigida pra padrão Kubernetes/Fly.io.

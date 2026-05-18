@@ -112,6 +112,20 @@ const ALERTABLE_EVENTS: ReadonlySet<SchedulerEventName> = new Set([
 ])
 
 /**
+ * Eventos ALERTABLE APENAS em NODE_ENV=production. Usados pra sinais que
+ * em dev/test são intencionais (dry-run, debug) mas em prod indicam modo
+ * degradado que merece atenção operacional.
+ *
+ * Card #146 fix-pack ciclo 1 (@devops MÉDIO): dry_run.start em prod =
+ * cron LGPD silencioso. Combinado com warning STDERR de env.ts no boot,
+ * dispara 2 sinais distintos (Sentry issue + log warning) pra evitar
+ * "dry-run esquecido em prod" R-8 do plano.
+ */
+const ALERTABLE_IN_PROD_ONLY: ReadonlySet<SchedulerEventName> = new Set([
+  'cron.purge.dry_run.start',
+])
+
+/**
  * Tamanho máximo do `context` serializado em bytes. Defesa em profundidade
  * contra caller futuro que passe payload gigante (batch result, Buffer,
  * objeto circular indireto). REDACT_PATHS do logger + scrubObject do
@@ -167,7 +181,13 @@ export function emitSchedulerEvent(args: EmitArgs): void {
 
   // (3) Sentry captureMessage — apenas eventos alertáveis. Tags
   // estruturadas pra search query no dashboard.
-  if (ALERTABLE_EVENTS.has(event)) {
+  // Card #146 fix-pack ciclo 1: ALERTABLE_IN_PROD_ONLY cobre eventos
+  // intencionais em dev/test (dry_run.start) mas degradados em prod —
+  // dispara Sentry issue só em NODE_ENV=production.
+  const isAlertable =
+    ALERTABLE_EVENTS.has(event) ||
+    (process.env.NODE_ENV === 'production' && ALERTABLE_IN_PROD_ONLY.has(event))
+  if (isAlertable) {
     Sentry.captureMessage(event, {
       level: level === 'warning' ? 'warning' : 'error',
       tags: {
@@ -221,6 +241,7 @@ function capContextSize(
  */
 export const __testing = {
   ALERTABLE_EVENTS,
+  ALERTABLE_IN_PROD_ONLY,
   CONTEXT_MAX_BYTES,
   capContextSize,
 }

@@ -412,6 +412,21 @@ function resolveSentryDefaults(nodeEnv: 'development' | 'production' | 'test') {
 
 const _sentryDefaults = resolveSentryDefaults(_env.data.NODE_ENV)
 
+// Card #146 fix-pack ciclo 1 (@devops MÉDIO): warning não-fatal no boot
+// quando NODE_ENV=production && CRON_DRY_RUN=true. NÃO fail (dry-run em
+// prod pode ser intencional pra validar primeira execução), mas STDERR
+// dispara alerta visual nos logs do Fly.io. Combinado com emit ALERTABLE
+// de cron.purge.dry_run.start em prod (src/scheduler/observability.ts),
+// dry-run "esquecido" gera 2 sinais distintos.
+if (_env.data.NODE_ENV === 'production' && _env.data.CRON_DRY_RUN) {
+  console.warn(
+    '[WARNING] CRON_DRY_RUN=true em NODE_ENV=production. ' +
+      'O cron de purga LGPD vai LOGAR mas NÃO PURGAR. ' +
+      'Confirme intencionalidade via runbook docs/runbooks/purge-overshoot.md. ' +
+      'Card #146 fix-pack ciclo 1 (@devops).',
+  )
+}
+
 export const env = {
   ..._env.data,
   SENTRY_TRACES_SAMPLE_RATE:
