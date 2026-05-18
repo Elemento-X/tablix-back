@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-05-03T16:31:44.315Z",
+  "generatedAt": "2026-05-18T23:19:53.489Z",
   "database": "container:postgres-17-alpine",
-  "fingerprint": "4ab240b889a4979a039f88c02aea261ef1174ab7e9cfbf046dba66a42c36110d",
+  "fingerprint": "10a65c7e221428856fd285bb8550cf2f6f4ead5902ccc525b741d8410ac488ec",
   "model": {
     "extensions": [
       "pgcrypto"
@@ -195,6 +195,84 @@
         ]
       },
       {
+        "name": "cron_runs",
+        "columns": [
+          {
+            "name": "id",
+            "type": "uuid",
+            "nullable": false,
+            "default": "gen_random_uuid()"
+          },
+          {
+            "name": "job_name",
+            "type": "character varying(64)",
+            "nullable": false,
+            "default": null
+          },
+          {
+            "name": "started_at",
+            "type": "timestamp with time zone(6)",
+            "nullable": false,
+            "default": null
+          },
+          {
+            "name": "finished_at",
+            "type": "timestamp with time zone(6)",
+            "nullable": true,
+            "default": null
+          },
+          {
+            "name": "status",
+            "type": "character varying(16)",
+            "nullable": false,
+            "default": null
+          },
+          {
+            "name": "skip_reason",
+            "type": "character varying(32)",
+            "nullable": true,
+            "default": null
+          },
+          {
+            "name": "duration_ms",
+            "type": "integer",
+            "nullable": true,
+            "default": null
+          },
+          {
+            "name": "rows_processed",
+            "type": "integer",
+            "nullable": true,
+            "default": null
+          },
+          {
+            "name": "attempts",
+            "type": "smallint",
+            "nullable": false,
+            "default": "1"
+          },
+          {
+            "name": "error_code",
+            "type": "character varying(80)",
+            "nullable": true,
+            "default": null
+          },
+          {
+            "name": "error_message",
+            "type": "character varying(500)",
+            "nullable": true,
+            "default": null
+          },
+          {
+            "name": "created_at",
+            "type": "timestamp with time zone(6)",
+            "nullable": false,
+            "default": "CURRENT_TIMESTAMP"
+          }
+        ],
+        "reloptions": []
+      },
+      {
         "name": "file_history",
         "columns": [
           {
@@ -261,6 +339,132 @@
         "reloptions": []
       },
       {
+        "name": "file_history_dead_letter",
+        "columns": [
+          {
+            "name": "id",
+            "type": "uuid",
+            "nullable": false,
+            "default": "gen_random_uuid()"
+          },
+          {
+            "name": "original_file_history_id",
+            "type": "uuid",
+            "nullable": false,
+            "default": null
+          },
+          {
+            "name": "user_id",
+            "type": "uuid",
+            "nullable": false,
+            "default": null
+          },
+          {
+            "name": "storage_path",
+            "type": "character varying(255)",
+            "nullable": false,
+            "default": null
+          },
+          {
+            "name": "original_filename",
+            "type": "character varying(255)",
+            "nullable": false,
+            "default": null
+          },
+          {
+            "name": "mime_type",
+            "type": "character varying(127)",
+            "nullable": false,
+            "default": null
+          },
+          {
+            "name": "file_size",
+            "type": "integer",
+            "nullable": false,
+            "default": null
+          },
+          {
+            "name": "expires_at",
+            "type": "timestamp with time zone(6)",
+            "nullable": false,
+            "default": null
+          },
+          {
+            "name": "deleted_at",
+            "type": "timestamp with time zone(6)",
+            "nullable": false,
+            "default": null
+          },
+          {
+            "name": "purge_attempts",
+            "type": "integer",
+            "nullable": false,
+            "default": null
+          },
+          {
+            "name": "last_error_code",
+            "type": "character varying(80)",
+            "nullable": false,
+            "default": null
+          },
+          {
+            "name": "last_error_message",
+            "type": "character varying(500)",
+            "nullable": true,
+            "default": null
+          },
+          {
+            "name": "moved_to_dead_letter_at",
+            "type": "timestamp with time zone(6)",
+            "nullable": false,
+            "default": "CURRENT_TIMESTAMP"
+          },
+          {
+            "name": "reprocess_count",
+            "type": "smallint",
+            "nullable": false,
+            "default": "0"
+          },
+          {
+            "name": "last_reprocess_attempt_at",
+            "type": "timestamp with time zone(6)",
+            "nullable": true,
+            "default": null
+          },
+          {
+            "name": "last_reprocess_error_code",
+            "type": "character varying(80)",
+            "nullable": true,
+            "default": null
+          },
+          {
+            "name": "last_reprocess_error_message",
+            "type": "character varying(500)",
+            "nullable": true,
+            "default": null
+          },
+          {
+            "name": "resolved_at",
+            "type": "timestamp with time zone(6)",
+            "nullable": true,
+            "default": null
+          },
+          {
+            "name": "resolution_type",
+            "type": "character varying(32)",
+            "nullable": true,
+            "default": null
+          },
+          {
+            "name": "created_at",
+            "type": "timestamp with time zone(6)",
+            "nullable": false,
+            "default": "CURRENT_TIMESTAMP"
+          }
+        ],
+        "reloptions": []
+      },
+      {
         "name": "jobs",
         "columns": [
           {
@@ -316,6 +520,42 @@
             "type": "timestamp with time zone(3)",
             "nullable": true,
             "default": null
+          }
+        ],
+        "reloptions": []
+      },
+      {
+        "name": "quota_alerts_sent",
+        "columns": [
+          {
+            "name": "id",
+            "type": "uuid",
+            "nullable": false,
+            "default": "gen_random_uuid()"
+          },
+          {
+            "name": "user_id",
+            "type": "uuid",
+            "nullable": false,
+            "default": null
+          },
+          {
+            "name": "threshold",
+            "type": "integer",
+            "nullable": false,
+            "default": null
+          },
+          {
+            "name": "period",
+            "type": "character varying(7)",
+            "nullable": false,
+            "default": null
+          },
+          {
+            "name": "sent_at",
+            "type": "timestamp with time zone(6)",
+            "nullable": false,
+            "default": "now()"
           }
         ],
         "reloptions": []
@@ -630,6 +870,31 @@
         "definition": "CREATE INDEX idx_audit_log_legal_user_ts ON public.audit_log_legal USING btree (user_id, \"timestamp\" DESC)"
       },
       {
+        "table": "cron_runs",
+        "name": "cron_runs_pkey",
+        "definition": "CREATE UNIQUE INDEX cron_runs_pkey ON public.cron_runs USING btree (id)"
+      },
+      {
+        "table": "cron_runs",
+        "name": "idx_cron_runs_created_at",
+        "definition": "CREATE INDEX idx_cron_runs_created_at ON public.cron_runs USING btree (created_at)"
+      },
+      {
+        "table": "cron_runs",
+        "name": "idx_cron_runs_failures",
+        "definition": "CREATE INDEX idx_cron_runs_failures ON public.cron_runs USING btree (started_at DESC) WHERE ((status)::text = ANY ((ARRAY['failure'::character varying, 'expired'::character varying])::text[]))"
+      },
+      {
+        "table": "cron_runs",
+        "name": "idx_cron_runs_job_started_desc",
+        "definition": "CREATE INDEX idx_cron_runs_job_started_desc ON public.cron_runs USING btree (job_name, started_at DESC)"
+      },
+      {
+        "table": "cron_runs",
+        "name": "idx_cron_runs_running",
+        "definition": "CREATE INDEX idx_cron_runs_running ON public.cron_runs USING btree (started_at) WHERE ((status)::text = 'running'::text)"
+      },
+      {
         "table": "file_history",
         "name": "file_history_pkey",
         "definition": "CREATE UNIQUE INDEX file_history_pkey ON public.file_history USING btree (id)"
@@ -655,6 +920,31 @@
         "definition": "CREATE INDEX idx_filehistory_user_created ON public.file_history USING btree (user_id, created_at DESC)"
       },
       {
+        "table": "file_history_dead_letter",
+        "name": "file_history_dead_letter_pkey",
+        "definition": "CREATE UNIQUE INDEX file_history_dead_letter_pkey ON public.file_history_dead_letter USING btree (id)"
+      },
+      {
+        "table": "file_history_dead_letter",
+        "name": "idx_fhdl_human_required",
+        "definition": "CREATE INDEX idx_fhdl_human_required ON public.file_history_dead_letter USING btree (moved_to_dead_letter_at DESC) WHERE ((resolved_at IS NULL) AND (reprocess_count >= 3))"
+      },
+      {
+        "table": "file_history_dead_letter",
+        "name": "idx_fhdl_reprocess_candidates",
+        "definition": "CREATE INDEX idx_fhdl_reprocess_candidates ON public.file_history_dead_letter USING btree (moved_to_dead_letter_at) WHERE ((resolved_at IS NULL) AND (reprocess_count < 3))"
+      },
+      {
+        "table": "file_history_dead_letter",
+        "name": "idx_fhdl_user_moved",
+        "definition": "CREATE INDEX idx_fhdl_user_moved ON public.file_history_dead_letter USING btree (user_id, moved_to_dead_letter_at DESC)"
+      },
+      {
+        "table": "file_history_dead_letter",
+        "name": "uq_fhdl_active_per_origin",
+        "definition": "CREATE UNIQUE INDEX uq_fhdl_active_per_origin ON public.file_history_dead_letter USING btree (original_file_history_id) WHERE (resolved_at IS NULL)"
+      },
+      {
         "table": "jobs",
         "name": "idx_jobs_status",
         "definition": "CREATE INDEX idx_jobs_status ON public.jobs USING btree (status)"
@@ -668,6 +958,16 @@
         "table": "jobs",
         "name": "jobs_pkey",
         "definition": "CREATE UNIQUE INDEX jobs_pkey ON public.jobs USING btree (id)"
+      },
+      {
+        "table": "quota_alerts_sent",
+        "name": "quota_alerts_sent_pkey",
+        "definition": "CREATE UNIQUE INDEX quota_alerts_sent_pkey ON public.quota_alerts_sent USING btree (id)"
+      },
+      {
+        "table": "quota_alerts_sent",
+        "name": "quota_alerts_unique_user_threshold_period",
+        "definition": "CREATE UNIQUE INDEX quota_alerts_unique_user_threshold_period ON public.quota_alerts_sent USING btree (user_id, threshold, period)"
       },
       {
         "table": "sessions",
@@ -817,6 +1117,72 @@
         "definition": "CHECK (((resource_hash IS NULL) OR (octet_length(resource_hash) = 32)))"
       },
       {
+        "table": "cron_runs",
+        "name": "cron_runs_attempts_check",
+        "type": "c",
+        "definition": "CHECK (((attempts >= 1) AND (attempts <= 10)))"
+      },
+      {
+        "table": "cron_runs",
+        "name": "cron_runs_duration_positive_check",
+        "type": "c",
+        "definition": "CHECK (((duration_ms IS NULL) OR (duration_ms >= 0)))"
+      },
+      {
+        "table": "cron_runs",
+        "name": "cron_runs_error_consistency",
+        "type": "c",
+        "definition": "CHECK ((((status)::text = ANY ((ARRAY['failure'::character varying, 'expired'::character varying])::text[])) OR ((error_code IS NULL) AND (error_message IS NULL))))"
+      },
+      {
+        "table": "cron_runs",
+        "name": "cron_runs_finished_after_started",
+        "type": "c",
+        "definition": "CHECK (((finished_at IS NULL) OR (finished_at >= started_at)))"
+      },
+      {
+        "table": "cron_runs",
+        "name": "cron_runs_job_name_format_check",
+        "type": "c",
+        "definition": "CHECK (((job_name)::text ~ '^[a-z][a-z0-9-]{2,63}$'::text))"
+      },
+      {
+        "table": "cron_runs",
+        "name": "cron_runs_pkey",
+        "type": "p",
+        "definition": "PRIMARY KEY (id)"
+      },
+      {
+        "table": "cron_runs",
+        "name": "cron_runs_rows_processed_nonneg",
+        "type": "c",
+        "definition": "CHECK (((rows_processed IS NULL) OR (rows_processed >= 0)))"
+      },
+      {
+        "table": "cron_runs",
+        "name": "cron_runs_skip_reason_check",
+        "type": "c",
+        "definition": "CHECK (((skip_reason IS NULL) OR ((skip_reason)::text = ANY ((ARRAY['feature_disabled'::character varying, 'test_env'::character varying, 'lock_not_acquired'::character varying])::text[]))))"
+      },
+      {
+        "table": "cron_runs",
+        "name": "cron_runs_skip_reason_consistency",
+        "type": "c",
+        "definition": "CHECK (((((status)::text = 'skipped'::text) AND (skip_reason IS NOT NULL)) OR (((status)::text <> 'skipped'::text) AND (skip_reason IS NULL))))"
+      },
+      {
+        "table": "cron_runs",
+        "name": "cron_runs_status_check",
+        "type": "c",
+        "definition": "CHECK (((status)::text = ANY ((ARRAY['running'::character varying, 'success'::character varying, 'failure'::character varying, 'skipped'::character varying, 'expired'::character varying])::text[])))"
+      },
+      {
+        "table": "cron_runs",
+        "name": "cron_runs_terminal_finished_check",
+        "type": "c",
+        "definition": "CHECK (((((status)::text = 'running'::text) AND (finished_at IS NULL)) OR (((status)::text = ANY ((ARRAY['success'::character varying, 'failure'::character varying, 'skipped'::character varying, 'expired'::character varying])::text[])) AND (finished_at IS NOT NULL))))"
+      },
+      {
         "table": "file_history",
         "name": "file_history_expires_at_after_created_check",
         "type": "c",
@@ -871,6 +1237,72 @@
         "definition": "FOREIGN KEY (user_id) REFERENCES users(id) ON UPDATE CASCADE ON DELETE CASCADE"
       },
       {
+        "table": "file_history_dead_letter",
+        "name": "fhdl_file_size_positive_check",
+        "type": "c",
+        "definition": "CHECK (((file_size > 0) AND (file_size <= 104857600)))"
+      },
+      {
+        "table": "file_history_dead_letter",
+        "name": "fhdl_mime_type_nonempty",
+        "type": "c",
+        "definition": "CHECK ((length((mime_type)::text) > 0))"
+      },
+      {
+        "table": "file_history_dead_letter",
+        "name": "fhdl_original_filename_check",
+        "type": "c",
+        "definition": "CHECK (((length((original_filename)::text) > 0) AND ((original_filename)::text !~ '[\\x00-\\x1F\\x7F]'::text)))"
+      },
+      {
+        "table": "file_history_dead_letter",
+        "name": "fhdl_purge_attempts_threshold_check",
+        "type": "c",
+        "definition": "CHECK ((purge_attempts >= 5))"
+      },
+      {
+        "table": "file_history_dead_letter",
+        "name": "fhdl_reprocess_consistency",
+        "type": "c",
+        "definition": "CHECK ((((reprocess_count = 0) AND (last_reprocess_attempt_at IS NULL)) OR ((reprocess_count > 0) AND (last_reprocess_attempt_at IS NOT NULL))))"
+      },
+      {
+        "table": "file_history_dead_letter",
+        "name": "fhdl_reprocess_count_check",
+        "type": "c",
+        "definition": "CHECK (((reprocess_count >= 0) AND (reprocess_count <= 3)))"
+      },
+      {
+        "table": "file_history_dead_letter",
+        "name": "fhdl_resolution_consistency",
+        "type": "c",
+        "definition": "CHECK ((((resolved_at IS NULL) AND (resolution_type IS NULL)) OR ((resolved_at IS NOT NULL) AND (resolution_type IS NOT NULL))))"
+      },
+      {
+        "table": "file_history_dead_letter",
+        "name": "fhdl_resolution_type_check",
+        "type": "c",
+        "definition": "CHECK (((resolution_type IS NULL) OR ((resolution_type)::text = ANY ((ARRAY['cron_reprocess_success'::character varying, 'admin_manual_delete'::character varying, 'admin_manual_ignore'::character varying, 'storage_already_gone'::character varying])::text[]))))"
+      },
+      {
+        "table": "file_history_dead_letter",
+        "name": "fhdl_storage_path_format_check",
+        "type": "c",
+        "definition": "CHECK (((storage_path)::text ~ '^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])/[a-z0-9]{7,64}\\.(csv|xlsx|xls)$'::text))"
+      },
+      {
+        "table": "file_history_dead_letter",
+        "name": "fhdl_timing_consistency",
+        "type": "c",
+        "definition": "CHECK (((deleted_at <= moved_to_dead_letter_at) AND ((last_reprocess_attempt_at IS NULL) OR (last_reprocess_attempt_at >= moved_to_dead_letter_at)) AND ((resolved_at IS NULL) OR ((last_reprocess_attempt_at IS NOT NULL) AND (resolved_at >= last_reprocess_attempt_at)))))"
+      },
+      {
+        "table": "file_history_dead_letter",
+        "name": "file_history_dead_letter_pkey",
+        "type": "p",
+        "definition": "PRIMARY KEY (id)"
+      },
+      {
         "table": "jobs",
         "name": "jobs_pkey",
         "type": "p",
@@ -881,6 +1313,36 @@
         "name": "jobs_user_id_fkey",
         "type": "f",
         "definition": "FOREIGN KEY (user_id) REFERENCES users(id) ON UPDATE CASCADE ON DELETE CASCADE"
+      },
+      {
+        "table": "quota_alerts_sent",
+        "name": "quota_alerts_period_format_check",
+        "type": "c",
+        "definition": "CHECK (((period)::text ~ '^[0-9]{4}-(0[1-9]|1[0-2])$'::text))"
+      },
+      {
+        "table": "quota_alerts_sent",
+        "name": "quota_alerts_sent_pkey",
+        "type": "p",
+        "definition": "PRIMARY KEY (id)"
+      },
+      {
+        "table": "quota_alerts_sent",
+        "name": "quota_alerts_sent_user_id_fkey",
+        "type": "f",
+        "definition": "FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE"
+      },
+      {
+        "table": "quota_alerts_sent",
+        "name": "quota_alerts_threshold_check",
+        "type": "c",
+        "definition": "CHECK ((threshold = ANY (ARRAY[70, 90])))"
+      },
+      {
+        "table": "quota_alerts_sent",
+        "name": "quota_alerts_unique_user_threshold_period",
+        "type": "u",
+        "definition": "UNIQUE (user_id, threshold, period)"
       },
       {
         "table": "sessions",

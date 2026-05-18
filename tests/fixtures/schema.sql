@@ -481,3 +481,27 @@ CREATE TABLE "quota_alerts_sent" (
 ALTER TABLE "quota_alerts_sent" ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "quota_alerts_service_role_only" ON "quota_alerts_sent"
   FOR ALL TO public USING (false) WITH CHECK (false);
+
+-- ----------------------------------------------------------------------------
+-- TRIGGER: file_history_dead_letter delete-protected (Card #146 fix-pack)
+-- ----------------------------------------------------------------------------
+-- Função + trigger BEFORE DELETE pra preservar trilha forense LGPD.
+-- UPDATE permitido (reprocess_count, resolved_at). DELETE só via
+-- Card LGPD-AUDIT futuro com role dedicada com bypass explícito.
+-- SET search_path = pg_catalog, public — hardening @dba ciclo 1 #146.
+
+CREATE OR REPLACE FUNCTION block_file_history_dead_letter_delete()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SET search_path = pg_catalog, public
+AS $$
+BEGIN
+  RAISE EXCEPTION
+    'file_history_dead_letter is delete-protected (prova juridica LGPD). Use cron de retencao 5 anos com role dedicada (Card LGPD-AUDIT futuro).'
+    USING ERRCODE = 'insufficient_privilege';
+END;
+$$;
+
+CREATE TRIGGER fhdl_block_delete
+  BEFORE DELETE ON file_history_dead_letter
+  FOR EACH ROW EXECUTE FUNCTION block_file_history_dead_letter_delete();

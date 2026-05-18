@@ -327,11 +327,16 @@ async function selectAndSoftDeleteBatch(): Promise<ExpiredFileRow[]> {
     }
 
     // Soft-delete o batch inteiro num único UPDATE.
+    // Card #146 hotfix (descoberto em primeira execução integration local):
+    // sem cast `::uuid` cada bind vai como text, Postgres rejeita com
+    // `operator does not exist: uuid = text` (CWE-704 type confusion).
+    // Cast por elemento via Prisma.sql template literal.
     const ids = rows.map((r) => r.id)
+    const idsList = Prisma.join(ids.map((id) => Prisma.sql`${id}::uuid`))
     await tx.$executeRaw`
       UPDATE file_history
       SET deleted_at = NOW()
-      WHERE id IN (${Prisma.join(ids)})
+      WHERE id IN (${idsList})
     `
 
     return rows
@@ -745,13 +750,22 @@ export async function purgeExpiredFiles(lock: LockHandle): Promise<void> {
     }
 
     // FASE C — reconciliação (Fase B em rows pendentes antigas).
+    // Card #146 hotfix (descoberto em primeira execução integration local):
+    // Guard `seenIds` previne que Storage 5xx persistente leve mesma row de
+    // purge_attempts=1→5 num single run via loop que re-SELECT a mesma row
+    // (sem o guard, 1 run com Storage indisponível movia row pra dead-letter
+    // imediatamente, ignorando intencionalmente o cooldown de 1h entre
+    // tentativas que a reconciliação documenta).
+    const seenIds = new Set<string>()
     while (true) {
       if (!(await lock.heartbeat())) break
 
       const batch = await selectReconciliationBatch()
-      if (batch.length === 0) break
+      const fresh = batch.filter((r) => !seenIds.has(r.id))
+      if (fresh.length === 0) break
+      fresh.forEach((r) => seenIds.add(r.id))
 
-      const { hardDeleted, retried } = await processStorageDeletes(batch)
+      const { hardDeleted, retried } = await processStorageDeletes(fresh)
       result.rowsHardDeleted += hardDeleted
       result.rowsRetried += retried
 

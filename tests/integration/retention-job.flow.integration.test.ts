@@ -52,6 +52,10 @@ vi.mock('../../src/scheduler/metrics', () => ({
 }))
 vi.mock('../../src/config/sentry', () => ({
   Sentry: { captureException: vi.fn() },
+  // scrubObject usado por modules importados transitivamente (audit-legal.service
+  // → logger → observability.ts). Identity pass-through é suficiente em test —
+  // não-PII contexts passam direto, no scrubbing real necessário.
+  scrubObject: vi.fn((obj: unknown) => obj),
 }))
 
 // Mock prisma client — apontar pro DB real do test.
@@ -100,6 +104,12 @@ async function seedUser(userId: string) {
 }
 
 async function seedFileHistory(seed: FileHistorySeed) {
+  // Card #146 fix (descoberto em primeira execução integration local):
+  // CHECK constraint file_history_expires_at_after_created_check exige
+  // `expires_at >= created_at`. Para seedar rows expiradas (expiresAt
+  // no passado), createdAt precisa ser ANTERIOR ao expiresAt. Defaults
+  // pra `expiresAt - 1ms` (cobre cenários "expired*" do test) — caller
+  // pode override se precisar de createdAt explícito.
   return prisma.fileHistory.create({
     data: {
       userId: seed.userId,
@@ -107,6 +117,7 @@ async function seedFileHistory(seed: FileHistorySeed) {
       originalFilename: seed.originalFilename,
       mimeType: seed.mimeType ?? 'text/csv',
       fileSize: seed.fileSize ?? 1024,
+      createdAt: new Date(seed.expiresAt.getTime() - 1),
       expiresAt: seed.expiresAt,
       deletedAt: seed.deletedAt ?? null,
       purgeAttempts: seed.purgeAttempts ?? 0,
