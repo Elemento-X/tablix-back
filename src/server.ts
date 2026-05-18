@@ -8,9 +8,16 @@ import { buildApp } from './app'
 import { env } from './config/env'
 import { setShutdownRequested } from './lib/health'
 import { shutdownScheduler } from './scheduler/cron'
+import { bootstrapCronJobs } from './scheduler/jobs.bootstrap'
 
 async function start() {
   const app = await buildApp()
+
+  // Card #146 F4 — registra cron jobs (history-purge + cron-runs-cleanup +
+  // dead-letter-reprocess) ANTES de app.listen. Em NODE_ENV=test,
+  // registerCronJob é no-op (R-5 do plano #145 F4 — cron NÃO dispara em
+  // test runs).
+  bootstrapCronJobs()
 
   // Graceful shutdown — Card 2.3 + Card #145 F4 fix-pack @devops:
   // ordem corrigida pra padrão Kubernetes/Fly.io.

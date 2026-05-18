@@ -153,6 +153,12 @@ fly deploy --app tablix-back  # secret novo exige restart
 
 - Card #145 (5.2a) F4 — `src/scheduler/cron.ts`, `src/scheduler/lock.ts`.
 - Card #145 (5.2a) F5 — `src/scheduler/metrics.ts`, `src/scheduler/observability.ts`.
-- Card #146 (5.2b) — handler `history-purge` (depende deste runbook).
+- Card #146 (5.2b) — handler `history-purge` em `src/jobs/retention.job.ts`.
+  - **`docs/runbooks/dead-letter-purge.md`** — quando reprocess_count >= 3.
+  - **`docs/runbooks/purge-overshoot.md`** — quando purga deletou demais.
+  - **`docs/runbooks/history-rollback.md`** — rollback completo da feature.
+- Card #146 F4.5 — cron auxiliar `cron-runs-cleanup` (retenção 30d + orphan recovery).
+- Card #146 F4.7 — cron weekly `dead-letter-reprocess` (3 retries antes de escalar humano).
 - Card #147 (5.2c) — handler `quota-alert` (depende deste runbook).
-- Plano: `.claude/plans/2026-05-02-card-145-5.2a-history-optin-schema-endpoints-cron-infra.md`.
+- Plano #145: `.claude/plans/2026-05-02-card-145-5.2a-history-optin-schema-endpoints-cron-infra.md`.
+- Plano #146: `.claude/plans/2026-05-18-card-146-5.2b-cron-purge-two-phase.md`.
