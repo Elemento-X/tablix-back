@@ -361,6 +361,134 @@ model FileHistory {
 }
 
 // ===========================================
+// CRON RUNS - Histórico persistente do scheduler
+// ===========================================
+// Substitui o cap-10 in-memory (Map em src/scheduler/cron.ts) por persistência
+// forte. Card #146 (5.2b) Fase 2.5. Decisão AMB-3=A após operador override.
+//
+// IMPORTANTE - DECISÕES IRREVERSÍVEIS (consultar antes de mudar):
+// .claude/plans/2026-05-18-card-146-5.2b-cron-purge-two-phase.md §16
+// supabase/migrations/20260518120000_card_146_f2_5_add_cron_runs.sql
+//
+// (id) UUID DB-side. NÃO reutiliza LockHandle.token (fencing secret operacional
+//   que NÃO deve vazar via SELECT). App passa randomUUID() explícito no INSERT;
+//   token Redis vive APENAS em memória + Lua script.
+//
+// (status/skipReason) WHITELIST via CHECK SQL. Espelha JobRunMeta de
+//   src/scheduler/types.ts. Adicionar valor exige migration SQL nova.
+//   skipReason 'redis_unavailable' foi REMOVIDO em F5 fix-pack (dead code).
+//
+// (jobName) SEM FK física — jobs definidos em código (CronJobDefinition).
+//   CHECK regex valida kebab-case.
+//
+// (durationMs) Computado app-side. NÃO usar GENERATED — subtração timestamptz
+//   não é IMMUTABLE em Postgres; rejeita expressão.
+//
+// (cleanup) Retenção 30d via cron cron-runs-cleanup (F4.5 daily). Sem partition
+//   por ora — volume baixo (~150 rows/mês). Repensar se virar ~10k.
+//
+// CHECK constraints (defesa em profundidade — gerenciadas via SQL raw):
+//   cron_runs_status_check, cron_runs_skip_reason_check,
+//   cron_runs_terminal_finished_check, cron_runs_finished_after_started_check,
+//   cron_runs_skip_reason_consistency_check, cron_runs_error_consistency_check,
+//   cron_runs_duration_positive_check, cron_runs_rows_processed_nonneg_check,
+//   cron_runs_attempts_check (1-10), cron_runs_job_name_format_check (regex).
+//
+// PARTIAL INDEXES via SQL raw:
+//   idx_cron_runs_failures (WHERE status IN ('failure','expired'))
+//   idx_cron_runs_running (WHERE status = 'running')
+// NÃO usar `prisma migrate dev` (drop dos partials + CHECK); preferir SQL.
+
+model CronRun {
+  id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  jobName       String    @map("job_name") @db.VarChar(64)
+  startedAt     DateTime  @map("started_at") @db.Timestamptz(3)
+  finishedAt    DateTime? @map("finished_at") @db.Timestamptz(3)
+  status        String    @db.VarChar(16)
+  skipReason    String?   @map("skip_reason") @db.VarChar(32)
+  durationMs    Int?      @map("duration_ms")
+  rowsProcessed Int?      @map("rows_processed")
+  attempts      Int       @default(1) @db.SmallInt
+  errorCode     String?   @map("error_code") @db.VarChar(80)
+  errorMessage  String?   @map("error_message") @db.VarChar(500)
+  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  @@index([jobName, startedAt(sort: Desc)], map: "idx_cron_runs_job_started_desc")
+  @@index([createdAt], map: "idx_cron_runs_created_at")
+  @@map("cron_runs")
+}
+
+// ===========================================
+// FILE HISTORY DEAD LETTER - Quarentena de purga
+// ===========================================
+// Recebe rows de FileHistory cujo purgeAttempts >= 5 (Storage delete falhou 5x).
+// Cron weekly dead-letter-reprocess tenta novamente até 3x; após isso requer
+// intervenção humana (alerta Sentry CRITICAL).
+// Card #146 (5.2b) Fase 2.5. Decisão AMB-4=C após operador override.
+//
+// IMPORTANTE - DECISÕES IRREVERSÍVEIS:
+// supabase/migrations/20260518120100_card_146_f2_5_add_file_history_dead_letter.sql
+//
+// (id) UUID próprio (NÃO reutiliza file_history.id). file_history.id pode ter
+//   sido cascateado e desaparecido; dead-letter precisa de identidade própria.
+//
+// (userId) SEM FK pra users.id. INTENCIONAL (mesma decisão D-5 audit_log_legal):
+//   dead-letter é prova jurídica de tentativa de purga — deve SOBREVIVER ao
+//   delete do user. Mitigação LGPD: job dead-letter-anonymization-on-user-delete
+//   (Card #178 Backlog, Fase 7) anonimiza originalFilename após user delete.
+//
+// (originalFileHistoryId) FK lógica sem física (row na origem pode ter sido
+//   hard-deletada pelo cron pós-move). UNIQUE PARTIAL via SQL raw garante
+//   1 row ATIVO por origem.
+//
+// (storagePath) CRU (não hash). Necessário pro retry. Mitigação: REDACT em
+//   logs/Sentry + RLS DENY ALL + CHECK regex strict.
+//
+// (retenção) 5 ANOS alinhado audit_log_legal. Job de purga em Card LGPD-AUDIT
+//   futuro com role dedicada.
+//
+// (DELETE bloqueado) Trigger BEFORE DELETE raise exception. Pattern Card #150.
+//   UPDATE permitido (cron weekly precisa atualizar reprocessCount + resolvedAt).
+//
+// CHECK constraints (defesa em profundidade — gerenciadas via SQL raw):
+//   fhdl_file_size_positive_check, fhdl_purge_attempts_threshold_check (>=5),
+//   fhdl_storage_path_format_check, fhdl_mime_type_nonempty_check,
+//   fhdl_original_filename_check, fhdl_reprocess_count_check (0-3),
+//   fhdl_timing_consistency_check, fhdl_reprocess_consistency_check,
+//   fhdl_resolution_consistency_check, fhdl_resolution_type_check.
+//
+// PARTIAL INDEXES + UNIQUE PARTIAL via SQL raw:
+//   idx_fhdl_reprocess_candidates (WHERE resolved_at IS NULL AND reprocess_count < 3)
+//   idx_fhdl_human_required (WHERE resolved_at IS NULL AND reprocess_count >= 3)
+//   uq_fhdl_active_per_origin UNIQUE (original_file_history_id) WHERE resolved_at IS NULL
+
+model FileHistoryDeadLetter {
+  id                        String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  originalFileHistoryId     String    @map("original_file_history_id") @db.Uuid
+  userId                    String    @map("user_id") @db.Uuid
+  storagePath               String    @map("storage_path") @db.VarChar(255)
+  originalFilename          String    @map("original_filename") @db.VarChar(255)
+  mimeType                  String    @map("mime_type") @db.VarChar(127)
+  fileSize                  Int       @map("file_size")
+  expiresAt                 DateTime  @map("expires_at") @db.Timestamptz(3)
+  deletedAt                 DateTime  @map("deleted_at") @db.Timestamptz(3)
+  purgeAttempts             Int       @map("purge_attempts")
+  lastErrorCode             String    @map("last_error_code") @db.VarChar(80)
+  lastErrorMessage          String?   @map("last_error_message") @db.VarChar(500)
+  movedToDeadLetterAt       DateTime  @default(now()) @map("moved_to_dead_letter_at") @db.Timestamptz(3)
+  reprocessCount            Int       @default(0) @map("reprocess_count") @db.SmallInt
+  lastReprocessAttemptAt    DateTime? @map("last_reprocess_attempt_at") @db.Timestamptz(3)
+  lastReprocessErrorCode    String?   @map("last_reprocess_error_code") @db.VarChar(80)
+  lastReprocessErrorMessage String?   @map("last_reprocess_error_message") @db.VarChar(500)
+  resolvedAt                DateTime? @map("resolved_at") @db.Timestamptz(3)
+  resolutionType            String?   @map("resolution_type") @db.VarChar(32)
+  createdAt                 DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  @@index([userId, movedToDeadLetterAt(sort: Desc)], map: "idx_fhdl_user_moved")
+  @@map("file_history_dead_letter")
+}
+
+// ===========================================
 // ENUMS
 // ===========================================
 
