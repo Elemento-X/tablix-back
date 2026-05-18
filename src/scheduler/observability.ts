@@ -67,6 +67,12 @@ export type SchedulerEventName =
   | 'cron.lock.heartbeat_lost'
   | 'cron.lock.heartbeat_failed'
   | 'cron.heartbeat.unexpected_error'
+  // Card #146 F2 (T-2.3): eventos do cron de purga LGPD. dead_letter e
+  // pending_overdue são ALERTABLE; dry_run.start é info (não polui Sentry
+  // com dry-run intencional).
+  | 'cron.purge.dead_letter'
+  | 'cron.purge.pending_overdue'
+  | 'cron.purge.dry_run.start'
 
 interface EmitArgs {
   level: SchedulerEventLevel
@@ -98,6 +104,11 @@ const ALERTABLE_EVENTS: ReadonlySet<SchedulerEventName> = new Set([
   'cron.lock.heartbeat_lost',
   'cron.lock.heartbeat_failed',
   'cron.heartbeat.unexpected_error',
+  // Card #146 F2 (T-2.3): eventos do cron de purga LGPD.
+  // dead_letter = row ficou stuck após 5 tentativas → on-call investigar.
+  // pending_overdue = gauge purge_pending > threshold OU stale > 2h → bug.
+  'cron.purge.dead_letter',
+  'cron.purge.pending_overdue',
 ])
 
 /**

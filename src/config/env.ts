@@ -133,6 +133,18 @@ const envSchema = z
       .enum(['true', 'false'])
       .default('false')
       .transform((v) => v === 'true'),
+    // CRON_DRY_RUN (Card #146 F2): kill-switch suave do cron de purga. Quando
+    // `true`, o handler em src/jobs/retention.job.ts loga "[DRY_RUN] would
+    // purge N rows" mas NÃO toca DB nem Storage. Usado pra primeira execução
+    // em prod pós-deploy (validar query SQL + path validation antes de purga
+    // real). Documentado em docs/runbooks/purge-overshoot.md.
+    //
+    // Pattern enum estrito (não z.coerce.boolean) — mesma armadilha do
+    // F2 fix-pack @security BAIXO em HISTORY_FEATURE_ENABLED.
+    CRON_DRY_RUN: z
+      .enum(['true', 'false'])
+      .default('false')
+      .transform((v) => v === 'true'),
     PRO_RETENTION_DAYS: z.coerce.number().int().min(1).max(365).default(30),
 
     // Card #145 F4 fix-pack @security F-ALTO-02: secret separada do JWT_SECRET

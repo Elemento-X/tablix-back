@@ -35,6 +35,8 @@ describe('admin.routes — invariantes de contract', () => {
           lockExpiredTotal: [],
           lastDurationMs: [],
           retentionDaysCurrent: 30,
+          // Card #146 F2 (T-2.2): novo gauge no DTO.
+          purgePendingCount: [],
         },
       },
     }

@@ -93,6 +93,17 @@ const metricsSchema = z.object({
   ),
   /** Gauge fixo derivado de env.PRO_RETENTION_DAYS. */
   retentionDaysCurrent: z.number().int().positive().max(365),
+  /**
+   * Gauge de rows pendentes de purga por jobName (Card #146 F2 T-2.2).
+   * `lastUpdatedAt` é ISO 8601 UTC — stale > 25h indica cron parado.
+   */
+  purgePendingCount: z.array(
+    z.object({
+      jobName: z.string().min(1).max(80),
+      count: z.number().int().nonnegative(),
+      lastUpdatedAt: z.string().datetime({ offset: true }),
+    }),
+  ),
 })
 
 export const cronHealthResponseSchema = z.object({
@@ -149,6 +160,7 @@ export function getCronHealthSnapshot(): CronHealthResponse {
         lockExpiredTotal: metrics.lockExpiredTotal,
         lastDurationMs: metrics.lastDurationMs,
         retentionDaysCurrent: metrics.retentionDaysCurrent,
+        purgePendingCount: metrics.purgePendingCount,
       },
     },
   }

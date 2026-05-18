@@ -141,6 +141,28 @@ export interface StorageAdapter {
   }): Promise<{ deleted: boolean }>
 
   /**
+   * Deleta objeto a partir de um path raw (caller já tem o path como
+   * string — caso de uso: cron de purge LGPD que lê `file_history.storagePath`
+   * do DB). USO RESTRITO — preferir `deleteForUser` quando caller já
+   * tem `userId/jobId/ext` separados.
+   *
+   * **Hard rule (Card #146 R-10):** este método VALIDA o path internamente
+   * via `assertValidStoragePath` (regex completa + path traversal check)
+   * ANTES de chamar Supabase. Brand `UserScopedPath` em compile-time
+   * NÃO prova validez quando path vem do DB; validação runtime é defesa
+   * em profundidade contra DB corrompido ou migration futura malfeita.
+   *
+   * Idempotente: 404 do Supabase é tratado como `{deleted: false, notFound: true}`
+   * (não throw). Demais erros throw `DELETE_FAILED`.
+   *
+   * @throws {StorageError} PATH_TRAVERSAL_REJECTED, INVALID_EXTENSION,
+   *   DELETE_FAILED
+   */
+  removeByPath(
+    path: UserScopedPath | string,
+  ): Promise<{ deleted: boolean; notFound: boolean }>
+
+  /**
    * Lista objetos do prefixo do user. Adapter monta o prefixo
    * internamente — caller NÃO passa path raw.
    *

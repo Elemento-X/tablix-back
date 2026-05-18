@@ -247,6 +247,9 @@ describe('scheduler/observability — emitSchedulerEvent', () => {
       // de exceção do handler sem precisar de captureException paralelo)
       // e cron.lock.redis_unavailable (Redis offline = fail-open silencioso
       // sem alerta era gap operacional — @devops MÉDIO).
+      // Card #146 F2 (T-2.3): adicionados cron.purge.dead_letter (row
+      // travada após 5 tentativas — on-call investigar) e
+      // cron.purge.pending_overdue (gauge stale > 2h ou count > threshold).
       const expected = new Set([
         'cron.run.failure',
         'cron.run.expired',
@@ -257,6 +260,8 @@ describe('scheduler/observability — emitSchedulerEvent', () => {
         'cron.lock.heartbeat_lost',
         'cron.lock.heartbeat_failed',
         'cron.heartbeat.unexpected_error',
+        'cron.purge.dead_letter',
+        'cron.purge.pending_overdue',
       ])
 
       expect(__testing.ALERTABLE_EVENTS).toEqual(expected)

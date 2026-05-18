@@ -32,6 +32,7 @@ import {
   incLockExpired,
   incRunsTotal,
   setLastDurationMs,
+  setPurgePendingCount,
 } from '../../src/scheduler/metrics'
 /* eslint-enable import/first */
 
@@ -187,6 +188,66 @@ describe('scheduler/metrics', () => {
     })
   })
 
+  describe('setPurgePendingCount — Card #146 F2 T-2.2', () => {
+    it('seta gauge + lastUpdatedAt em ISO 8601', () => {
+      setPurgePendingCount('history-purge', 42)
+
+      const snapshot = getSchedulerMetrics()
+      const entry = snapshot.purgePendingCount.find(
+        (e) => e.jobName === 'history-purge',
+      )
+      expect(entry?.count).toBe(42)
+      expect(entry?.lastUpdatedAt).toMatch(
+        /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/,
+      )
+    })
+
+    it('sobrescreve gauge em chamadas sucessivas (last value)', () => {
+      setPurgePendingCount('history-purge', 10)
+      setPurgePendingCount('history-purge', 5)
+
+      const snapshot = getSchedulerMetrics()
+      const entry = snapshot.purgePendingCount.find(
+        (e) => e.jobName === 'history-purge',
+      )
+      expect(entry?.count).toBe(5)
+    })
+
+    it('rejeita NaN sem atualizar gauge', () => {
+      setPurgePendingCount('j', 100)
+      setPurgePendingCount('j', Number.NaN)
+
+      const snapshot = getSchedulerMetrics()
+      const entry = snapshot.purgePendingCount.find((e) => e.jobName === 'j')
+      expect(entry?.count).toBe(100)
+    })
+
+    it('rejeita valor negativo sem atualizar gauge', () => {
+      setPurgePendingCount('j', 50)
+      setPurgePendingCount('j', -1)
+
+      const snapshot = getSchedulerMetrics()
+      const entry = snapshot.purgePendingCount.find((e) => e.jobName === 'j')
+      expect(entry?.count).toBe(50)
+    })
+
+    it('isolamento entre jobs', () => {
+      setPurgePendingCount('history-purge', 10)
+      setPurgePendingCount('dead-letter-reprocess', 3)
+
+      const snapshot = getSchedulerMetrics()
+      expect(snapshot.purgePendingCount).toHaveLength(2)
+      const hp = snapshot.purgePendingCount.find(
+        (e) => e.jobName === 'history-purge',
+      )
+      const dl = snapshot.purgePendingCount.find(
+        (e) => e.jobName === 'dead-letter-reprocess',
+      )
+      expect(hp?.count).toBe(10)
+      expect(dl?.count).toBe(3)
+    })
+  })
+
   describe('getSchedulerMetrics', () => {
     it('retorna snapshot vazio quando reset', () => {
       const snapshot = getSchedulerMetrics()
@@ -194,6 +255,7 @@ describe('scheduler/metrics', () => {
       expect(snapshot.lockContentionTotal).toEqual([])
       expect(snapshot.lockExpiredTotal).toEqual([])
       expect(snapshot.lastDurationMs).toEqual([])
+      expect(snapshot.purgePendingCount).toEqual([])
       expect(snapshot.retentionDaysCurrent).toBe(30)
     })
 

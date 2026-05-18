@@ -35,6 +35,7 @@ import {
   buildUserPrefix,
   buildUserScopedPath,
 } from './key-builder'
+import { assertValidStoragePath } from './path-validator'
 
 /**
  * Default signed URL TTL (5 minutos). Hard req #4 do @security:
@@ -223,6 +224,58 @@ export class SupabaseStorageAdapter implements StorageAdapter {
     // Supabase retorna array de objetos deletados (vazio se não existia).
     // Idempotente: não falha se objeto não existia, mas reporta.
     return { deleted: Array.isArray(data) && data.length > 0 }
+  }
+
+  /**
+   * Delete via raw path — USO RESTRITO ao cron de purge LGPD (Card #146)
+   * que recebe `file_history.storagePath` do DB e precisa deletar sem
+   * ter `userId/jobId/ext` separados.
+   *
+   * **Hard rule R-10 do plano #146**: valida path internamente via
+   * `assertValidStoragePath` (regex completa + path traversal check)
+   * ANTES de tocar Supabase. Brand `UserScopedPath` em compile-time NÃO
+   * prova validez quando path vem do DB.
+   *
+   * Idempotente:
+   *  - Path não existe no Storage → Supabase retorna `data: []` sem erro
+   *    → `{ deleted: false, notFound: true }`. Cron trata como sucesso
+   *    (row em `file_history` pode ser hard-deletada).
+   *  - Path existe e foi deletado → `{ deleted: true, notFound: false }`.
+   *  - Erro Supabase real → throw `DELETE_FAILED` (cron incrementa
+   *    `purge_attempts` e move pra dead-letter após 5 tentativas).
+   *
+   * **NÃO logar `path` cru** — usar `hashStoragePathForAudit(path)` no
+   * caller pra logs estruturados. Path interno vaza estrutura (userId
+   * embedded).
+   */
+  async removeByPath(
+    path: UserScopedPath | string,
+  ): Promise<{ deleted: boolean; notFound: boolean }> {
+    // Defesa em profundidade — narrowing pra UserScopedPath via assert.
+    // Throw PATH_TRAVERSAL_REJECTED se shape inválido (DB corrompido).
+    assertValidStoragePath(path)
+
+    const { data, error } = await this.client.storage
+      .from(this.bucket)
+      .remove([path])
+
+    if (error) {
+      // Supabase 404 pode vir como erro com message matching ou como
+      // `data: []` (caso comum). Verificar primeiro pelo padrão de mensagem.
+      const isNotFound = SUPABASE_ERROR_PATTERNS.notFound.test(error.message)
+      if (isNotFound) {
+        return { deleted: false, notFound: true }
+      }
+      throwStorageError({
+        code: 'DELETE_FAILED',
+        message: 'failed to delete object by path',
+        cause: error.message,
+      })
+    }
+
+    // `data: []` (sem erro) = path não existia no Storage — idempotente.
+    const deleted = Array.isArray(data) && data.length > 0
+    return { deleted, notFound: !deleted }
   }
 
   async listForUser(args: {

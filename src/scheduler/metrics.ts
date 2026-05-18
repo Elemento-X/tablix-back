@@ -77,6 +77,21 @@ export interface SchedulerMetricsSnapshot {
 
   /** Gauge fixo derivado de env.PRO_RETENTION_DAYS no boot. */
   retentionDaysCurrent: number
+
+  /**
+   * Gauge de rows pendentes de purga (`file_history` com `deletedAt NOT NULL
+   * AND purge_attempts < 5`). Atualizado ao final de cada execução do cron
+   * `history-purge` (Card #146 F3). `lastUpdatedAt` permite detectar stale
+   * gauge (operador olha snapshot e vê que último update foi há > 25h —
+   * sinal de cron parado).
+   *
+   * Card #146 F2 (T-2.2).
+   */
+  purgePendingCount: Array<{
+    jobName: string
+    count: number
+    lastUpdatedAt: string
+  }>
 }
 
 // ============================================
@@ -91,6 +106,10 @@ const runsTotal = new Map<string, Map<RunStatusLabel, number>>()
 const lockContentionTotal = new Map<string, number>()
 const lockExpiredTotal = new Map<string, number>()
 const lastDurationMs = new Map<string, number>()
+const purgePendingCount = new Map<
+  string,
+  { count: number; lastUpdatedAt: Date }
+>()
 
 // ============================================
 // INCREMENT HELPERS (call from cron.ts/lock.ts)
@@ -135,6 +154,24 @@ export function setLastDurationMs(jobName: string, durationMs: number): void {
   lastDurationMs.set(jobName, Math.floor(durationMs))
 }
 
+/**
+ * Atualiza `file_history_purge_pending_count{job=jobName}` com count atual
+ * de rows pendentes de purga. Chamado ao final da execução do cron de
+ * purga (Card #146 F3) após reconciliação + dead-letter.
+ *
+ * `lastUpdatedAt` é seteado pra `new Date()` em cada chamada — permite ao
+ * snapshot reportar idade do gauge (stale gauge > 25h = cron parado).
+ *
+ * Rejeita NaN/negativo (mesma defesa do `setLastDurationMs`).
+ */
+export function setPurgePendingCount(jobName: string, count: number): void {
+  if (!Number.isFinite(count) || count < 0) return
+  purgePendingCount.set(jobName, {
+    count: Math.floor(count),
+    lastUpdatedAt: new Date(),
+  })
+}
+
 // ============================================
 // SNAPSHOT (read-only)
 // ============================================
@@ -168,12 +205,20 @@ export function getSchedulerMetrics(): SchedulerMetricsSnapshot {
     lastDurationMs.entries(),
   ).map(([jobName, durationMs]) => ({ jobName, durationMs }))
 
+  const purgePendingList: SchedulerMetricsSnapshot['purgePendingCount'] =
+    Array.from(purgePendingCount.entries()).map(([jobName, entry]) => ({
+      jobName,
+      count: entry.count,
+      lastUpdatedAt: entry.lastUpdatedAt.toISOString(),
+    }))
+
   return {
     runsTotal: runsList,
     lockContentionTotal: lockContentionList,
     lockExpiredTotal: lockExpiredList,
     lastDurationMs: durationList,
     retentionDaysCurrent: env.PRO_RETENTION_DAYS,
+    purgePendingCount: purgePendingList,
   }
 }
 
@@ -185,10 +230,12 @@ export const __testing = {
   lockContentionTotal,
   lockExpiredTotal,
   lastDurationMs,
+  purgePendingCount,
   resetForTests: () => {
     runsTotal.clear()
     lockContentionTotal.clear()
     lockExpiredTotal.clear()
     lastDurationMs.clear()
+    purgePendingCount.clear()
   },
 }
