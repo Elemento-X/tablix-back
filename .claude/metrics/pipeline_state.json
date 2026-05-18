@@ -1,33 +1,34 @@
 {
   "schema_version": 1,
-  "updated_at": "2026-05-17T22:10:00Z",
+  "updated_at": "2026-05-18T20:30:00Z",
   "current": null,
   "last_completed": {
+    "card_id": "69f00f3b29eab8c6cbf0c7a8",
+    "card_short_link": "FK94hRBQ",
+    "card_id_short": 146,
+    "card_title": "5.2b Cron 03:00 retenção two-phase (purge + cleanup + reprocess)",
+    "phase": "Fase 5 — Storage",
+    "decision": "APPROVED_CONDITIONAL",
+    "cycles": 2,
+    "done_at": "2026-05-18T20:15:00Z",
+    "commit": "f7d2468",
+    "lead_time_hours": 10.25,
+    "mttr_hours": 1.5,
+    "cost_usd": 5.85,
+    "fast_path": false,
+    "waivers_applied": [],
+    "cards_discovered": 3,
+    "operator_pre_merge_condition": "Rodar `npm run test:integration -- retention-job.flow cron-runs-and-fhdl-parity` em ambiente Docker (Testcontainers). Passou → merge OK. Falhou → IN_FIX + smart re-run @dba+@tester.",
+    "notes": "Card #146 (5.2b) cron purge two-phase LGPD COMPLETO. 5 commits (5c7e1b3+ba96dbe+5d1bd12+f6d0668+f7d2468). Pipeline QA v2 em 2 ciclos: ciclo 1 REPROVED_HARD convergente — @dba CRÍTICO a5f3b2e9c1d4 (recordLegalEvent fora da tx) + @security CRÍTICO a7c3f1e2b58d (mesmo finding corroborado independente) + 4 ALTO (regex Zod-SQL drift, error leak, degraded mode process.exit, trigger search_path) + 5 MÉDIO + 3 BAIXO. Diretriz operador 'nada passa, corrige tudo' definiu fix-pack atômico (Opção A) sobre waivers. Ciclo 2 APPROVED unânime 4/4 + @reviewer APPROVED_CONDITIONAL (condição pré-merge: integration tests Docker). 1589/1589 unit tests verdes (+125). 7 migrations Supabase aplicadas (cron_runs + file_history_dead_letter + pg_cron keepalive 6h + 4 fix-pack migrations). 3 cards discovery #183/#184/#185. Custo total $5.85. WV-2026-008 PENDING (pg_cron ACL Free tier — Card #182 blocker pré-go-live). Card #146 movido pra Done no Trello. Destrava #147 (5.2c cron alerta) último restante da Fase 5."
+  },
+  "previously_completed": {
     "card_id": "69f00e470bf383269a4b8242",
     "card_short_link": "DtBkVtVY",
     "card_id_short": 145,
-    "card_title": "5.2a - Schema FileHistory + 5 endpoints opt-in + infra scheduling/lock (FECHADO F1+F2+F3+F4+F5)",
-    "phase": "Fase 5 — Storage",
+    "card_title": "5.2a Schema FileHistory + 5 endpoints opt-in + infra scheduling/lock (FECHADO F1+F2+F3+F4+F5)",
     "decision": "APPROVED",
-    "cycles": 2,
     "done_at": "2026-05-17T22:00:00Z",
-    "commit": "ac12e14",
-    "lead_time_hours": 0.92,
-    "mttr_hours": 0.55,
-    "cost_usd": 5.1,
-    "fast_path": false,
-    "waivers_applied": [],
-    "cards_discovered": 9,
-    "notes": "Card #145 (5.2a) F5 — observability + runbooks (FECHA o card, F1+F2+F3+F4+F5 done). 5 fases sequenciais entregues. F5: scheduler/metrics.ts + scheduler/observability.ts (emitSchedulerEvent + capContextSize cap 4KB) + 5 runbooks (cron-stuck/lock-stuck/purge-overshoot/history-rollback/signed-url-survives-delete) + scripts/compute-stepup.sh stub. 2 ciclos: ciclo 1 REPROVED_HARD convergente (@security 1 ALTO M3 audit signed URL missing; @devops 1 CRÍTICO + 4 ALTO runbooks com bugs objetivos — CONCURRENTLY dentro de BEGIN, upstash-cli inexistente, Sentry breadcrumbs não searchable, métricas process-scoped sem nota). Fix-pack atômico ~45min: M3 hashStoragePathForAudit SHA-256 + emit storage.signed_url.created, capContextSize circular guard, ALERTABLE_EVENTS expandido pra 9 (+cron.run.failure +cron.lock.redis_unavailable), throttle inflight 5min, enum dead removido em 3 lugares, runbooks corrigidos (SQL 2 passos, Upstash REST API, queries fly logs+admin/jobs/list, proibição DISABLE TRIGGER LGPD 5y). Ciclo 2 APPROVED unânime smart re-run (@tester+@security+@devops+@reviewer); 0 CRÍTICO/ALTO/MÉDIO bloqueante. 1464/1464 unit verdes. Coverage F5: 100/100/100/100. 9 cards discovery #169-#177 no Backlog. Commit ac12e14 (origin/feat/Maclean). Destrava #146 5.2b (cron purge) ‖ #147 5.2c (cron alerta) — paralelos."
-  },
-  "previously_completed": {
-    "card_id": "69f00e9a38044c23850bb3a4",
-    "card_short_link": "pVasIL6l",
-    "card_id_short": 150,
-    "card_title": "[CRITICO LGPD] audit_log_legal com retencao 5 anos",
-    "decision": "APPROVED",
-    "done_at": "2026-04-29T20:30:00Z",
-    "commit": "b076002"
+    "commit": "ac12e14"
   },
   "phases": {
     "completed": [
@@ -73,19 +74,20 @@
       "done": [
         "5.1 (#36, lGlZpdE7) — Adapter Supabase Storage (APPROVED 2026-04-27, commit 2ce90f2)",
         "#150 (pVasIL6l) — audit_log_legal LGPD 5y (APPROVED 2026-04-29, commit b076002)",
-        "5.2a (#145, DtBkVtVY) — FECHADO 2026-05-17 (F1+F2+F3+F4+F5, commit ac12e14)"
+        "5.2a (#145, DtBkVtVY) — FECHADO 2026-05-17 (F1+F2+F3+F4+F5, commit ac12e14)",
+        "5.2b (#146, FK94hRBQ) — FECHADO 2026-05-18 (cron purge two-phase, commit f7d2468)"
       ],
       "next": [
-        "5.2b (#146, FK94hRBQ) — Cron 03:00 retenção two-phase — DESTRAVADO (depende 5.2a done)",
-        "5.2c (#147, s3NLF6bv) — Cron 08:00 alerta quota + Resend — DESTRAVADO (paraleliza com 5.2b)"
+        "5.2c (#147, s3NLF6bv) — Cron 08:00 alerta quota + Resend — ÚLTIMO restante Fase 5"
       ],
       "done_in_phase": [
         "5.1 (#36, lGlZpdE7) — Adapter Supabase Storage (commit 2ce90f2)",
         "#150 (pVasIL6l) — audit_log_legal LGPD 5y (commit b076002, 2026-04-29)",
-        "5.2a (#145, DtBkVtVY) — Schema+endpoints+infra+observability+runbooks (commit ac12e14, 2026-05-17)"
+        "5.2a (#145, DtBkVtVY) — Schema+endpoints+infra+observability+runbooks (commit ac12e14, 2026-05-17)",
+        "5.2b (#146, FK94hRBQ) — Cron purge two-phase LGPD (commit f7d2468, 2026-05-18)"
       ],
       "side_quests": [],
-      "rationale": "Card 5.2a FECHADO em 5 fases sequenciais (F1 schema, F2 env/contrato, F3 module, F4 scheduler+lock+admin, F5 observability+runbooks). Pipeline QA v2 2 ciclos (REPROVED_HARD@security+@devops → APPROVED unânime após fix-pack atômico). Destrava 5.2b ‖ 5.2c (paralelos). Próximo trabalho: escolher 5.2b OU 5.2c (ou começar ambos em sequência). 9 cards discovery #169-#177 no Backlog."
+      "rationale": "Card 5.2b FECHADO em 5 commits + fix-pack atômico (~90min ciclo 1→2). Pipeline QA v2 2 ciclos (REPROVED_HARD convergente @dba+@security CRÍTICO recordLegalEvent fora da tx + 4 ALTO + 5 MÉDIO + 3 BAIXO → APPROVED unânime após fix-pack 14 itens). 7 migrations aplicadas (cron_runs, file_history_dead_letter, pg_cron keepalive, 4 hardening). 1589 unit tests verdes. Destrava Card #147 (5.2c) último restante da Fase 5. Condição pré-merge: operador roda integration tests Docker. 3 cards discovery #183/#184/#185."
     },
     "phase_map": {
       "current": "Fase 5 — Storage",
@@ -131,6 +133,16 @@
       "follow_up_card": "zoSjwuar (#157) roles-admin-enum",
       "follow_up_due": "2026-08-01",
       "kill_criteria": "enum UserRole separado + middleware unificado + ADMIN_USER_IDS removida"
+    },
+    {
+      "id": "WV-2026-008-pending",
+      "subject": "pg_cron schema ACL leak (Supabase Free tier — REVOKE não 100% efetivo) — MÉDIO",
+      "expires": "2026-08-18",
+      "follow_up_card": "#182 pg-cron-acl-supabase-free-tier",
+      "follow_up_due": "pre-go-live",
+      "status": "PENDING_OPERATOR_APPROVAL",
+      "discovered_at": "2026-05-18",
+      "kill_criteria": "upgrade Supabase Pro tier OU ticket Supabase OU desabilitar pg_cron (keepalive via outro mecanismo)"
     }
   ],
   "closed_waivers": [
@@ -148,132 +160,61 @@
     }
   ],
   "next_action_for_operator": {
-    "card": "#145 (DtBkVtVY, 5.2a) — Schema FileHistory + 5 endpoints opt-in + infra scheduling/lock",
-    "blocker": "DECISÕES FECHADAS 2026-05-02. Pronto pra iniciar F1.1 (schema). Plano v2.2 em .claude/plans/.",
-    "plano_file": ".claude/plans/2026-05-02-card-145-5.2a-history-optin-schema-endpoints-cron-infra.md",
-    "decisions_closed_2026_05_02": {
-      "D#1_delete_confirmation": "B — { confirmation: 'CONFIRM_DELETE_ALL' } literal z.literal() — @security ALTO se errar",
-      "D#2_retention_env": "B — env.PRO_RETENTION_DAYS SSOT + superRefine min(1).max(365) default 30 — @dba",
-      "D#3_admin_auth": "B com WV-2026-006 + 9 mitigations completas — @security (CRÍTICO sem / MÉDIO com)",
-      "D#4_optout_listagem": "A — 403 FEATURE_DISABLED + invariante cross-card GET /history/:id — @reviewer ALTO se errar"
-    },
-    "decisions_closed_in_phase5": [
-      "#1 Runtime cron: A (node-cron + Redis lock) — voto 4/4 unânime",
-      "#2 expiresAt: B.3 (env PRO_RETENTION_DAYS=30) — tiebreaker @devops",
-      "#3 LGPD delete: C (two-phase) — voto 2/2 unânime",
-      "#4 Subdivisão 5.2: B (5.2a/b/c) — voto 2/2 unânime",
-      "#5 Ordering: (a) — #150 antes de 5.2a/b/c — APLICADO (#150 done 2026-04-29)"
-    ],
-    "implementation_sequence_fase5": [
-      "1. #150 audit_log_legal — DONE (commit b076002, 2026-04-29)",
-      "2. #145 5.2a F1 schema FileHistory + opt-in — DONE (commit 2df9426, 2026-05-04, pipeline F1 APROVADO unânime + 4 cards discovery #161-#164)",
-      "3. #145 5.2a F2 env + rate limits + contrato Zod cross-card — DONE (commit a306451, 2026-05-04, pipeline F2 APROVADO unânime, 3 BAIXOs @security críticos corrigidos no fix-pack)",
-      "4. #145 5.2a F3 module history (service + controller + routes) — PRÓXIMO",
-      "5. #145 5.2a F4 scheduler + lock distribuído + admin middleware — depende F3",
-      "6. #145 5.2a F5 observability + runbooks — depende F4",
-      "7. #146 5.2b cron purge (~250 LoC) ‖ #147 5.2c cron alerta (~250 LoC) [paralelos] — depende #145 done"
-    ],
-    "details_in_memory": "project_card52_decisions_closed.md + project_card150_done.md + project_card145_decisions_closed.md",
+    "card": "#147 (s3NLF6bv, 5.2c) — Cron 08:00 alerta quota + Resend",
+    "blocker": "Nenhum — destravado pelo done de #145 e #146. Último card restante da Fase 5.",
+    "pre_merge_condition_146": "Rodar integration tests em Docker antes de merge: `npm run test:integration -- retention-job.flow cron-runs-and-fhdl-parity`",
     "operator_pending_actions": [
       "Adicionar SUPABASE_CRON_KEY ao Card 9.5 (rotação pré-go-live)",
-      "Atualizar Card 7.10 quando chegar lá (remover purgas/consents/dsars do escopo, deixar só retenção operacional 90d)",
-      "Card #152 futuro (cron retenção 5y audit_log_legal): role dedicada audit_legal_purge_role com bypass explícito do trigger BEFORE UPDATE/DELETE (SECURITY DEFINER ou ALTER TABLE DISABLE TRIGGER em transação)",
+      "Validar WV-2026-008-pending (pg_cron ACL Free tier) — aprovar ou rejeitar formalmente",
+      "Card #152 futuro (audit_legal_purge_role com bypass trigger BEFORE UPDATE/DELETE)",
+      "Card #178 dead-letter-anonymization-on-user-delete (Fase 7)",
+      "Card #181 RLS disabled 7 tabelas pré-existentes (ALTA, blocker pré-go-live)",
+      "Card #182 pg_cron ACL Supabase Free tier (ALTA, blocker pré-go-live)",
+      "Card #174 Sentry Cron Monitoring (pré-go-live)",
       "Validar fly.toml min_machines_running=1 quando Fase 7 começar (A-5 do plano #145 posponed)"
     ]
   },
-  "cards_created_2026_04_27_session": {
-    "subdivision_52": [
+  "cards_created_2026_05_18_session": {
+    "discovery_from_card_146": [
       {
-        "id": 145,
-        "shortLink": "DtBkVtVY",
-        "name": "5.2a Schema + endpoints + infra scheduling/lock",
-        "list": "Fase 5 — Storage",
-        "size": "G ~600-900 LoC"
-      },
-      {
-        "id": 146,
-        "shortLink": "FK94hRBQ",
-        "name": "5.2b Cron 03:00 retenção two-phase",
-        "list": "Fase 5 — Storage",
-        "size": "M ~250 LoC"
-      },
-      {
-        "id": 147,
-        "shortLink": "s3NLF6bv",
-        "name": "5.2c Cron 08:00 alerta quota + Resend",
-        "list": "Fase 5 — Storage",
-        "size": "M ~250 LoC"
-      }
-    ],
-    "future_migrations": [
-      {
-        "id": 148,
-        "shortLink": "bsW63PxF",
-        "name": "[FUTURO Fase 6] Migrar cron A→B BullMQ",
-        "list": "Backlog"
-      },
-      {
-        "id": 149,
-        "shortLink": "zXZhvzX8",
-        "name": "[FUTURO 7.x] Migrar cron A→C Fly scheduled",
-        "list": "Fase 7"
-      }
-    ],
-    "lgpd_critical": [
-      {
-        "id": 150,
-        "shortLink": "pVasIL6l",
-        "name": "[CRÍTICO LGPD] audit_log_legal retenção 5 anos",
-        "list": "Fase 7",
-        "discovered_by": "@security",
-        "blocks": ["5.2b", "Card 7.10 update"]
-      }
-    ]
-  },
-  "cards_created_2026_05_02_session": {
-    "discovery_from_card_145_decisions": [
-      {
-        "id": 157,
-        "shortLink": "zoSjwuar",
-        "name": "[DISCOVERY] roles-admin-enum — UserRole separado de Role billing + middleware unificado",
-        "list": "Backlog",
-        "severity": "ALTA",
-        "size": "M",
-        "labels": ["pipeline-discovery", "ALTO", "waiver"],
-        "origin": "Kill criteria do WV-2026-006 (Card #145 D#3)"
-      },
-      {
-        "id": 158,
-        "shortLink": "GkuIjKXF",
-        "name": "[DISCOVERY] signed-url-revoke-on-delete — Supabase signed URL viva 5min após DELETE",
-        "list": "Backlog",
-        "severity": "ALTA",
-        "size": "P",
-        "labels": ["pipeline-discovery", "SEGURANÇA", "ALTO"],
-        "origin": "R-9 elevado de BAIXO para ALTO pelo @security em rodada de decisões #145"
-      },
-      {
-        "id": 159,
-        "shortLink": "mRgerGHf",
-        "name": "[DISCOVERY] admin-jobs-list-endpoint — GET /admin/jobs/list status agregado",
+        "id": 183,
+        "name": "[DISCOVERY] cron-runs-cleanup-job-test-coverage — 0% coverage",
         "list": "Backlog",
         "severity": "BAIXA",
         "size": "P",
-        "labels": ["pipeline-discovery", "BAIXO"],
-        "origin": "@planner mapeou em #145 como utility complementar a POST /admin/jobs/run/:name"
+        "labels": ["pipeline-discovery", "BAIXO", "tester"]
+      },
+      {
+        "id": 184,
+        "name": "[DISCOVERY] retention-move-to-dead-letter-rollback-on-check-violation — rollback gracioso",
+        "list": "Backlog",
+        "severity": "BAIXA",
+        "size": "P",
+        "labels": ["pipeline-discovery", "BAIXO", "devops"]
+      },
+      {
+        "id": 185,
+        "name": "[DISCOVERY] degraded-mode-bootstrap-cron-structured-log — tag estruturada",
+        "list": "Backlog",
+        "severity": "BAIXA",
+        "size": "P",
+        "labels": ["pipeline-discovery", "BAIXO", "devops"]
       }
     ]
   },
   "phases_active_status": {
     "Fase 5 — Storage": {
       "list_id": "69d7a7def8794179e29c6614",
-      "done": ["5.1 (#36, lGlZpdE7)", "#150 (pVasIL6l)"],
+      "done": [
+        "5.1 (#36, lGlZpdE7)",
+        "#150 (pVasIL6l)",
+        "5.2a (#145, DtBkVtVY)",
+        "5.2b (#146, FK94hRBQ)"
+      ],
       "pending": [
-        "5.2a (#145, DtBkVtVY) — DECISÕES FECHADAS 2026-05-02, próximo F1.1 schema",
-        "5.2b (#146, FK94hRBQ) — depende 5.2a",
-        "5.2c (#147, s3NLF6bv) — depende 5.2a"
+        "5.2c (#147, s3NLF6bv) — Cron 08:00 alerta quota + Resend (ÚLTIMO)"
       ]
     }
   },
-  "notes": "Snapshot atualizado em 2026-05-04T14:35 após F1+F2 do Card #145 (5.2a) committados (2df9426 + a306451). F1 entregou schema/migrations/db-smoke (28 tests verdes). F2 entregou env/rate-limits/contrato Zod cross-card (51 tests novos, 1326 total). Pipeline F1 APROVADO unânime (smart re-run após @tester REPROVED_HARD ALTO db-smoke missing). Pipeline F2 APROVADO unânime (smart re-run após 3 BAIXOs funcionalmente críticos do @security: kill-switch z.coerce.boolean broken + ADMIN_USER_IDS uppercase bypass + RFC 9839 missing). 5 cards discovery acumulados na sessão (#160 RLS missing 7 tabelas + #161-#164 do pipeline F1+F2). Custo F1+F2 acumulado: ~$3.82 (~$1.97 F1 + ~$1.85 F2). Próximo: F3 module history (service + controller + routes)."
+  "notes": "Snapshot atualizado em 2026-05-18T20:30 após Card #146 (5.2b) cron purge two-phase fechado. 5 commits sequenciais (5c7e1b3 F1+F2 / ba96dbe F2.5 / 5d1bd12 F3 / f6d0668 F4+F4.5+F4.7+F5 / f7d2468 fix-pack ciclo 1). Pipeline QA v2 2 ciclos (REPROVED_HARD convergente @dba+@security CRÍTICO recordLegalEvent fora da tx + 4 ALTO + 5 MÉDIO + 3 BAIXO → APPROVED unânime 4/4 + @reviewer APPROVED_CONDITIONAL com fix-pack 14 itens). 1589 unit tests verdes. 7 migrations Supabase aplicadas via MCP. WV-2026-008-pending para pg_cron ACL Free tier. 3 cards discovery #183/#184/#185 no Backlog. Custo $5.85. Próximo: Card #147 (5.2c cron alerta) único restante Fase 5."
 }
