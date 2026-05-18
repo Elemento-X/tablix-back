@@ -26,9 +26,22 @@
 import { env } from '../config/env'
 import { cronRunsCleanup } from '../jobs/cron-runs-cleanup.job'
 import { deadLetterReprocess } from '../jobs/dead-letter-reprocess.job'
+import { scanUsageAndAlert } from '../jobs/quota-alert.job'
 import { purgeExpiredFiles } from '../jobs/retention.job'
 import { logger } from '../lib/logger'
 import { registerCronJob } from './cron'
+
+/**
+ * SSOT de nomes registrados pelo bootstrap. Atualizar ao adicionar/remover
+ * job em `bootstrapCronJobs`. Permite contadores derivados em logs e
+ * verificação em tests sem hardcode (@devops BAIXO fix-pack Card #147).
+ */
+const JOB_NAMES = [
+  'history-purge',
+  'cron-runs-cleanup',
+  'dead-letter-reprocess',
+  'quota-alert',
+] as const
 
 /**
  * Registra todos os cron jobs do scheduler. Idempotente — re-registrar
@@ -81,11 +94,30 @@ export function bootstrapCronJobs(): void {
     idempotent: true, // reprocess_count INCR + UNIQUE PARTIAL absorvem retry
   })
 
+  // Job 4: quota-alert (Card #147 F3)
+  // Schedule: 08:00 BRT = '0 11 * * *' UTC — janela manhã (decisão A-5 do plano).
+  // Justificativa UX: usuários PRO reagem rápido a "atingiu 90%" pela manhã.
+  // Contrast deliberado com 03:00 BRT do history-purge (ops vs UX).
+  // Mesmo kill-switch dos outros 3 jobs (decisão A-9 + trade-off R-5):
+  // se feature history off, NÃO rodar nenhum cron (sem ruído Sentry de dry-run
+  // acidental). Discovery card decouple-cron-kill-switches cobre o trade-off.
+  registerCronJob({
+    name: 'quota-alert',
+    schedule: '0 11 * * *', // 08:00 BRT daily
+    enabled: historyEnabled,
+    handler: scanUsageAndAlert,
+    lockTtlMs: 10 * 60 * 1000, // 10min — SELECT PRO + N emails @ 10/s; <100 users <2min
+    idempotent: true, // UNIQUE(user_id, threshold, period) + ON CONFLICT DO NOTHING
+  })
+
+  // Card #147 fix-pack ciclo 1 (@devops BAIXO): count derivado em vez de
+  // hardcoded — futuras adições não esquecem de bumpar (Sentry dashboard
+  // que pareie boot signal com count real não dá falso negativo silencioso).
+  // 4 = registerCronJob calls acima (history-purge, cron-runs-cleanup,
+  // dead-letter-reprocess, quota-alert).
+  const jobsRegistered = JOB_NAMES.length
   logger.info(
-    {
-      historyEnabled,
-      jobsRegistered: 3,
-    },
+    { historyEnabled, jobsRegistered },
     'scheduler.bootstrap.cron_jobs_registered',
   )
 }

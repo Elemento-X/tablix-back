@@ -44,6 +44,8 @@ import {
   sendTokenEmail,
   sendCancellationEmail,
   sendPaymentFailedEmail,
+  sendQuotaWarningEmail,
+  sendQuotaCriticalEmail,
 } from '../../src/lib/email'
 import { AppError } from '../../src/errors/app-error'
 /* eslint-enable import/first */
@@ -266,5 +268,111 @@ describe('getResend — env sem RESEND_API_KEY', () => {
     await expectAppErrorShape(
       mod.sendPaymentFailedEmail({ to: 'user@example.com' }),
     )
+  })
+})
+
+// ============================================
+// Card #147 fix-pack ciclo 2.5 (@tester MÉDIO 4d8a2f7c91b5)
+// Coverage de sendQuota*Email — branch error→throw não estava exercitado.
+// ============================================
+
+const QUOTA_OPTS = {
+  to: 'user@example.com',
+  usagePercent: 75,
+  unificationsCount: 22,
+  limit: 30,
+  remaining: 8,
+  resetAtFormatted: '31/05/2026',
+}
+
+describe('sendQuotaWarningEmail', () => {
+  beforeEach(() => {
+    sendMock.mockReset()
+    sendMock.mockResolvedValue({ data: { id: 'em_qw' }, error: null })
+  })
+
+  afterEach(() => {
+    sendMock.mockReset()
+  })
+
+  it('chama Resend.emails.send com from/to/subject corretos', async () => {
+    await sendQuotaWarningEmail(QUOTA_OPTS)
+    expect(sendMock).toHaveBeenCalledTimes(1)
+    const call = sendMock.mock.calls[0][0]
+    expect(call.from).toBe('Tablix <noreply@tablix.com.br>')
+    expect(call.to).toBe('user@example.com')
+    expect(call.subject).toBe(
+      'Voce ja usou 70% da sua quota mensal do Tablix Pro',
+    )
+    expect(call.html).toContain('75%')
+    expect(call.text).toContain('Ver meu uso')
+  })
+
+  it('lança AppError INTERNAL quando Resend retorna error', async () => {
+    sendMock.mockResolvedValueOnce({
+      data: null,
+      error: { name: 'validation_error', message: 'invalid to' },
+    })
+    await expect(sendQuotaWarningEmail(QUOTA_OPTS)).rejects.toBeInstanceOf(
+      AppError,
+    )
+  })
+
+  it('mensagem do AppError é genérica (não vaza detalhes do Resend)', async () => {
+    sendMock.mockResolvedValueOnce({
+      data: null,
+      error: { name: 'rate_limit', message: 'SECRETLEAK quota stuff' },
+    })
+    try {
+      await sendQuotaWarningEmail(QUOTA_OPTS)
+    } catch (err) {
+      const appErr = err as AppError
+      expect(appErr.message).toBe('Erro ao enviar email')
+      expect(appErr.message).not.toContain('SECRETLEAK')
+    }
+  })
+})
+
+describe('sendQuotaCriticalEmail', () => {
+  beforeEach(() => {
+    sendMock.mockReset()
+    sendMock.mockResolvedValue({ data: { id: 'em_qc' }, error: null })
+  })
+
+  afterEach(() => {
+    sendMock.mockReset()
+  })
+
+  it('chama Resend.emails.send com subject critical + html contém "ate la"', async () => {
+    await sendQuotaCriticalEmail({
+      ...QUOTA_OPTS,
+      usagePercent: 95,
+      unificationsCount: 28,
+      remaining: 2,
+    })
+    expect(sendMock).toHaveBeenCalledTimes(1)
+    const call = sendMock.mock.calls[0][0]
+    expect(call.subject).toBe(
+      'Atencao: voce esta chegando ao limite do seu plano Pro',
+    )
+    expect(call.html).toContain('95%')
+    // Card #147 fix-pack ciclo 1: anáfora "ate la" em vez de repetir data.
+    expect(call.html).toContain('ficarao indisponiveis ate la')
+    expect(call.text).toContain('ficarao indisponiveis ate la')
+  })
+
+  it('lança AppError INTERNAL quando Resend retorna error', async () => {
+    sendMock.mockResolvedValueOnce({
+      data: null,
+      error: { name: 'server_error', message: 'Resend 503' },
+    })
+    await expect(
+      sendQuotaCriticalEmail({
+        ...QUOTA_OPTS,
+        usagePercent: 95,
+        unificationsCount: 28,
+        remaining: 2,
+      }),
+    ).rejects.toBeInstanceOf(AppError)
   })
 })

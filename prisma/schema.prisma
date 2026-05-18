@@ -36,11 +36,12 @@ model User {
   updatedAt        DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   // Relacionamentos
-  tokens      Token[]
-  sessions    Session[]
-  usages      Usage[]
-  jobs        Job[]
-  fileHistory FileHistory[]
+  tokens          Token[]
+  sessions        Session[]
+  usages          Usage[]
+  jobs            Job[]
+  fileHistory     FileHistory[]
+  quotaAlertsSent QuotaAlertSent[]
 
   @@map("users")
 }
@@ -486,6 +487,27 @@ model FileHistoryDeadLetter {
 
   @@index([userId, movedToDeadLetterAt(sort: Desc)], map: "idx_fhdl_user_moved")
   @@map("file_history_dead_letter")
+}
+
+// ===========================================
+// QUOTA ALERTS SENT - dedupe Card #147 (5.2c)
+// ===========================================
+// 1 row = 1 alerta enviado. UNIQUE(user_id, threshold, period) absorve retry
+// e garante 1 email por threshold por mês por user. Cron quota-alert insere
+// via INSERT...ON CONFLICT DO NOTHING (atômico, espelha pattern Card 4.2).
+// Reset implícito: nova `period` (mês UTC) permite reenvio.
+
+model QuotaAlertSent {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  threshold Int // 70 ou 90 (CHECK constraint no DB)
+  period    String   @db.VarChar(7) // YYYY-MM UTC (alinhado com usage.service.getCurrentPeriod)
+  sentAt    DateTime @default(now()) @map("sent_at") @db.Timestamptz(3)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, threshold, period], map: "quota_alerts_unique_user_threshold_period")
+  @@map("quota_alerts_sent")
 }
 
 // ===========================================

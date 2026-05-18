@@ -39,7 +39,7 @@ describe('DB smoke (integration)', () => {
   })
 
   describe('1. schema introspection', () => {
-    it('tem 11 tabelas no schema public', async () => {
+    it('tem 12 tabelas no schema public', async () => {
       const rows = await prisma.$queryRaw<{ tablename: string }[]>`
         SELECT tablename FROM pg_tables WHERE schemaname = 'public' ORDER BY tablename
       `
@@ -52,6 +52,7 @@ describe('DB smoke (integration)', () => {
           'file_history', // Card #145 — opt-in PRO storage history
           'file_history_dead_letter', // Card #146 F2.5 — quarentena LGPD 5y
           'jobs',
+          'quota_alerts_sent', // Card #147 (5.2c) F1 — dedupe mensal de alertas
           'sessions',
           'stripe_events',
           'tokens',

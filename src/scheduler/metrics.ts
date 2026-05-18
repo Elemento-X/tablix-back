@@ -92,6 +92,22 @@ export interface SchedulerMetricsSnapshot {
     count: number
     lastUpdatedAt: string
   }>
+
+  /**
+   * Gauge de usuários PRO acima de cada threshold (70%, 90%) da quota mensal.
+   * Atualizado ao fim de cada execução do cron `quota-alert` (Card #147 F3).
+   * `lastUpdatedAt` permite detectar gauge stale (> 25h sem update = cron
+   * parado — runbook quota-alert-stuck.md).
+   *
+   * Bounded: exatamente 2 entradas máx (70 e 90). Sem cardinality explosion.
+   *
+   * Card #147 F3 (T-3.4).
+   */
+  usersAboveThreshold: Array<{
+    threshold: 70 | 90
+    count: number
+    lastUpdatedAt: string
+  }>
 }
 
 // ============================================
@@ -108,6 +124,10 @@ const lockExpiredTotal = new Map<string, number>()
 const lastDurationMs = new Map<string, number>()
 const purgePendingCount = new Map<
   string,
+  { count: number; lastUpdatedAt: Date }
+>()
+const usersAboveThreshold = new Map<
+  70 | 90,
   { count: number; lastUpdatedAt: Date }
 >()
 
@@ -172,6 +192,26 @@ export function setPurgePendingCount(jobName: string, count: number): void {
   })
 }
 
+/**
+ * Atualiza `users_above_threshold{threshold=70|90}` com count atual de
+ * usuários PRO acima do threshold. Chamado ao fim do cron `quota-alert`
+ * (Card #147 F3). Rejeita NaN/negativo (mesma defesa do setPurgePendingCount).
+ *
+ * Gauge bounded — apenas 2 entradas (70 e 90). Sem cardinality explosion.
+ *
+ * Card #147 F3 (T-3.4).
+ */
+export function setUsersAboveThreshold(
+  threshold: 70 | 90,
+  count: number,
+): void {
+  if (!Number.isFinite(count) || count < 0) return
+  usersAboveThreshold.set(threshold, {
+    count: Math.floor(count),
+    lastUpdatedAt: new Date(),
+  })
+}
+
 // ============================================
 // SNAPSHOT (read-only)
 // ============================================
@@ -212,6 +252,13 @@ export function getSchedulerMetrics(): SchedulerMetricsSnapshot {
       lastUpdatedAt: entry.lastUpdatedAt.toISOString(),
     }))
 
+  const usersAboveThresholdList: SchedulerMetricsSnapshot['usersAboveThreshold'] =
+    Array.from(usersAboveThreshold.entries()).map(([threshold, entry]) => ({
+      threshold,
+      count: entry.count,
+      lastUpdatedAt: entry.lastUpdatedAt.toISOString(),
+    }))
+
   return {
     runsTotal: runsList,
     lockContentionTotal: lockContentionList,
@@ -219,6 +266,7 @@ export function getSchedulerMetrics(): SchedulerMetricsSnapshot {
     lastDurationMs: durationList,
     retentionDaysCurrent: env.PRO_RETENTION_DAYS,
     purgePendingCount: purgePendingList,
+    usersAboveThreshold: usersAboveThresholdList,
   }
 }
 
@@ -231,11 +279,13 @@ export const __testing = {
   lockExpiredTotal,
   lastDurationMs,
   purgePendingCount,
+  usersAboveThreshold,
   resetForTests: () => {
     runsTotal.clear()
     lockContentionTotal.clear()
     lockExpiredTotal.clear()
     lastDurationMs.clear()
     purgePendingCount.clear()
+    usersAboveThreshold.clear()
   },
 }

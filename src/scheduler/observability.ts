@@ -73,6 +73,14 @@ export type SchedulerEventName =
   | 'cron.purge.dead_letter'
   | 'cron.purge.pending_overdue'
   | 'cron.purge.dry_run.start'
+  // Card #147 F3 (T-3.5): eventos do cron de alerta de quota PRO.
+  // user_above_threshold e dedupe_skip são info (contadores operacionais).
+  // email_failed é ALERTABLE (warning). dry_run.start é ALERTABLE_IN_PROD_ONLY
+  // (mesmo pattern do purge.dry_run.start).
+  | 'cron.quota_alert.user_above_threshold'
+  | 'cron.quota_alert.email_failed'
+  | 'cron.quota_alert.dedupe_skip'
+  | 'cron.quota_alert.dry_run.start'
 
 interface EmitArgs {
   level: SchedulerEventLevel
@@ -109,6 +117,10 @@ const ALERTABLE_EVENTS: ReadonlySet<SchedulerEventName> = new Set([
   // pending_overdue = gauge purge_pending > threshold OU stale > 2h → bug.
   'cron.purge.dead_letter',
   'cron.purge.pending_overdue',
+  // Card #147 F3 (T-3.5): falha de envio do email Resend.
+  // Por user falhado — Sentry agrupa por scheduler_job tag. Trade-off A-8:
+  // INSERT em quota_alerts_sent acontece MESMO ASSIM pra não duplicar próximo run.
+  'cron.quota_alert.email_failed',
 ])
 
 /**
@@ -123,6 +135,9 @@ const ALERTABLE_EVENTS: ReadonlySet<SchedulerEventName> = new Set([
  */
 const ALERTABLE_IN_PROD_ONLY: ReadonlySet<SchedulerEventName> = new Set([
   'cron.purge.dry_run.start',
+  // Card #147 F3 (T-3.5): dry-run do cron de alerta em prod = sinal de
+  // "dry-run esquecido" igual pattern do purge.dry_run.start. Warning.
+  'cron.quota_alert.dry_run.start',
 ])
 
 /**

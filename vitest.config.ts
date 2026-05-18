@@ -65,6 +65,9 @@ export default defineConfig({
         'src/lib/parse-selected-columns.ts',
         'src/lib/security/webhook-circuit-breaker.ts',
         'src/lib/audit/audit.service.ts',
+        // Card #147 (5.2c) F3 — cron handler com testes unit 90%+
+        'src/jobs/quota-alert.job.ts',
+        'src/lib/sleep.ts',
       ],
       exclude: [
         // Entrypoints — testados via smoke/integration, não unitários

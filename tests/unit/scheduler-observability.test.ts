@@ -250,6 +250,8 @@ describe('scheduler/observability — emitSchedulerEvent', () => {
       // Card #146 F2 (T-2.3): adicionados cron.purge.dead_letter (row
       // travada após 5 tentativas — on-call investigar) e
       // cron.purge.pending_overdue (gauge stale > 2h ou count > threshold).
+      // Card #147 F3 (T-3.5): adicionado cron.quota_alert.email_failed
+      // (Resend falha por user — Sentry agrupa por scheduler_job tag).
       const expected = new Set([
         'cron.run.failure',
         'cron.run.expired',
@@ -262,9 +264,23 @@ describe('scheduler/observability — emitSchedulerEvent', () => {
         'cron.heartbeat.unexpected_error',
         'cron.purge.dead_letter',
         'cron.purge.pending_overdue',
+        'cron.quota_alert.email_failed',
       ])
 
       expect(__testing.ALERTABLE_EVENTS).toEqual(expected)
+    })
+
+    it('whitelist ALERTABLE_IN_PROD_ONLY é estável (snapshot contract)', () => {
+      // Card #146 F2: cron.purge.dry_run.start.
+      // Card #147 F3 (fix-pack ciclo 1 @devops MÉDIO): adicionado
+      // cron.quota_alert.dry_run.start — pattern espelho.
+      // Mudança aqui é breaking change pras alert rules Sentry — qualquer
+      // delta exige update do runbook docs/runbooks/quota-alert-stuck.md.
+      const expected = new Set([
+        'cron.purge.dry_run.start',
+        'cron.quota_alert.dry_run.start',
+      ])
+      expect(__testing.ALERTABLE_IN_PROD_ONLY).toEqual(expected)
     })
   })
 

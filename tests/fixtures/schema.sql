@@ -340,3 +340,144 @@ CREATE POLICY "file_history_update_own_active"
   TO authenticated
   USING (auth.uid() = "user_id" AND "deleted_at" IS NULL)
   WITH CHECK (auth.uid() = "user_id");
+
+-- ----------------------------------------------------------------------------
+-- cron_runs (Card #146 F2.5) — telemetria persistente do scheduler.
+-- ----------------------------------------------------------------------------
+-- 1 row por execução de cron. Status terminal (success/failure/skipped/expired)
+-- exige finished_at; status='running' exige finished_at NULL. CHECK garante
+-- invariantes consistentes. Retenção 30d via cron-runs-cleanup.job.
+CREATE TABLE "cron_runs" (
+  "id"             UUID         NOT NULL DEFAULT gen_random_uuid() PRIMARY KEY,
+  "job_name"       VARCHAR(64)  NOT NULL,
+  "started_at"     TIMESTAMPTZ  NOT NULL,
+  "finished_at"    TIMESTAMPTZ,
+  "status"         VARCHAR(16)  NOT NULL,
+  "skip_reason"    VARCHAR(32),
+  "duration_ms"    INTEGER,
+  "rows_processed" INTEGER,
+  "attempts"       SMALLINT     NOT NULL DEFAULT 1,
+  "error_code"     VARCHAR(80),
+  "error_message"  VARCHAR(500),
+  "created_at"     TIMESTAMPTZ  NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+  CONSTRAINT "cron_runs_status_check"
+    CHECK (status IN ('running','success','failure','skipped','expired')),
+  CONSTRAINT "cron_runs_terminal_finished_check"
+    CHECK (
+      (status = 'running' AND finished_at IS NULL)
+      OR (status IN ('success','failure','skipped','expired') AND finished_at IS NOT NULL)
+    ),
+  CONSTRAINT "cron_runs_skip_reason_check"
+    CHECK (
+      skip_reason IS NULL
+      OR skip_reason IN ('feature_disabled','test_env','lock_not_acquired')
+    ),
+  CONSTRAINT "cron_runs_skip_reason_consistency"
+    CHECK (
+      (status = 'skipped' AND skip_reason IS NOT NULL)
+      OR (status <> 'skipped' AND skip_reason IS NULL)
+    ),
+  CONSTRAINT "cron_runs_error_consistency"
+    CHECK (
+      status IN ('failure','expired')
+      OR (error_code IS NULL AND error_message IS NULL)
+    ),
+  CONSTRAINT "cron_runs_attempts_check"     CHECK (attempts BETWEEN 1 AND 10),
+  CONSTRAINT "cron_runs_duration_positive_check" CHECK (duration_ms IS NULL OR duration_ms >= 0),
+  CONSTRAINT "cron_runs_rows_processed_nonneg" CHECK (rows_processed IS NULL OR rows_processed >= 0),
+  CONSTRAINT "cron_runs_finished_after_started" CHECK (finished_at IS NULL OR finished_at >= started_at),
+  CONSTRAINT "cron_runs_job_name_format_check" CHECK (job_name ~ '^[a-z][a-z0-9-]{2,63}$')
+);
+CREATE INDEX "idx_cron_runs_created_at"        ON "cron_runs" ("created_at");
+CREATE INDEX "idx_cron_runs_failures"          ON "cron_runs" ("started_at" DESC) WHERE status IN ('failure','expired');
+CREATE INDEX "idx_cron_runs_job_started_desc"  ON "cron_runs" ("job_name", "started_at" DESC);
+CREATE INDEX "idx_cron_runs_running"           ON "cron_runs" ("started_at") WHERE status = 'running';
+
+-- ----------------------------------------------------------------------------
+-- file_history_dead_letter (Card #146 F2.5) — fila de quarentena LGPD.
+-- ----------------------------------------------------------------------------
+-- Rows mortas (purge_attempts >= 5) movidas pra cá pra inspeção manual.
+-- UNIQUE PARTIAL impede duplicação ativa por origem. Trigger BEFORE DELETE
+-- bloqueia hard-delete (LGPD audit trail). Coluna mime_type, original_filename,
+-- storage_path com validações strict pra evitar drift Zod↔SQL.
+CREATE TABLE "file_history_dead_letter" (
+  "id"                            UUID         NOT NULL DEFAULT gen_random_uuid() PRIMARY KEY,
+  "original_file_history_id"      UUID         NOT NULL,
+  "user_id"                       UUID         NOT NULL,
+  "storage_path"                  VARCHAR(255) NOT NULL,
+  "original_filename"             VARCHAR(255) NOT NULL,
+  "mime_type"                     VARCHAR(127) NOT NULL,
+  "file_size"                     INTEGER      NOT NULL,
+  "expires_at"                    TIMESTAMPTZ  NOT NULL,
+  "deleted_at"                    TIMESTAMPTZ  NOT NULL,
+  "purge_attempts"                INTEGER      NOT NULL,
+  "last_error_code"               VARCHAR(80)  NOT NULL,
+  "last_error_message"            VARCHAR(500),
+  "moved_to_dead_letter_at"       TIMESTAMPTZ  NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  "reprocess_count"               SMALLINT     NOT NULL DEFAULT 0,
+  "last_reprocess_attempt_at"     TIMESTAMPTZ,
+  "last_reprocess_error_code"     VARCHAR(80),
+  "last_reprocess_error_message"  VARCHAR(500),
+  "resolved_at"                   TIMESTAMPTZ,
+  "resolution_type"               VARCHAR(32),
+  "created_at"                    TIMESTAMPTZ  NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+  CONSTRAINT "fhdl_purge_attempts_threshold_check" CHECK (purge_attempts >= 5),
+  CONSTRAINT "fhdl_file_size_positive_check"       CHECK (file_size > 0 AND file_size <= 104857600),
+  CONSTRAINT "fhdl_mime_type_nonempty"             CHECK (length(mime_type) > 0),
+  CONSTRAINT "fhdl_original_filename_check"
+    CHECK (length(original_filename) > 0 AND original_filename !~ '[\x00-\x1F\x7F]'),
+  CONSTRAINT "fhdl_storage_path_format_check"
+    CHECK (storage_path ~ '^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])/[a-z0-9]{7,64}\.(csv|xlsx|xls)$'),
+  CONSTRAINT "fhdl_reprocess_count_check" CHECK (reprocess_count BETWEEN 0 AND 3),
+  CONSTRAINT "fhdl_reprocess_consistency"
+    CHECK (
+      (reprocess_count = 0 AND last_reprocess_attempt_at IS NULL)
+      OR (reprocess_count > 0 AND last_reprocess_attempt_at IS NOT NULL)
+    ),
+  CONSTRAINT "fhdl_resolution_consistency"
+    CHECK (
+      (resolved_at IS NULL AND resolution_type IS NULL)
+      OR (resolved_at IS NOT NULL AND resolution_type IS NOT NULL)
+    ),
+  CONSTRAINT "fhdl_resolution_type_check"
+    CHECK (
+      resolution_type IS NULL
+      OR resolution_type IN ('cron_reprocess_success','admin_manual_delete','admin_manual_ignore','storage_already_gone')
+    ),
+  CONSTRAINT "fhdl_timing_consistency"
+    CHECK (
+      deleted_at <= moved_to_dead_letter_at
+      AND (last_reprocess_attempt_at IS NULL OR last_reprocess_attempt_at >= moved_to_dead_letter_at)
+      AND (resolved_at IS NULL OR (last_reprocess_attempt_at IS NOT NULL AND resolved_at >= last_reprocess_attempt_at))
+    )
+);
+CREATE INDEX "idx_fhdl_human_required"        ON "file_history_dead_letter" ("moved_to_dead_letter_at" DESC) WHERE resolved_at IS NULL AND reprocess_count >= 3;
+CREATE INDEX "idx_fhdl_reprocess_candidates"  ON "file_history_dead_letter" ("moved_to_dead_letter_at") WHERE resolved_at IS NULL AND reprocess_count < 3;
+CREATE INDEX "idx_fhdl_user_moved"            ON "file_history_dead_letter" ("user_id", "moved_to_dead_letter_at" DESC);
+CREATE UNIQUE INDEX "uq_fhdl_active_per_origin" ON "file_history_dead_letter" ("original_file_history_id") WHERE resolved_at IS NULL;
+
+-- ----------------------------------------------------------------------------
+-- quota_alerts_sent (Card #147 5.2c F1) — dedupe de alertas de quota mensal.
+-- ----------------------------------------------------------------------------
+-- 1 row = 1 alerta enviado. UNIQUE(user_id, threshold, period) absorve retry e
+-- garante 1 email/threshold/mês/user. Cron quota-alert insere via
+-- INSERT...ON CONFLICT DO NOTHING (atomic). FK CASCADE pra LGPD purge.
+CREATE TABLE "quota_alerts_sent" (
+  "id"        UUID         NOT NULL DEFAULT gen_random_uuid() PRIMARY KEY,
+  "user_id"   UUID         NOT NULL REFERENCES "users"("id") ON DELETE CASCADE,
+  "threshold" INTEGER      NOT NULL,
+  "period"    VARCHAR(7)   NOT NULL,
+  "sent_at"   TIMESTAMPTZ  NOT NULL DEFAULT now(),
+
+  CONSTRAINT "quota_alerts_threshold_check"
+    CHECK (threshold IN (70, 90)),
+  CONSTRAINT "quota_alerts_period_format_check"
+    CHECK (period ~ '^[0-9]{4}-(0[1-9]|1[0-2])$'),
+  CONSTRAINT "quota_alerts_unique_user_threshold_period"
+    UNIQUE ("user_id", "threshold", "period")
+);
+ALTER TABLE "quota_alerts_sent" ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "quota_alerts_service_role_only" ON "quota_alerts_sent"
+  FOR ALL TO public USING (false) WITH CHECK (false);
