@@ -111,6 +111,8 @@ CREATE TABLE "tokens" (
 CREATE UNIQUE INDEX "tokens_token_key"       ON "tokens" ("token");
 CREATE        INDEX "tokens_fingerprint_idx" ON "tokens" ("fingerprint");
 CREATE        INDEX "idx_tokens_user"        ON "tokens" ("user_id");
+-- Card #147 fix-pack ciclo 2 followup: índice parcial pra query hot do cron quota-alert.
+CREATE        INDEX "idx_tokens_active_pro"  ON "tokens" ("user_id", "status") WHERE "status" = 'ACTIVE';
 
 -- ----------------------------------------------------------------------------
 -- TABLE: usage

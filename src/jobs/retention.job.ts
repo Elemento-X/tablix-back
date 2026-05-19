@@ -62,6 +62,7 @@ import { hashStoragePathForAudit } from '../lib/audit/storage-path-hash'
 import { hashResourceV1 } from '../lib/audit-hash'
 import { logger } from '../lib/logger'
 import { prisma } from '../lib/prisma'
+import { sanitizeErrorMessage } from '../lib/sanitize-error'
 import { getStorageAdapter } from '../lib/storage'
 import {
   LegalActor,
@@ -150,32 +151,9 @@ interface PurgeResult {
 // HELPERS
 // ============================================
 
-/**
- * Sanitiza err.message (max 100 chars, sem CR/LF/TAB, sem fragmentos Prisma SQL).
- * Pattern Card #150 + scheduler/cron.ts sanitizeErrorMessage.
- *
- * Card #146 fix-pack ciclo 1 (@security MÉDIO c5d1a8f7e93b + f4a8c2d6b91e):
- * Prisma error messages tipo `Invalid prisma.fileHistory.update() invocation:
- * <query SQL com WHERE id="abc-uuid">` vazam UUID parametrizado mesmo após
- * cap 200 chars (cap original cortava DEPOIS do trecho com PII). Hardening:
- *   1. Cap 100 (não 200) — força msg sintética curta no logger
- *   2. Split em `:` e pegar só PREFIXO (`Invalid prisma.X.Y() invocation`)
- *      antes do trecho com query — Prisma sempre tem `:` separador
- *   3. Replace CR/LF/TAB (defesa contra log injection)
- *
- * Para errors NÃO-Prisma (Storage 5xx, network), o split em `:` mantém
- * a mensagem inteira (sem `:` = pega 1ª parte = tudo). Aceitável: erros
- * de rede tem msg curta e sem PII típica.
- */
-function sanitizeErrorMessage(err: unknown): string {
-  if (err instanceof Error) {
-    // Pega prefixo antes do primeiro `:` (Prisma usa `:` antes da query).
-    // Se não houver `:`, mantém a msg inteira (split[0] = msg cru).
-    const prefix = err.message.split(':')[0] ?? ''
-    return prefix.slice(0, 100).replace(/[\r\n\t]/g, ' ')
-  }
-  return 'unknown error'
-}
+// Card #147 fix-pack ciclo 2 (discovery resolvido @dba+@security convergente):
+// sanitizeErrorMessage extraído pra src/lib/sanitize-error.ts (SSOT).
+// Duplicação com quota-alert.job.ts eliminada.
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))

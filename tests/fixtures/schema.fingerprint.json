@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-05-18T23:19:53.489Z",
+  "generatedAt": "2026-05-19T00:16:10.393Z",
   "database": "container:postgres-17-alpine",
-  "fingerprint": "10a65c7e221428856fd285bb8550cf2f6f4ead5902ccc525b741d8410ac488ec",
+  "fingerprint": "5a515281a18bfd4af7809d4e4f32103d267d0f771aabe5239aacd3ff9566ffba",
   "model": {
     "extensions": [
       "pgcrypto"
@@ -1003,6 +1003,11 @@
         "table": "stripe_events",
         "name": "stripe_events_pkey",
         "definition": "CREATE UNIQUE INDEX stripe_events_pkey ON public.stripe_events USING btree (id)"
+      },
+      {
+        "table": "tokens",
+        "name": "idx_tokens_active_pro",
+        "definition": "CREATE INDEX idx_tokens_active_pro ON public.tokens USING btree (user_id, status) WHERE (status = 'ACTIVE'::\"TokenStatus\")"
       },
       {
         "table": "tokens",

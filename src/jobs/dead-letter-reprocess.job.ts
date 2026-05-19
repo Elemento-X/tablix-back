@@ -29,6 +29,7 @@ import { hashStoragePathForAudit } from '../lib/audit/storage-path-hash'
 import { hashResourceV1 } from '../lib/audit-hash'
 import { logger } from '../lib/logger'
 import { prisma } from '../lib/prisma'
+import { sanitizeErrorMessage } from '../lib/sanitize-error'
 import { getStorageAdapter } from '../lib/storage'
 import {
   LegalActor,
@@ -48,20 +49,10 @@ const BATCH_SIZE = 100
 /** Threshold de reprocess. Após 3 tentativas: alerta CRITICAL. */
 const REPROCESS_LIMIT = 3
 
-/**
- * Sanitiza err.message (max 100 chars, sem CR/LF/TAB, sem fragmentos Prisma SQL).
- *
- * Card #146 fix-pack ciclo 1 (@security MÉDIO): mesma defesa do
- * retention.job.ts contra Prisma SQL leak (msg começa com query parametrizada
- * após `:`).
- */
-function sanitizeErrorMessage(err: unknown): string {
-  if (err instanceof Error) {
-    const prefix = err.message.split(':')[0] ?? ''
-    return prefix.slice(0, 100).replace(/[\r\n\t]/g, ' ')
-  }
-  return 'unknown error'
-}
+// Card #147 fix-pack ciclo 3 (discovery resolvido @dba): sanitizeErrorMessage
+// extraído pra src/lib/sanitize-error.ts (SSOT). Tripla cópia (retention +
+// quota-alert + dead-letter) eliminada. cron.ts mantém variante divergente
+// (cap 200 sem split) — semantics diferente justificada.
 
 /**
  * Handler do scheduler. Para cada row candidata:

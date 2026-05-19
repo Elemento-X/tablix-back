@@ -58,6 +58,7 @@ import { env } from '../config/env'
 import { sendQuotaCriticalEmail, sendQuotaWarningEmail } from '../lib/email'
 import { logger } from '../lib/logger'
 import { prisma } from '../lib/prisma'
+import { sanitizeErrorMessage } from '../lib/sanitize-error'
 import { sleep } from '../lib/sleep'
 import { PRO_LIMITS } from '../config/plan-limits'
 import {
@@ -89,22 +90,9 @@ const RESEND_SLEEP_MS = 100
 // HELPERS LOCAIS
 // ============================================
 
-/**
- * Sanitiza err.message — cap 100 chars + split em `:` (anti Prisma SQL leak) +
- * replace CR/LF/TAB (anti log injection). Espelha pattern de retention.job
- * (#146 fix-pack ciclo 1).
- *
- * Duplicação consciente: não-refactor de retention.job pra preservar estabilidade
- * (já em produção). Card discovery futuro pode extrair em `_lib/sanitize-error.ts`
- * compartilhado.
- */
-function sanitizeErrorMessage(err: unknown): string {
-  if (err instanceof Error) {
-    const prefix = err.message.split(':')[0] ?? ''
-    return prefix.slice(0, 100).replace(/[\r\n\t]/g, ' ')
-  }
-  return 'unknown error'
-}
+// Card #147 fix-pack ciclo 2 (discovery resolvido @dba+@security convergente):
+// sanitizeErrorMessage extraído pra src/lib/sanitize-error.ts (SSOT).
+// Duplicação com retention.job.ts eliminada.
 
 // Card #147 fix-pack ciclo 1 (@tester ALTO F2): `sleep` extraído pra
 // `src/lib/sleep.ts` permite mock via vi.mock em testes (eliminando
@@ -500,14 +488,32 @@ export async function scanUsageAndAlert(lock: LockHandle): Promise<void> {
   } catch (err) {
     const errCode = err instanceof Error ? err.name : 'unknown'
     const errMessage = sanitizeErrorMessage(err)
-    await recordRunEnd({
-      runId,
-      status: 'failure',
-      startedAt,
-      rowsProcessed: result.usersScanned,
-      errorCode: errCode,
-      errorMessage: errMessage,
-    })
+    // Card #147 fix-pack ciclo 2 (@reviewer BAIXO c9f5e6a2d3b8): wrap em
+    // try/catch interno garante que o `throw err` original NÃO seja mascarado
+    // se recordRunEnd lançar nova exceção. recordRunEnd hoje tem catch
+    // interno e nunca lança, mas refactor futuro pode quebrar essa garantia.
+    try {
+      await recordRunEnd({
+        runId,
+        status: 'failure',
+        startedAt,
+        rowsProcessed: result.usersScanned,
+        errorCode: errCode,
+        errorMessage: errMessage,
+      })
+    } catch (recordErr) {
+      logger.error(
+        {
+          jobName: JOB_NAME,
+          runId,
+          originalErrCode: errCode,
+          recordErrCode:
+            recordErr instanceof Error ? recordErr.name : 'unknown',
+          recordErrMessage: sanitizeErrorMessage(recordErr),
+        },
+        'quota-alert.recordRunEnd_failed_during_error_path',
+      )
+    }
     throw err
   }
 }
