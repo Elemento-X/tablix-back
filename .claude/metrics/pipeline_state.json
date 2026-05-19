@@ -20,6 +20,7 @@
     "cards_discovered": 5,
     "operator_pre_merge_condition": "RESOLVIDA 2026-05-18T20:55 — npm run test:schema:dump rodado em Docker local, schema.fingerprint.json regenerado, primeira execução integration completa revelou 3 bugs latentes do Card #146 corrigidos no commit 99ab566 (UUID cast retention.job:331, Fase C loop guard seenIds, schema.sql trigger fhdl ausente). 209/209 integration verdes + 1669/1669 unit verdes. Card #147 + pré-merge 100% COMPLETO.",
     "post_merge_commit": "99ab566 — fix(retention) hotfixes #146 descobertos via 1ª execução integration (UUID cast + Fase C guard + schema.sql trigger + test seedFileHistory createdAt + mock sentry scrubObject)",
+    "fix_pack_ciclo_3_commit": "b82eca3 — refactor(jobs) 3 discovery resolvidos no escopo (idx_tokens_active_pro CONCURRENTLY + extract sanitize-error SSOT + try/finally hardening) + 2 discovery legítimos criados Backlog (#186 cron-cursor-batching, #187 decouple-cron-kill-switches). Smart re-run @dba+@security APPROVED unânime.",
     "notes": "Card #147 (5.2c) ÚLTIMO da Fase 5 — Storage. 4 ciclos pipeline QA (1 + fix-pack 1 atômico 20 itens + 2 + fix-pack 2 + 2.5 atômico 5 itens + 3 @tester reverify + reviewer final). Ciclo 1 REPROVED_HARD@tester (1 CRÍTICO schema.sql + 4 ALTO + 6 MÉDIO + 3 BAIXO). Diretriz 'corrige tudo' aplicou fix-pack atômicos cobrindo TODOS findings + 1 BAIXO observability @security catched (usersProcessedSoFar fórmula errada) + 1 MÉDIO @reviewer catched (db-smoke 11→12 tabelas falso negativo @tester). Ciclo 3 APPROVED_WITH_CONDITIONS — coverage final: sleep 100/100/100/100, email 100/95/100/100, quota-alert.job 100/84.09/100/100. 1669/1669 unit verdes (+205 vs baseline 1464). 209/209 integration verdes (rodado em Docker pré-merge — revelou 3 bugs latentes Card #146: UUID type confusion retention.job:331 sem cast ::uuid, Fase C reconciliação loop ignorava cooldown 1h levando row de purge_attempts=1→5 em single run, schema.sql faltava função+trigger fhdl). Fix-pack atômico ciclo final 99ab566 (5 fixes: 3 bugs + 2 test infra). 3 migrations Supabase via MCP. Custo $11.45. 5 cards discovery pendentes. Commits: b3bd553 (feat) + 51d674b (metrics) + 99ab566 (hotfix integration). FASE 5 STORAGE 5/5 cards done — FECHADA. Bug Fase C loop é semântico real — preserva contrato cooldown documentado."
   },
   "previously_completed": {
@@ -70,8 +71,11 @@
         "phase": "Fase 5 — Storage",
         "period": "2026-04-26 → 2026-05-18",
         "cards_delivered": 5,
-        "hist_card": "PENDING",
-        "status": "READY_TO_CLOSE",
+        "hist_card": "NdfwUsXS",
+        "hist_card_id_short": 188,
+        "closed_at": "2026-05-18T22:35:00Z",
+        "analyst_snapshot_health_score": "86/100",
+        "status": "CLOSED_NO_OPEN_DEBT",
         "debt_cards": 0,
         "cards_done": [
           "5.1 (#36, lGlZpdE7) — Adapter Supabase Storage (commit 2ce90f2, 2026-04-27)",
