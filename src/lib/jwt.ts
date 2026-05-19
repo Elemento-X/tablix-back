@@ -1,13 +1,14 @@
+import { createHash, randomBytes } from 'crypto'
 import jwt from 'jsonwebtoken'
 import { env } from '../config/env'
 import { Errors } from '../errors/app-error'
 
-// Payload do JWT de sessão
-export interface JwtPayload {
-  sub: string // tokenId (identificador único do token Pro)
+// Payload do access token (curto, 15min)
+export interface AccessTokenPayload {
+  sub: string // sessionId
+  userId: string
   email: string
-  plan: 'PRO'
-  fingerprint: string | null
+  role: 'FREE' | 'PRO'
   iat?: number
   exp?: number
 }
@@ -15,7 +16,7 @@ export interface JwtPayload {
 // Resultado da verificação do JWT
 export interface VerifyResult {
   valid: true
-  payload: JwtPayload
+  payload: AccessTokenPayload
 }
 
 export interface VerifyError {
@@ -26,23 +27,45 @@ export interface VerifyError {
 export type VerifyJwtResult = VerifyResult | VerifyError
 
 /**
- * Gera um JWT de sessão para o usuário Pro
+ * Gera um access token JWT (curto, 15min por default)
  */
-export function generateSessionJwt(
-  payload: Omit<JwtPayload, 'iat' | 'exp'>,
+export function generateAccessToken(
+  payload: Omit<AccessTokenPayload, 'iat' | 'exp'>,
 ): string {
   return jwt.sign(payload, env.JWT_SECRET, {
-    expiresIn: env.JWT_EXPIRES_IN,
+    algorithm: 'HS256',
+    expiresIn: env.JWT_ACCESS_TOKEN_EXPIRES_IN,
   } as jwt.SignOptions)
 }
 
 /**
- * Verifica e decodifica um JWT
- * Retorna objeto tipado com resultado ou erro
+ * Gera um refresh token opaco (256 bits de entropia)
+ * Retorna o token raw e o hash para armazenar no DB
  */
-export function verifyJwt(token: string): VerifyJwtResult {
+export function generateRefreshToken(): {
+  token: string
+  hash: string
+} {
+  const token = randomBytes(32).toString('base64url')
+  const hash = hashRefreshToken(token)
+  return { token, hash }
+}
+
+/**
+ * Gera SHA-256 hex do refresh token para armazenamento seguro
+ */
+export function hashRefreshToken(token: string): string {
+  return createHash('sha256').update(token).digest('hex')
+}
+
+/**
+ * Verifica e decodifica um access token JWT
+ */
+export function verifyAccessToken(token: string): VerifyJwtResult {
   try {
-    const payload = jwt.verify(token, env.JWT_SECRET) as JwtPayload
+    const payload = jwt.verify(token, env.JWT_SECRET, {
+      algorithms: ['HS256'],
+    }) as AccessTokenPayload
     return { valid: true, payload }
   } catch (error) {
     if (error instanceof jwt.TokenExpiredError) {
@@ -57,13 +80,13 @@ export function verifyJwt(token: string): VerifyJwtResult {
 
 /**
  * Decodifica um JWT sem verificar a assinatura
- * Útil para refresh tokens (pegar o sub mesmo expirado)
+ * Útil para extrair sub de token expirado no refresh flow
  */
-export function decodeJwt(token: string): JwtPayload | null {
+export function decodeJwt(token: string): AccessTokenPayload | null {
   try {
     const decoded = jwt.decode(token)
     if (decoded && typeof decoded === 'object') {
-      return decoded as JwtPayload
+      return decoded as AccessTokenPayload
     }
     return null
   } catch {
@@ -84,11 +107,11 @@ export function extractBearerToken(
 }
 
 /**
- * Verifica JWT e lança erro se inválido
+ * Verifica access token e lança erro se inválido
  * Versão que lança exceção para uso em middlewares
  */
-export function verifyJwtOrThrow(token: string): JwtPayload {
-  const result = verifyJwt(token)
+export function verifyAccessTokenOrThrow(token: string): AccessTokenPayload {
+  const result = verifyAccessToken(token)
 
   if (!result.valid) {
     switch (result.error) {
@@ -102,4 +125,29 @@ export function verifyJwtOrThrow(token: string): JwtPayload {
   }
 
   return result.payload
+}
+
+/**
+ * Calcula data de expiração do refresh token
+ */
+export function getRefreshTokenExpiresAt(): Date {
+  const expiresIn = env.JWT_REFRESH_TOKEN_EXPIRES_IN
+  const match = expiresIn.match(/^(\d+)([smhd])$/)
+
+  if (!match) {
+    // Default: 30 dias
+    return new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
+  }
+
+  const value = parseInt(match[1], 10)
+  const unit = match[2]
+
+  const multipliers: Record<string, number> = {
+    s: 1000,
+    m: 60 * 1000,
+    h: 60 * 60 * 1000,
+    d: 24 * 60 * 60 * 1000,
+  }
+
+  return new Date(Date.now() + value * multipliers[unit])
 }

@@ -1,7 +1,7 @@
-import { JwtPayload } from '../lib/jwt'
+import { AccessTokenPayload } from '../lib/jwt'
 
 declare module 'fastify' {
   interface FastifyRequest {
-    user?: JwtPayload
+    user?: AccessTokenPayload
   }
 }

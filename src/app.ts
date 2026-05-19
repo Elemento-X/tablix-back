@@ -9,15 +9,36 @@ import {
   validatorCompiler,
   jsonSchemaTransform,
   ZodTypeProvider,
+  hasZodFastifySchemaValidationErrors,
 } from 'fastify-type-provider-zod'
 import { env } from './config/env'
+import { buildLoggerOptions, genReqId } from './config/logger'
+import { captureException } from './config/sentry'
 import { registerRoutes } from './http/routes'
 import { AppError } from './errors/app-error'
+import { PRO_LIMITS } from './lib/spreadsheet'
+import { resolveTrustProxy } from './lib/trust-proxy'
+
+// resolveTrustProxy re-exportado para preservar consumers de teste históricos.
+// Implementação real em ./lib/trust-proxy.ts — extraído no Card 3.2 (#31) pra
+// permitir unit test sob coverage sem re-instrumentar todo o app.
+export { resolveTrustProxy }
 
 export async function buildApp() {
+  // Card 2.1 — logger e reqId centralizados em src/config/logger.ts.
+  // buildLoggerOptions() traz redact de PII/secrets, serializers que pulam
+  // body de /auth e /webhooks, e formatter JSON em prod / pretty em dev.
+  // genReqId aceita x-request-id incoming só se for UUID v4 válido (anti-spoof).
   const app = fastify({
-    logger: env.NODE_ENV === 'development',
+    logger: buildLoggerOptions(),
+    genReqId,
+    trustProxy: resolveTrustProxy(),
   }).withTypeProvider<ZodTypeProvider>()
+
+  // Expõe o reqId ao cliente pra correlação em debug/incident response.
+  app.addHook('onRequest', async (request, reply) => {
+    reply.header('x-request-id', request.id)
+  })
 
   // Configura Zod como validador/serializador
   app.setValidatorCompiler(validatorCompiler)
@@ -27,17 +48,33 @@ export async function buildApp() {
   await app.register(cors, {
     origin: env.FRONTEND_URL,
     credentials: true,
+    exposedHeaders: [
+      'Content-Disposition',
+      'X-Tablix-Rows',
+      'X-Tablix-Columns',
+      'X-Tablix-File-Size',
+      'X-Tablix-Format',
+      'X-Tablix-File-Name',
+    ],
   })
 
   await app.register(helmet, {
     contentSecurityPolicy: env.NODE_ENV === 'production',
   })
 
-  // Multipart para upload de arquivos
+  // Multipart para upload de arquivos (limites alinhados com PRO_LIMITS — D.1)
+  // fieldSize/fields (Card 1.16 / @security finding c8a3f70e5d12):
+  //   Sem esses caps, atacante autenticado manda request com N fields de 1MB
+  //   (default busboy) e paga parse+zod por iteração. Aqui temos só 2 fieldnames
+  //   válidos (selectedColumns, outputFormat); fields=10 dá folga de 5x sem
+  //   abrir vetor. fieldSize=8KB casa com MAX_SELECTED_COLUMNS_FIELD_BYTES.
   await app.register(multipart, {
     limits: {
-      fileSize: 30 * 1024 * 1024, // 30MB total
-      files: 15, // Máximo 15 arquivos por unificação
+      fileSize: PRO_LIMITS.maxFileSize, // 2 MB por arquivo (D.1)
+      files: PRO_LIMITS.maxInputFiles, // 15 arquivos por unificação
+      fields: 10, // max fields não-arquivo por request (Card 1.16)
+      fieldSize: 8 * 1024, // 8 KB por field (Card 1.16 — alinhado com helper)
+      fieldNameSize: 100, // 100 bytes por nome de field (default explícito)
     },
   })
 
@@ -77,13 +114,21 @@ export async function buildApp() {
     },
   })
 
-  await app.register(swaggerUi, {
-    routePrefix: '/docs',
-    uiConfig: {
-      docExpansion: 'list',
-      deepLinking: true,
-    },
-  })
+  // Card 1.18 @security finding SEC.18 (OWASP A05): Swagger UI em produção
+  // expõe schemas completos, endpoints e exemplos — facilita reconhecimento
+  // pra atacante. Em prod, nada é registrado em /docs. O spec continua
+  // acessível via `app.swagger()` programaticamente (build-time export,
+  // testes, etc.), só não via HTTP público. Se algum dia precisar de
+  // /docs/json em runtime de prod, adicionar com basic auth — nunca aberto.
+  if (env.NODE_ENV !== 'production') {
+    await app.register(swaggerUi, {
+      routePrefix: '/docs',
+      uiConfig: {
+        docExpansion: 'list',
+        deepLinking: true,
+      },
+    })
+  }
 
   // Error handler global
   app.setErrorHandler(
@@ -92,13 +137,33 @@ export async function buildApp() {
         return reply.status(error.statusCode).send(error.toJSON())
       }
 
-      // Erro de validação do Fastify
+      // Erro de validação do fastify-type-provider-zod (Card #32a).
+      // ZodError não tem o campo `.validation` do AJV — se não for tratado
+      // aqui, cai no catch genérico abaixo e vira 500 (bug @reviewer/@security
+      // revelado pelo Card #32). `hasZodFastifySchemaValidationErrors` é o
+      // type guard oficial exportado pela lib.
+      //
+      // `details` precisa bater com `z.record(z.unknown())` do
+      // errorDetailSchema (common.schema.ts) — o array `error.validation`
+      // do fastify-type-provider-zod é wrapado em `{ errors: [...] }` pra
+      // passar na validação do response schema da rota (que declara 400).
+      if (hasZodFastifySchemaValidationErrors(error)) {
+        return reply.status(400).send({
+          error: {
+            code: 'VALIDATION_ERROR',
+            message: 'Erro de validação',
+            details: { errors: error.validation },
+          },
+        })
+      }
+
+      // Erro de validação do Fastify/AJV (schemas não-Zod)
       if ('validation' in error && error.validation) {
         return reply.status(400).send({
           error: {
             code: 'VALIDATION_ERROR',
             message: 'Erro de validação',
-            details: error.validation,
+            details: { errors: error.validation },
           },
         })
       }
@@ -106,25 +171,36 @@ export async function buildApp() {
       // Log de erros não tratados
       request.log.error(error)
 
-      // Erro genérico em produção
-      const message =
-        error instanceof Error ? error.message : 'Erro desconhecido'
+      // Card 2.2 — envia erro 5xx não tratado ao Sentry com contexto mínimo.
+      // `beforeSend` em config/sentry.ts já dropa eventos em `test` e scruba
+      // body/headers sensíveis. Nunca passar o objeto request inteiro aqui.
+      //
+      // F5 (@security): `route` é TEMPLATE (`/users/:id`), nunca URL raw com
+      // valores. `request.routeOptions?.url` é o template do Fastify; se
+      // ausente (erro antes do routing), fallback é `'unknown'` — NUNCA
+      // `request.url` cru, que vaza path params + query como tag cardinal no
+      // Sentry (violação LGPD + cardinality explosion).
+      captureException(error, {
+        reqId: request.id,
+        route: request.routeOptions?.url ?? 'unknown',
+      })
+
+      // Só vaza mensagem real em development
       return reply.status(500).send({
         error: {
           code: 'INTERNAL_ERROR',
           message:
-            env.NODE_ENV === 'production'
-              ? 'Erro interno do servidor'
-              : message,
+            env.NODE_ENV === 'development' && error instanceof Error
+              ? error.message
+              : 'Erro interno do servidor',
         },
       })
     },
   )
 
-  // Health check
-  app.get('/health', async () => {
-    return { status: 'ok', timestamp: new Date().toISOString() }
-  })
+  // Health check (Card 2.3) — registrado via registerRoutes em src/http/routes/health.routes.ts
+  // Substituiu o /health inline trivial por /health, /health/live, /health/ready
+  // com checks profundos de DB e Redis, cache stale-while-revalidate e contratos Zod.
 
   // Registra todas as rotas
   await registerRoutes(app)

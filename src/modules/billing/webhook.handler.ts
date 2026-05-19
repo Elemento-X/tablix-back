@@ -1,18 +1,26 @@
 import Stripe from 'stripe'
+import { Prisma } from '@prisma/client'
 import { prisma } from '../../lib/prisma'
 import { generateProToken } from '../../lib/token-generator'
+import { Errors } from '../../errors/app-error'
 import {
   sendTokenEmail,
   sendCancellationEmail,
   sendPaymentFailedEmail,
 } from '../../lib/email'
+import { emitAuditEvent } from '../../lib/audit/audit.service'
+import { AuditAction } from '../../lib/audit/audit.types'
 
 /**
  * Handler para checkout.session.completed
- * Executado quando o pagamento é confirmado
- * - Cria registro no banco
- * - Gera token Pro
- * - Envia email com token
+ * Executado quando o pagamento e confirmado.
+ *
+ * Atomicidade: usa upsert no User e create com unique compound
+ * (userId + stripeSubscriptionId) no Token para prevenir duplicatas
+ * em cenarios de retry/replay.
+ *
+ * Defense-in-depth: token.create envolto em try/catch P2002
+ * para tratar race condition entre findFirst e create.
  */
 export async function handleCheckoutCompleted(
   session: Stripe.Checkout.Session,
@@ -20,8 +28,7 @@ export async function handleCheckoutCompleted(
   const email = session.customer_email || session.customer_details?.email
 
   if (!email) {
-    console.error('[Webhook] checkout.session.completed sem email:', session.id)
-    return
+    throw Errors.webhookFailed()
   }
 
   const customerId =
@@ -35,26 +42,73 @@ export async function handleCheckoutCompleted(
       : session.subscription?.id
 
   if (!customerId || !subscriptionId) {
-    console.error(
-      '[Webhook] checkout.session.completed sem customer/subscription:',
-      session.id,
-    )
-    return
+    throw Errors.webhookFailed()
   }
 
-  // Verifica se já existe token para este customer
+  // Captura o estado anterior pra discriminar ACCOUNT_CREATED vs ROLE_CHANGED
+  // na auditoria (ASVS V7.1 exige diferenciar criação de mudança de privilégio).
+  // Uma read extra (~1ms) é aceitável diante do valor forense.
+  const existingUser = await prisma.user.findUnique({
+    where: { email },
+    select: { id: true, role: true },
+  })
+
+  // Cria ou encontra User (upsert por email - atomico)
+  const user = await prisma.user.upsert({
+    where: { email },
+    update: {
+      stripeCustomerId: customerId,
+      role: 'PRO',
+    },
+    create: {
+      email,
+      stripeCustomerId: customerId,
+      role: 'PRO',
+    },
+  })
+
+  if (!existingUser) {
+    emitAuditEvent({
+      action: AuditAction.ACCOUNT_CREATED,
+      actor: user.id,
+      ip: null,
+      userAgent: null,
+      success: true,
+      metadata: { stripeCustomerId: customerId, reason: 'checkout_completed' },
+    })
+  } else if (existingUser.role !== 'PRO') {
+    emitAuditEvent({
+      action: AuditAction.ROLE_CHANGED,
+      actor: user.id,
+      ip: null,
+      userAgent: null,
+      success: true,
+      metadata: {
+        from: existingUser.role,
+        to: 'PRO',
+        reason: 'checkout_completed',
+      },
+    })
+  }
+
+  // Upsert do Token usando unique compound (userId + stripeSubscriptionId).
+  // Se ja existe token para este user+subscription, apenas atualiza status.
+  // Se nao existe, cria novo token.
+  const token = generateProToken()
+
   const existingToken = await prisma.token.findFirst({
-    where: { stripeCustomerId: customerId },
+    where: {
+      userId: user.id,
+      stripeSubscriptionId: subscriptionId,
+    },
   })
 
   if (existingToken) {
-    console.log('[Webhook] Token já existe para customer:', customerId)
-    // Atualiza subscription se mudou
-    if (existingToken.stripeSubscriptionId !== subscriptionId) {
+    // Token ja existe para este user+subscription - atualiza se necessario
+    if (existingToken.status !== 'ACTIVE') {
       await prisma.token.update({
         where: { id: existingToken.id },
         data: {
-          stripeSubscriptionId: subscriptionId,
           status: 'ACTIVE',
           expiresAt: null,
         },
@@ -63,37 +117,42 @@ export async function handleCheckoutCompleted(
     return
   }
 
-  // Gera novo token Pro
-  const token = generateProToken()
+  // Cria novo token com catch P2002 para race condition.
+  // Se duas requests passam o findFirst ao mesmo tempo,
+  // a segunda falha no unique constraint e e tratada como duplicata.
+  try {
+    await prisma.token.create({
+      data: {
+        token,
+        userId: user.id,
+        stripeSubscriptionId: subscriptionId,
+        plan: 'PRO',
+        status: 'ACTIVE',
+      },
+    })
+  } catch (error) {
+    if (
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      error.code === 'P2002'
+    ) {
+      // Race condition: outra request criou o token entre findFirst e create.
+      // Duplicata segura — nao propagar erro.
+      return
+    }
+    throw error
+  }
 
-  // Cria registro no banco
-  await prisma.token.create({
-    data: {
-      token,
-      email,
-      stripeCustomerId: customerId,
-      stripeSubscriptionId: subscriptionId,
-      plan: 'PRO',
-      status: 'ACTIVE',
-    },
-  })
-
-  console.log('[Webhook] Token Pro criado para:', email)
-
-  // Envia email com o token
+  // Envia email com o token (fire-and-forget)
   try {
     await sendTokenEmail({ to: email, token })
-    console.log('[Webhook] Email com token enviado para:', email)
-  } catch (error) {
-    // Log do erro mas não falha o webhook
-    // O token foi criado, email pode ser reenviado manualmente se necessário
-    console.error('[Webhook] Falha ao enviar email com token:', error)
+  } catch {
+    // Falha de email nao deve bloquear o webhook
   }
 }
 
 /**
  * Handler para customer.subscription.updated
- * Executado quando a assinatura é modificada (upgrade, downgrade, etc)
+ * Executado quando a assinatura e modificada
  */
 export async function handleSubscriptionUpdated(
   subscription: Stripe.Subscription,
@@ -104,41 +163,51 @@ export async function handleSubscriptionUpdated(
       : subscription.customer?.id
 
   if (!customerId) {
-    console.error(
-      '[Webhook] subscription.updated sem customer:',
-      subscription.id,
-    )
-    return
+    throw Errors.webhookFailed()
   }
 
-  const token = await prisma.token.findFirst({
+  const user = await prisma.user.findUnique({
     where: { stripeCustomerId: customerId },
   })
 
+  if (!user) {
+    throw Errors.webhookFailed()
+  }
+
+  const token = await prisma.token.findFirst({
+    where: {
+      userId: user.id,
+      stripeSubscriptionId: subscription.id,
+    },
+  })
+
   if (!token) {
-    console.error('[Webhook] Token não encontrado para customer:', customerId)
-    return
+    throw Errors.webhookFailed()
   }
 
   // Atualiza status baseado no status da subscription
   let status: 'ACTIVE' | 'CANCELLED' | 'EXPIRED' = 'ACTIVE'
   let expiresAt: Date | null = null
+  let userRole: 'FREE' | 'PRO' = 'PRO'
 
   switch (subscription.status) {
     case 'active':
     case 'trialing':
       status = 'ACTIVE'
+      userRole = 'PRO'
       break
     case 'canceled':
       status = 'CANCELLED'
+      userRole = 'PRO' // Mantem PRO durante periodo de graca
       break
     case 'past_due':
     case 'unpaid': {
-      // Mantém ativo mas marca data de expiração
       status = 'ACTIVE'
-      // current_period_end pode estar em items.data[0] nas versões mais recentes do Stripe
+      userRole = 'PRO'
       const periodEnd = (
-        subscription as unknown as { current_period_end?: number }
+        subscription as unknown as {
+          current_period_end?: number
+        }
       ).current_period_end
       if (periodEnd) {
         expiresAt = new Date(periodEnd * 1000)
@@ -148,28 +217,47 @@ export async function handleSubscriptionUpdated(
     case 'incomplete':
     case 'incomplete_expired':
       status = 'EXPIRED'
+      userRole = 'FREE'
       break
   }
 
-  await prisma.token.update({
-    where: { id: token.id },
-    data: {
-      status,
-      expiresAt,
-      stripeSubscriptionId: subscription.id,
-    },
-  })
+  // Atualiza token e role do user em transacao
+  await prisma.$transaction([
+    prisma.token.update({
+      where: { id: token.id },
+      data: {
+        status,
+        expiresAt,
+        stripeSubscriptionId: subscription.id,
+      },
+    }),
+    prisma.user.update({
+      where: { id: user.id },
+      data: { role: userRole },
+    }),
+  ])
 
-  console.log('[Webhook] Subscription atualizada:', {
-    customer: customerId,
-    status: subscription.status,
-    tokenStatus: status,
-  })
+  // ASVS V7.1: auditar mudança de privilégio só quando houve mudança real
+  // (idempotente em caso de webhook retentado com mesmo status).
+  if (user.role !== userRole) {
+    emitAuditEvent({
+      action: AuditAction.ROLE_CHANGED,
+      actor: user.id,
+      ip: null,
+      userAgent: null,
+      success: true,
+      metadata: {
+        from: user.role,
+        to: userRole,
+        reason: `subscription_${subscription.status}`,
+      },
+    })
+  }
 }
 
 /**
  * Handler para customer.subscription.deleted
- * Executado quando a assinatura é cancelada definitivamente
+ * Executado quando a assinatura e cancelada definitivamente
  */
 export async function handleSubscriptionDeleted(
   subscription: Stripe.Subscription,
@@ -180,43 +268,49 @@ export async function handleSubscriptionDeleted(
       : subscription.customer?.id
 
   if (!customerId) {
-    console.error(
-      '[Webhook] subscription.deleted sem customer:',
-      subscription.id,
-    )
-    return
+    throw Errors.webhookFailed()
   }
 
-  const token = await prisma.token.findFirst({
+  const user = await prisma.user.findUnique({
     where: { stripeCustomerId: customerId },
   })
 
-  if (!token) {
-    console.error('[Webhook] Token não encontrado para customer:', customerId)
-    return
+  if (!user) {
+    throw Errors.webhookFailed()
   }
 
-  // Marca como cancelado com data de expiração no fim do período pago
+  const token = await prisma.token.findFirst({
+    where: {
+      userId: user.id,
+      stripeSubscriptionId: subscription.id,
+    },
+  })
+
+  if (!token) {
+    throw Errors.webhookFailed()
+  }
+
   const periodEnd = (subscription as unknown as { current_period_end?: number })
     .current_period_end
-  const expiresAt = periodEnd ? new Date(periodEnd * 1000) : new Date()
+  const gracePeriodEnd = periodEnd ? new Date(periodEnd * 1000) : new Date()
 
+  // Marca token como cancelado com periodo de graca
   await prisma.token.update({
     where: { id: token.id },
     data: {
       status: 'CANCELLED',
-      expiresAt,
+      expiresAt: gracePeriodEnd,
     },
   })
 
-  console.log('[Webhook] Subscription cancelada:', customerId)
-
-  // Envia email notificando cancelamento
+  // Envia email de cancelamento (fire-and-forget)
   try {
-    await sendCancellationEmail({ to: token.email, expiresAt })
-    console.log('[Webhook] Email de cancelamento enviado para:', token.email)
-  } catch (error) {
-    console.error('[Webhook] Falha ao enviar email de cancelamento:', error)
+    await sendCancellationEmail({
+      to: user.email,
+      expiresAt: gracePeriodEnd,
+    })
+  } catch {
+    // Falha de email nao deve bloquear o webhook
   }
 }
 
@@ -231,36 +325,37 @@ export async function handlePaymentFailed(invoice: Stripe.Invoice) {
       : invoice.customer?.id
 
   if (!customerId) {
-    console.error('[Webhook] invoice.payment_failed sem customer:', invoice.id)
-    return
+    throw Errors.webhookFailed()
   }
 
-  const token = await prisma.token.findFirst({
+  const user = await prisma.user.findUnique({
     where: { stripeCustomerId: customerId },
   })
 
-  if (!token) {
-    console.error('[Webhook] Token não encontrado para customer:', customerId)
-    return
+  if (!user) {
+    throw Errors.webhookFailed()
   }
 
-  console.log('[Webhook] Pagamento falhou:', {
-    customer: customerId,
-    email: token.email,
-    invoiceId: invoice.id,
+  // Audita o evento de cobrança recusada ANTES do envio de email.
+  // `success: false` marca a falha de pagamento (não a falha de gravação);
+  // `actor` usa userId pois já resolvido aqui. Metadata registra o
+  // invoice.id para correlação forense com o dashboard Stripe.
+  emitAuditEvent({
+    action: AuditAction.PAYMENT_FAILED,
+    actor: user.id,
+    ip: null,
+    userAgent: null,
+    success: false,
+    metadata: {
+      invoiceId: invoice.id,
+      customerId,
+    },
   })
 
-  // Envia email notificando falha de pagamento
+  // Envia email de falha (fire-and-forget)
   try {
-    await sendPaymentFailedEmail({ to: token.email })
-    console.log(
-      '[Webhook] Email de falha de pagamento enviado para:',
-      token.email,
-    )
-  } catch (error) {
-    console.error(
-      '[Webhook] Falha ao enviar email de falha de pagamento:',
-      error,
-    )
+    await sendPaymentFailedEmail({ to: user.email })
+  } catch {
+    // Falha de email nao deve bloquear o webhook
   }
 }

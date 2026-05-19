@@ -1,0 +1,36 @@
+# Normalização de EOL determinística.
+# Windows/macOS/Linux chegam commits com LF uniforme — sem isso, hashes de
+# linha mudam por SO, tests snapshot falham intermitente, diff vira ruído.
+
+* text=auto eol=lf
+
+# Binários que NUNCA devem ser tratados como texto (git não tenta diff/merge).
+*.xlsx  binary
+*.xls   binary
+*.xlsb  binary
+*.ods   binary
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.webp  binary
+*.ico   binary
+*.pdf   binary
+*.zip   binary
+*.gz    binary
+*.tar   binary
+*.tgz   binary
+*.woff  binary
+*.woff2 binary
+
+# Arquivos que devem manter EOL LF explícito (scripts shell, config de CI).
+*.sh          text eol=lf
+*.bash        text eol=lf
+Dockerfile    text eol=lf
+*.dockerfile  text eol=lf
+fly.toml      text eol=lf
+
+# Arquivos Windows-only (raro no repo, mas garantir CRLF se aparecer).
+*.bat  text eol=crlf
+*.cmd  text eol=crlf
+*.ps1  text eol=crlf

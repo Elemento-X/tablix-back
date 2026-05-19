@@ -5,6 +5,7 @@ import { rateLimitMiddleware } from '../../middleware/rate-limit.middleware'
 import * as billingController from '../controllers/billing.controller'
 import {
   createCheckoutBodySchema,
+  createCheckoutHeadersSchema,
   createCheckoutResponseSchema,
   createPortalBodySchema,
   createPortalResponseSchema,
@@ -16,17 +17,30 @@ export async function billingRoutes(app: FastifyInstance) {
   const server = app.withTypeProvider<ZodTypeProvider>()
 
   // POST /billing/create-checkout - Cria sessão de checkout Stripe
+  // Rate limit em 2 camadas (defesa em profundidade):
+  //   1. checkoutGlobalCap (30/min agregado) — anti denial-of-wallet
+  //   2. checkout (5/min por IP/usuário) — anti brute-force individual
   server.post('/create-checkout', {
-    preHandler: rateLimitMiddleware.billing,
+    preHandler: [
+      rateLimitMiddleware.checkoutGlobalCap,
+      rateLimitMiddleware.checkout,
+    ],
     schema: {
       tags: ['Billing'],
       summary: 'Criar checkout',
-      description:
-        'Cria uma sessão de checkout embedded do Stripe para upgrade para plano Pro.',
+      description: `Cria uma sessão de checkout embedded do Stripe para upgrade para plano Pro.
+
+**Idempotency-Key (header, opcional):** enviar UUID v4 pra garantir que retries do
+cliente (rede instável, clique duplo) não criem múltiplas sessões Stripe. Mesma key
+com mesmo body retorna o mesmo resultado (cached 24h); body diferente → 422
+IDEMPOTENCY_CONFLICT. Outro worker processando a mesma key → 409 IDEMPOTENCY_IN_PROGRESS.`,
+      headers: createCheckoutHeadersSchema,
       body: createCheckoutBodySchema,
       response: {
         200: createCheckoutResponseSchema,
         400: errorResponseSchema,
+        409: errorResponseSchema,
+        422: errorResponseSchema,
         429: errorResponseSchema,
         500: errorResponseSchema,
       },

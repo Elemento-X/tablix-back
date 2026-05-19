@@ -1,11 +1,14 @@
 node_modules
 dist
-*-lock.json
 coverage/
-.claude/
+.claude/settings.local.json
 /generated/prisma
+.vscode
 
 # Environment variables
 .env
 .env.local
 .env.*.local
+
+# Test fixtures — stamp de regeneração do schema snapshot
+tests/fixtures/*.stamp

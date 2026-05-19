@@ -10,20 +10,21 @@ import {
   refreshResponseSchema,
   meResponseSchema,
   logoutResponseSchema,
+  logoutAllResponseSchema,
   errorResponseSchema,
 } from '../../modules/auth/auth.schema'
 
 export async function authRoutes(app: FastifyInstance) {
   const server = app.withTypeProvider<ZodTypeProvider>()
 
-  // POST /auth/validate-token - Valida token Pro e retorna JWT
+  // POST /auth/validate-token - Valida token Pro e retorna access + refresh tokens
   server.post('/validate-token', {
     preHandler: rateLimitMiddleware.validateToken,
     schema: {
       tags: ['Auth'],
       summary: 'Validar token Pro',
       description:
-        'Valida um token Pro (recebido por email) e retorna um JWT de sessão. No primeiro uso, vincula o token ao fingerprint do dispositivo.',
+        'Valida um token Pro (recebido por email) e retorna access token (15min) + refresh token (30d). No primeiro uso, vincula o token ao fingerprint do dispositivo.',
       body: validateTokenBodySchema,
       response: {
         200: validateTokenResponseSchema,
@@ -35,14 +36,14 @@ export async function authRoutes(app: FastifyInstance) {
     handler: authController.validateToken,
   })
 
-  // POST /auth/refresh - Renova JWT expirado
+  // POST /auth/refresh - Renova tokens usando refresh token
   server.post('/refresh', {
     preHandler: rateLimitMiddleware.authRefresh,
     schema: {
       tags: ['Auth'],
       summary: 'Renovar sessão',
       description:
-        'Renova um JWT expirado. O token original deve estar expirado há menos de 7 dias.',
+        'Renova access + refresh tokens usando o refresh token. O refresh token anterior é invalidado (rotation).',
       body: refreshBodySchema,
       response: {
         200: refreshResponseSchema,
@@ -72,14 +73,14 @@ export async function authRoutes(app: FastifyInstance) {
     handler: authController.me,
   })
 
-  // POST /auth/logout - Logout (client-side)
+  // POST /auth/logout - Revoga a sessão atual
   server.post('/logout', {
     preHandler: [rateLimitMiddleware.global, authMiddleware],
     schema: {
       tags: ['Auth'],
       summary: 'Logout',
       description:
-        'Endpoint de logout. Como JWT é stateless, o logout real é feito removendo o token no cliente.',
+        'Revoga a sessão atual. O access token existente expira em até 15min, mas a sessão é imediatamente invalidada.',
       security: [{ bearerAuth: [] }],
       response: {
         200: logoutResponseSchema,
@@ -88,5 +89,23 @@ export async function authRoutes(app: FastifyInstance) {
       },
     },
     handler: authController.logout,
+  })
+
+  // POST /auth/logout-all - Revoga todas as sessões do usuário
+  server.post('/logout-all', {
+    preHandler: [rateLimitMiddleware.global, authMiddleware],
+    schema: {
+      tags: ['Auth'],
+      summary: 'Logout de todos os dispositivos',
+      description:
+        'Revoga todas as sessões ativas do usuário. Útil quando o usuário suspeita de acesso não autorizado.',
+      security: [{ bearerAuth: [] }],
+      response: {
+        200: logoutAllResponseSchema,
+        401: errorResponseSchema,
+        429: errorResponseSchema,
+      },
+    },
+    handler: authController.logoutAll,
   })
 }

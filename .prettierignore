@@ -1,0 +1,10 @@
+dist/
+coverage/
+node_modules/
+prisma/migrations/
+package-lock.json
+.env
+.env.*
+.claude/metrics/*.jsonl
+.claude/metrics/categories.json
+*.md

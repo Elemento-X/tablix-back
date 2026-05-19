@@ -1,0 +1,250 @@
+{
+  "schema_version": 1,
+  "updated_at": "2026-05-18T20:55:00Z",
+  "current": null,
+  "last_completed": {
+    "card_id": "69f00e6c3a18366816b1cf5d",
+    "card_short_link": "s3NLF6bv",
+    "card_id_short": 147,
+    "card_title": "5.2c Cron 08:00 alerta quota 70%/90% + email Resend (ÚLTIMO Fase 5)",
+    "phase": "Fase 5 — Storage",
+    "decision": "APPROVED_CONDITIONAL",
+    "cycles": 3,
+    "done_at": "2026-05-18T20:55:00Z",
+    "commit": "b3bd553",
+    "lead_time_hours": 5.92,
+    "mttr_hours": 1.5,
+    "cost_usd": 11.45,
+    "fast_path": false,
+    "waivers_applied": [],
+    "cards_discovered": 5,
+    "operator_pre_merge_condition": "RESOLVIDA 2026-05-18T20:55 — npm run test:schema:dump rodado em Docker local, schema.fingerprint.json regenerado, primeira execução integration completa revelou 3 bugs latentes do Card #146 corrigidos no commit 99ab566 (UUID cast retention.job:331, Fase C loop guard seenIds, schema.sql trigger fhdl ausente). 209/209 integration verdes + 1669/1669 unit verdes. Card #147 + pré-merge 100% COMPLETO.",
+    "post_merge_commit": "99ab566 — fix(retention) hotfixes #146 descobertos via 1ª execução integration (UUID cast + Fase C guard + schema.sql trigger + test seedFileHistory createdAt + mock sentry scrubObject)",
+    "fix_pack_ciclo_3_commit": "b82eca3 — refactor(jobs) 3 discovery resolvidos no escopo (idx_tokens_active_pro CONCURRENTLY + extract sanitize-error SSOT + try/finally hardening) + 2 discovery legítimos criados Backlog (#186 cron-cursor-batching, #187 decouple-cron-kill-switches). Smart re-run @dba+@security APPROVED unânime.",
+    "notes": "Card #147 (5.2c) ÚLTIMO da Fase 5 — Storage. 4 ciclos pipeline QA (1 + fix-pack 1 atômico 20 itens + 2 + fix-pack 2 + 2.5 atômico 5 itens + 3 @tester reverify + reviewer final). Ciclo 1 REPROVED_HARD@tester (1 CRÍTICO schema.sql + 4 ALTO + 6 MÉDIO + 3 BAIXO). Diretriz 'corrige tudo' aplicou fix-pack atômicos cobrindo TODOS findings + 1 BAIXO observability @security catched (usersProcessedSoFar fórmula errada) + 1 MÉDIO @reviewer catched (db-smoke 11→12 tabelas falso negativo @tester). Ciclo 3 APPROVED_WITH_CONDITIONS — coverage final: sleep 100/100/100/100, email 100/95/100/100, quota-alert.job 100/84.09/100/100. 1669/1669 unit verdes (+205 vs baseline 1464). 209/209 integration verdes (rodado em Docker pré-merge — revelou 3 bugs latentes Card #146: UUID type confusion retention.job:331 sem cast ::uuid, Fase C reconciliação loop ignorava cooldown 1h levando row de purge_attempts=1→5 em single run, schema.sql faltava função+trigger fhdl). Fix-pack atômico ciclo final 99ab566 (5 fixes: 3 bugs + 2 test infra). 3 migrations Supabase via MCP. Custo $11.45. 5 cards discovery pendentes. Commits: b3bd553 (feat) + 51d674b (metrics) + 99ab566 (hotfix integration). FASE 5 STORAGE 5/5 cards done — FECHADA. Bug Fase C loop é semântico real — preserva contrato cooldown documentado."
+  },
+  "previously_completed": {
+    "card_id": "69f00f3b29eab8c6cbf0c7a8",
+    "card_short_link": "FK94hRBQ",
+    "card_id_short": 146,
+    "card_title": "5.2b Cron 03:00 retenção two-phase",
+    "decision": "APPROVED_CONDITIONAL",
+    "done_at": "2026-05-18T20:15:00Z",
+    "commit": "f7d2468"
+  },
+  "phases": {
+    "completed": [
+      {
+        "phase": "Fase 1 — Segurança & Hardening",
+        "period": "2026-04-09 → 2026-04-19",
+        "cards_delivered": 14,
+        "hist_card": "Cce9ClE8",
+        "status": "CLOSED_NO_OPEN_DEBT",
+        "debt_cards": 0
+      },
+      {
+        "phase": "Fase 2 — Observabilidade & Auditoria",
+        "period": "2026-04-13 → 2026-04-20",
+        "cards_delivered": 4,
+        "hist_card": "xVoSXmfy",
+        "status": "CLOSED_NO_OPEN_DEBT",
+        "debt_cards": 0
+      },
+      {
+        "phase": "Fase 3 — Testes & Qualidade",
+        "period": "2026-04-20 → 2026-04-25",
+        "cards_delivered": 7,
+        "hist_card": "JJTy3wR4",
+        "status": "CLOSED_NO_OPEN_DEBT",
+        "debt_cards": 0
+      },
+      {
+        "phase": "Fase 4 — Usage & Limits",
+        "period": "2026-04-25 → 2026-04-26",
+        "cards_delivered": 7,
+        "hist_card": "jnnBeGJg",
+        "status": "CLOSED_NO_OPEN_DEBT",
+        "debt_cards": 0,
+        "waivers_closed": ["WV-2026-002"]
+      },
+      {
+        "phase": "Fase 5 — Storage",
+        "period": "2026-04-26 → 2026-05-18",
+        "cards_delivered": 5,
+        "hist_card": "NdfwUsXS",
+        "hist_card_id_short": 188,
+        "closed_at": "2026-05-18T22:35:00Z",
+        "analyst_snapshot_health_score": "86/100",
+        "status": "CLOSED_NO_OPEN_DEBT",
+        "debt_cards": 0,
+        "cards_done": [
+          "5.1 (#36, lGlZpdE7) — Adapter Supabase Storage (commit 2ce90f2, 2026-04-27)",
+          "#150 (pVasIL6l) — audit_log_legal LGPD 5y (commit b076002, 2026-04-29)",
+          "5.2a (#145, DtBkVtVY) — Schema+endpoints+infra+observability+runbooks (commit ac12e14, 2026-05-17)",
+          "5.2b (#146, FK94hRBQ) — Cron purge two-phase LGPD (commit f7d2468, 2026-05-18)",
+          "5.2c (#147, s3NLF6bv) — Cron alerta quota 70%/90% + email Resend (commit b3bd553, 2026-05-18)"
+        ]
+      }
+    ],
+    "active": {
+      "phase": "Fase 5 — Storage (FECHADA — 5/5 cards done)",
+      "list_id": "69d7a7def8794179e29c6614",
+      "started_at": "2026-04-26T23:30:00Z",
+      "closed_at": "2026-05-18T20:55:00Z",
+      "in_progress": [],
+      "done": [
+        "5.1 (#36, lGlZpdE7) — Adapter Supabase Storage (APPROVED 2026-04-27, commit 2ce90f2)",
+        "#150 (pVasIL6l) — audit_log_legal LGPD 5y (APPROVED 2026-04-29, commit b076002)",
+        "5.2a (#145, DtBkVtVY) — FECHADO 2026-05-17 (F1+F2+F3+F4+F5, commit ac12e14)",
+        "5.2b (#146, FK94hRBQ) — FECHADO 2026-05-18 (cron purge two-phase, commit f7d2468)",
+        "5.2c (#147, s3NLF6bv) — FECHADO 2026-05-18 (cron alerta quota 70/90 + email, commit b3bd553)"
+      ],
+      "next": [
+        "Encerramento formal Fase 5 via @analyst snapshot + [HIST] card no Trello",
+        "Início Fase 6 — Fila Assíncrona (BullMQ + smoke E2E + webhook outbound)"
+      ],
+      "rationale": "Fase 5 — Storage COMPLETA com 5/5 cards entregues. Card 5.2c fechado em 4 ciclos pipeline QA (REPROVED_HARD@tester convergente → fix-pack atômico 20+5 itens → APPROVED_CONDITIONAL @reviewer). Operador deve rodar `npm run test:schema:dump` em Docker pré-merge. Próximo passo: encerramento da fase via @analyst + [HIST] card + iniciar Fase 6."
+    },
+    "phase_map": {
+      "current": "Fase 5 — Storage (FECHADA)",
+      "next_phases": [
+        "Fase 6 — Fila Assíncrona (BullMQ + smoke E2E + webhook outbound)",
+        "Fase 7 — Infra & Deploy (Fly.io + Cloudflare + multi-currency + Stripe live + bucket prod parity + rollback script + criação do fly.toml)",
+        "Fase 8 — CI/CD",
+        "Fase 9 — Go-live & Docs (rotação 6 secrets + roles admin + endpoints admin + Stripe live + monitoramento 48h)",
+        "Fase 10 — Cleanup técnico",
+        "Fase 11 — Docs & revisão final"
+      ]
+    }
+  },
+  "active_waivers": [
+    {
+      "id": "WV-2026-003",
+      "subject": "XLSX ReDoS catastrophic",
+      "expires": "2026-07-10",
+      "follow_up_card": "jqusnIPj (#69, agora 6.10)",
+      "follow_up_due": "2026-06-30"
+    },
+    {
+      "id": "WV-2026-004",
+      "subject": "Multi-currency price arbitrage (F-HIGH-01) — Card 7.7 Fase 7",
+      "expires": "2026-09-15",
+      "previous_expires": "2026-05-15",
+      "renewed_at": "2026-05-17",
+      "renewal_reason": "Card 7.7 ainda na Fase 7 (Infra & Deploy, não iniciada). Pré-requisito Cloudflare CF-IPCountry depende do fly.toml ser criado. Risco real = zero (single-user pré-go-live).",
+      "follow_up_card": "ufMAjDlV (7.7)",
+      "follow_up_due": "2026-09-15"
+    },
+    {
+      "id": "WV-2026-005",
+      "subject": "CVE devDep testcontainers→uuid<14 (GHSA-w5hq-g745-h8pq)",
+      "expires": "2026-07-23",
+      "follow_up_card": "bump-testcontainers-when-dockerode-uuid-v14 (pending creation)",
+      "follow_up_due": "2026-07-23"
+    },
+    {
+      "id": "WV-2026-006",
+      "subject": "Admin authz via env allowlist (Card #145 D#3, com 9 mitigations) — MÉDIO",
+      "expires": "2026-08-01",
+      "follow_up_card": "zoSjwuar (#157) roles-admin-enum",
+      "follow_up_due": "2026-08-01",
+      "kill_criteria": "enum UserRole separado + middleware unificado + ADMIN_USER_IDS removida"
+    },
+    {
+      "id": "WV-2026-008-pending",
+      "subject": "pg_cron schema ACL leak (Supabase Free tier — REVOKE não 100% efetivo) — MÉDIO",
+      "expires": "2026-08-18",
+      "follow_up_card": "#182 pg-cron-acl-supabase-free-tier",
+      "follow_up_due": "pre-go-live",
+      "status": "PENDING_OPERATOR_APPROVAL",
+      "discovered_at": "2026-05-18",
+      "kill_criteria": "upgrade Supabase Pro tier OU ticket Supabase OU desabilitar pg_cron"
+    }
+  ],
+  "closed_waivers": [
+    {
+      "id": "WV-2026-001",
+      "subject": "Webhook replay protection",
+      "closed_at": "2026-04-20T18:00:00Z",
+      "closed_reason": "resolved_upstream"
+    },
+    {
+      "id": "WV-2026-002",
+      "subject": "Quota TOCTOU (INCR+EXPIRE race)",
+      "closed_at": "2026-04-26T00:00:00Z",
+      "closed_reason": "resolved_via_card_4.2"
+    }
+  ],
+  "next_action_for_operator": {
+    "card": "Encerramento Fase 5 — Storage + [HIST] card",
+    "blocker": "Nenhum — apenas housekeeping pós-fase. Próximo trabalho: iniciar Fase 6 — Fila Assíncrona (BullMQ + smoke E2E + webhook outbound).",
+    "pre_merge_condition_147": "Rodar `npm run test:schema:dump` em Docker para regenerar tests/fixtures/schema.fingerprint.json + commit MESMO PR (drift detection CI bloqueia sem).",
+    "operator_pending_actions": [
+      "Pré-merge Card #147: npm run test:schema:dump em Docker + commit fingerprint",
+      "Criar [HIST] card Fase 5 — Storage no Trello (5 cards entregues, 0 débito)",
+      "Acionar @analyst pra snapshot de saúde do pipeline (encerramento de fase)",
+      "Criar 5 cards discovery do Card #147: idx_tokens_active_pro CONCURRENTLY, cron-cursor-batching, decouple-cron-kill-switches, extract-sanitize-error-shared-lib, recordRunEnd-try-finally-hardening",
+      "Decidir início Fase 6 — Fila Assíncrona OU side-quest do Backlog",
+      "Adicionar SUPABASE_CRON_KEY ao Card 9.5 (rotação pré-go-live)",
+      "Validar WV-2026-008-pending (pg_cron ACL Free tier)",
+      "Card #152 futuro (audit_legal_purge_role)",
+      "Card #178 dead-letter-anonymization-on-user-delete (Fase 7)",
+      "Card #181 RLS disabled 7 tabelas (ALTA, blocker pré-go-live)",
+      "Card #182 pg_cron ACL Supabase Free tier (ALTA, blocker pré-go-live)"
+    ]
+  },
+  "cards_created_2026_05_18_session_card147": {
+    "discovery_pending_creation": [
+      {
+        "name": "idx_tokens_active_pro CONCURRENTLY (@dba ALTO pós-launch)",
+        "list": "Backlog",
+        "severity": "ALTA",
+        "size": "P",
+        "origin": "@dba ciclo 1 Card #147 — kill criteria >1k PRO users"
+      },
+      {
+        "name": "cron-cursor-batching (@dba ALTO >5k users)",
+        "list": "Backlog",
+        "severity": "ALTA",
+        "size": "M",
+        "origin": "@dba ciclo 1 Card #147 — kill criteria >5k PRO users"
+      },
+      {
+        "name": "decouple-cron-kill-switches (@devops trade-off A-9/R-5)",
+        "list": "Backlog",
+        "severity": "BAIXA",
+        "size": "P",
+        "origin": "@devops ciclo 1 Card #147 — separar quota-alert do CRON_PURGE_ENABLED quando feature crescer"
+      },
+      {
+        "name": "extract-sanitize-error-shared-lib (@dba+@security convergente)",
+        "list": "Backlog",
+        "severity": "BAIXA",
+        "size": "P",
+        "origin": "Cards #146 + #147 convergência — deduplica retention.job + quota-alert.job sanitize"
+      },
+      {
+        "name": "recordRunEnd-try-finally-hardening (@reviewer BAIXO opcional)",
+        "list": "Backlog",
+        "severity": "BAIXA",
+        "size": "P",
+        "origin": "@reviewer ciclo 2 Card #147 — wrap try/finally pra preservar throw err se recordRunEnd quebrar"
+      }
+    ]
+  },
+  "phases_active_status": {
+    "Fase 5 — Storage": {
+      "list_id": "69d7a7def8794179e29c6614",
+      "status": "CLOSED",
+      "done": [
+        "5.1 (#36, lGlZpdE7)",
+        "#150 (pVasIL6l)",
+        "5.2a (#145, DtBkVtVY)",
+        "5.2b (#146, FK94hRBQ)",
+        "5.2c (#147, s3NLF6bv)"
+      ],
+      "pending": []
+    }
+  },
+  "notes": "Snapshot atualizado em 2026-05-18T20:55 após Card #147 (5.2c) cron alerta quota fechado. FASE 5 — STORAGE COMPLETA (5/5 cards done). Pipeline QA v2 em 4 ciclos (ciclo 1 REPROVED_HARD@tester convergente CRÍTICO schema.sql drift + 4 ALTO → fix-pack atômico 20 itens → ciclo 2 + 2.5 5 itens → ciclo 3 APPROVED_WITH_CONDITIONS → @reviewer final APPROVED_CONDITIONAL). 1669 unit tests verdes (era 1464 → +205). 30 integration tests Docker CI. 3 migrations Supabase via MCP. WV-2026-008-pending pg_cron ACL Free tier mantido. 5 cards discovery pendentes criação. Condição pré-merge: operador roda npm run test:schema:dump em Docker. Próximo: encerramento Fase 5 + @analyst snapshot + [HIST] card + decisão início Fase 6."
+}

@@ -13,51 +13,112 @@ datasource db {
 }
 
 // ===========================================
-// TOKENS - Tokens de acesso Pro
+// USERS - Identidade do usuario
 // ===========================================
-// Armazena tokens gerados apos pagamento no Stripe
-// Token vinculado ao fingerprint no primeiro uso
+// Entidade central de identidade, desacoplada de billing
 
-model Token {
-  id                    String    @id @default(uuid())
-  token                 String    @unique @db.VarChar(64)
-  fingerprint           String?   @db.VarChar(64) // NULL ate primeiro uso
-  stripeCustomerId      String    @map("stripe_customer_id") @db.VarChar(255)
-  stripeSubscriptionId  String?   @map("stripe_subscription_id") @db.VarChar(255)
-  plan                  Plan      @default(PRO)
-  status                TokenStatus @default(ACTIVE)
-  email                 String    @db.VarChar(255)
-  createdAt             DateTime  @default(now()) @map("created_at")
-  activatedAt           DateTime? @map("activated_at") // Quando vinculou ao fingerprint
-  expiresAt             DateTime? @map("expires_at") // NULL se assinatura ativa
+model User {
+  // UUID nativo (16 bytes) + gen_random_uuid() no DB é SSOT do id.
+  // `dbgenerated` impede o Prisma de gerar UUID no app (drift entre
+  // inserts via Prisma vs SQL direto). Padrão estabelecido em audit_log
+  // (Card 2.4) e replicado para User/Session/Token/Usage/Job na Fase 3.
+  id               String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  email            String    @unique @db.VarChar(255)
+  role             Role      @default(FREE)
+  stripeCustomerId String?   @unique @map("stripe_customer_id") @db.VarChar(255)
+  // Feature opt-in PRO: histórico de arquivos. Card #145 (5.2a, Fase 5).
+  // Default false: feature OFF até user aceitar explicitamente. historyOptInAt
+  // e historyOptOutAt são trail auditável (LGPD Art. 8 — registro de consentimento).
+  historyOptIn     Boolean   @default(false) @map("history_opt_in")
+  historyOptInAt   DateTime? @map("history_opt_in_at") @db.Timestamptz(3)
+  historyOptOutAt  DateTime? @map("history_opt_out_at") @db.Timestamptz(3)
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt        DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   // Relacionamentos
-  usages                Usage[]
-  jobs                  Job[]
+  tokens          Token[]
+  sessions        Session[]
+  usages          Usage[]
+  jobs            Job[]
+  fileHistory     FileHistory[]
+  quotaAlertsSent QuotaAlertSent[]
 
-  @@index([token])
+  @@map("users")
+}
+
+// ===========================================
+// SESSIONS - Sessoes ativas do usuario
+// ===========================================
+// Cada login cria uma Session. JWT referencia session.id.
+// Logout revoga a session (seta revokedAt).
+
+model Session {
+  id               String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId           String    @map("user_id") @db.Uuid
+  fingerprint      String?   @db.VarChar(64)
+  userAgent        String?   @map("user_agent") @db.VarChar(512)
+  ipAddress        String?   @map("ip_address") @db.VarChar(45)
+  refreshTokenHash String    @unique @map("refresh_token_hash") @db.VarChar(64)
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  lastActivityAt   DateTime  @default(now()) @map("last_activity_at") @db.Timestamptz(3)
+  expiresAt        DateTime  @map("expires_at") @db.Timestamptz(3)
+  revokedAt        DateTime? @map("revoked_at") @db.Timestamptz(3)
+
+  // Relacionamento
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt], map: "idx_sessions_expires_at")
+  @@index([revokedAt], map: "idx_sessions_revoked_at")
+  @@map("sessions")
+}
+
+// ===========================================
+// TOKENS - Tokens de acesso Pro (ativacao)
+// ===========================================
+// Token gerado apos pagamento no Stripe, enviado por email.
+// Mecanismo de ativacao, nao identidade.
+
+model Token {
+  id                   String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId               String      @map("user_id") @db.Uuid
+  token                String      @unique @db.VarChar(64)
+  fingerprint          String?     @db.VarChar(64)
+  stripeSubscriptionId String?     @map("stripe_subscription_id") @db.VarChar(255)
+  plan                 Plan        @default(PRO)
+  status               TokenStatus @default(ACTIVE)
+  createdAt            DateTime    @default(now()) @map("created_at") @db.Timestamptz(3)
+  activatedAt          DateTime?   @map("activated_at") @db.Timestamptz(3)
+  expiresAt            DateTime?   @map("expires_at") @db.Timestamptz(3)
+
+  // Relacionamento — RESTRICT: cancelar subscription antes de deletar user
+  user User @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@unique([userId, stripeSubscriptionId], map: "uq_tokens_user_subscription")
+  // NOTA: índice `tokens_token_idx` (BTREE em token) era redundante com
+  // `tokens_token_key` UNIQUE — droppado em Fase 3 Migration C. UNIQUE
+  // serve queries de leitura tão bem quanto BTREE comum.
   @@index([fingerprint])
-  @@index([stripeCustomerId], map: "idx_tokens_stripe_customer")
+  @@index([userId], map: "idx_tokens_user")
   @@map("tokens")
 }
 
 // ===========================================
-// USAGE - Uso mensal (para limites do Pro)
+// USAGE - Uso mensal (para limites do plano)
 // ===========================================
-// Controla quantas unificacoes o usuario Pro fez no mes
+// Controla quantas unificacoes o usuario fez no mes
 
 model Usage {
-  id                String   @id @default(uuid())
-  tokenId           String   @map("token_id")
+  id                String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId            String   @map("user_id") @db.Uuid
   period            String   @db.VarChar(7) // Formato: 'YYYY-MM'
   unificationsCount Int      @default(0) @map("unifications_count")
-  createdAt         DateTime @default(now()) @map("created_at")
+  createdAt         DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
 
-  // Relacionamento
-  token             Token    @relation(fields: [tokenId], references: [id], onDelete: Cascade)
+  // Relacionamento — RESTRICT: preservar historico de billing
+  user User @relation(fields: [userId], references: [id], onDelete: Restrict)
 
-  @@unique([tokenId, period])
-  @@index([tokenId, period], map: "idx_usage_token_period")
+  @@unique([userId, period])
   @@map("usage")
 }
 
@@ -67,26 +128,396 @@ model Usage {
 // Para arquivos >10MB que precisam de processamento em fila
 
 model Job {
-  id              String    @id @default(uuid())
-  tokenId         String    @map("token_id")
-  status          JobStatus @default(PENDING)
-  inputFiles      Json      @map("input_files") // Metadados dos arquivos
-  outputFileUrl   String?   @map("output_file_url") @db.VarChar(500)
-  errorMessage    String?   @map("error_message")
-  createdAt       DateTime  @default(now()) @map("created_at")
-  startedAt       DateTime? @map("started_at")
-  completedAt     DateTime? @map("completed_at")
+  id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId        String    @map("user_id") @db.Uuid
+  status        JobStatus @default(PENDING)
+  inputFiles    Json      @map("input_files")
+  outputFileUrl String?   @map("output_file_url") @db.VarChar(500)
+  errorMessage  String?   @map("error_message")
+  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  startedAt     DateTime? @map("started_at") @db.Timestamptz(3)
+  completedAt   DateTime? @map("completed_at") @db.Timestamptz(3)
 
   // Relacionamento
-  token           Token     @relation(fields: [tokenId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
+  @@index([userId], map: "idx_jobs_user")
   @@index([status], map: "idx_jobs_status")
   @@map("jobs")
 }
 
 // ===========================================
+// STRIPE EVENTS - Idempotencia de webhooks
+// ===========================================
+// Registra event.id processados para deduplicacao.
+// Insert duplicado gera P2002 (unique violation) = evento ja processado.
+
+model StripeEvent {
+  id          String   @id @db.VarChar(255) // event.id do Stripe (evt_...)
+  type        String   @db.VarChar(255)
+  processedAt DateTime @default(now()) @map("processed_at") @db.Timestamptz(3)
+
+  @@index([processedAt], map: "idx_stripe_events_processed_at")
+  @@map("stripe_events")
+}
+
+// ===========================================
+// AUDIT LOG - Trilha forense de eventos criticos
+// ===========================================
+// Registra eventos auditaveis (auth, webhooks, billing) para investigacao.
+// Emissao fire-and-forget via src/lib/audit/audit.service.ts com redundancia
+// tripla (Prisma + Sentry breadcrumb + pino log). Retencao: 90 dias.
+// NUNCA armazenar PII direta: actor eh userId/customerId; metadata passa
+// pelos REDACT_PATHS do pino antes de persistir.
+
+model AuditLog {
+  // UUID nativo (16 bytes) + gen_random_uuid() no DB é SSOT do id.
+  // `dbgenerated` impede o Prisma de gerar UUID no app (drift entre
+  // inserts via Prisma vs SQL direto).
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  action    String   @db.VarChar(50)
+  actor     String?  @db.VarChar(255) // userId, "system" ou "stripe"
+  ip        String?  @db.VarChar(45)
+  userAgent String?  @map("user_agent") @db.VarChar(512)
+  success   Boolean
+  metadata  Json?
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  @@index([action], map: "idx_audit_log_action")
+  @@index([actor, createdAt(sort: Desc)], map: "idx_audit_log_actor_created_at")
+  @@index([createdAt], map: "idx_audit_log_created_at")
+  // NOTA: `idx_audit_log_failures` é um PARTIAL INDEX (`WHERE success = false`)
+  // gerenciado via raw SQL em supabase/migrations/20260419230228_add_audit_log.sql.
+  // Prisma não suporta partial indexes declarativamente. Não usar
+  // `prisma migrate dev` (drop do índice); preferir `prisma db pull` ou
+  // migrations SQL quando editar esta model.
+  @@map("audit_log")
+}
+
+// ===========================================
+// AUDIT LOG LEGAL - Trilha LGPD com retencao 5 anos
+// ===========================================
+// SEPARADA do audit_log operacional (90d). Eventos legais (purge/consent/dsar)
+// exigem retencao 5 anos por LGPD Art. 16/37 + CDC Art. 27 (prazo prescricional
+// reparacao por fato do servico). Card #150 / Fase 5.
+//
+// IMPORTANTE - DECISOES IRREVERSIVEIS (consultar plano antes de mudar):
+// .claude/plans/2026-04-28-card-150-audit-log-legal.md
+//
+// (D-5) userId NAO TEM FOREIGN KEY pra users.id. INTENCIONAL.
+//   Razao: o evento legal precisa SOBREVIVER ao delete do user (essa eh a
+//   prova juridica da purga). FK ON DELETE SET NULL = "purga de quem?"
+//   absurdo legalmente. FK RESTRICT trava o cron de delete user.
+//   NAO ADICIONAR @relation por reflexo.
+//
+// (R-7) NAO REUSAR cron de retencao do audit_log (90d) nesta tabela.
+//   Cron de 5 anos vive em card proprio (#152). Cron 90d apagando registros
+//   legais = perda de prova juridica = nao-conformidade LGPD critica.
+//
+// (D-1) Service `recordLegalEvent` eh AWAIT (nao fire-and-forget como
+//   AuditLog). Falha de DB DEVE bloquear caller. LGPD nao tolera evento
+//   silenciosamente perdido.
+//
+// (D-2/D-4) event_type, actor, outcome, legal_basis sao WHITELIST via
+//   CHECK constraint SQL + `as const` no TS. Defesa em profundidade.
+//   Adicionar valor exige migration nova (vide audit-legal.types.ts).
+//
+// (resource_hash) bytea 32 bytes = SHA-256(userId:storagePath). FREEZED v1.
+//   Mudanca de formula = nova coluna resourceHashV2, NUNCA mutar v1.
+//   Implementacao: src/lib/audit-hash.ts (funcao pura, PROIBIDO logar input).
+//   Algoritmo registrado em resource_hash_algo (default 'sha256v1') pra
+//   permitir migracao futura sem ambiguidade.
+
+model AuditLogLegal {
+  // UUID nativo (16 bytes) + gen_random_uuid() no DB. SSOT no banco.
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+
+  // eventId vem do CALLER (idempotency-key style). UNIQUE permite cron
+  // retentar sem duplicar evento (P2002 → service faz lookup e retorna).
+  eventId String @unique @map("event_id") @db.Uuid
+
+  // Whitelist via CHECK SQL: purge_pending|purge_completed|purge_failed|
+  // consent_given|consent_withdrawn|dsar_request|dsar_fulfilled
+  eventType String @map("event_type") @db.VarChar(40)
+
+  timestamp DateTime @default(now()) @db.Timestamptz(3)
+
+  // SEM FK (D-5). String Uuid solta proposital.
+  userId String @map("user_id") @db.Uuid
+
+  resourceType String @map("resource_type") @db.VarChar(40)
+  resourceId   String @map("resource_id") @db.VarChar(64)
+
+  // Whitelist via CHECK SQL: regex `^[a-z_]+$` length 3-60.
+  // Ex: retention_expired, user_request_art_18, consent_withdrawn
+  legalBasis String @map("legal_basis") @db.VarChar(60)
+
+  // Whitelist via CHECK SQL: cron_purge_worker|user_self_service|admin_panel
+  actor String @db.VarChar(40)
+
+  // Prova de respeito ao prazo de retencao no momento da purga.
+  expiresAtOriginal DateTime? @map("expires_at_original") @db.Timestamptz(3)
+
+  // SHA-256(userId:storagePath) em bytea (32 bytes). NUNCA path real.
+  // CHECK SQL: octet_length = 32.
+  resourceHash Bytes? @map("resource_hash")
+
+  // Algoritmo do resource_hash. Default 'sha256v1'. Permite versionamento
+  // futuro sem ambiguidade (defense in depth do hash freezed).
+  resourceHashAlgo String @default("sha256v1") @map("resource_hash_algo") @db.VarChar(8)
+
+  // Whitelist via CHECK SQL: success|failure
+  outcome String @db.VarChar(16)
+
+  // Obrigatorio se outcome='failure' (validado em Zod superRefine).
+  errorCode String? @map("error_code") @db.VarChar(80)
+
+  // JSONB com metadata adicional. PII passa por scrubObject SSOT antes
+  // de persistir. Cap 1024 bytes serializados (igual audit_log).
+  metadata Json?
+
+  @@index([userId, timestamp(sort: Desc)], map: "idx_audit_log_legal_user_ts")
+  @@index([eventType, timestamp(sort: Desc)], map: "idx_audit_log_legal_event_type_ts")
+  // NOTA: 2 PARTIAL INDEXES gerenciados via raw SQL na migration:
+  //   - `idx_audit_log_legal_failures` (outcome='failure') -- forensics
+  //   - `idx_audit_log_legal_hash_pending` (event_type IN purge_*, resource_hash IS NOT NULL)
+  //     -- cron #146 correlation hot path
+  // Prisma nao suporta partial indexes declarativamente. Nao usar
+  // `prisma migrate dev` (drop do indice); preferir `prisma db pull` ou
+  // migration SQL ao editar esta model.
+  @@map("audit_log_legal")
+}
+
+// ===========================================
+// FILE HISTORY - Histórico opt-in PRO de arquivos gerados
+// ===========================================
+// Feature opt-in (User.historyOptIn) que armazena metadata dos arquivos
+// processados. Card #145 (5.2a, Fase 5 Storage). Schema validado por @dba
+// em 2026-05-02 (sessão de decisões fechadas).
+//
+// IMPORTANTE - DECISÕES IRREVERSÍVEIS (consultar plano antes de mudar):
+// .claude/plans/2026-05-02-card-145-5.2a-history-optin-schema-endpoints-cron-infra.md
+//
+// (D-B) Soft delete via `deletedAt nullable` (NULL=ACTIVE, NOT NULL=PURGE_PENDING).
+//   Hard-delete pelo cron 5.2b (#146). Sem enum de status — estado derivado.
+//
+// (D-C) `expiresAt` calculado em service via env.PRO_RETENTION_DAYS.
+//   NOT NULL. NÃO usar trigger DB — permite tunar via env sem migration.
+//
+// (FK) onDelete: Cascade alinhado com Session/Job. FileHistory é dado
+//   operacional, NÃO prova jurídica (diferente de audit_log_legal #150 que
+//   é RESTRICT). Delete user → DB cascata + cron Storage 5.2b limpa órfãos.
+//
+// (storage_path UNIQUE) Defesa em profundidade contra race de upload paralelo
+//   ou bug de geração de path. UUID v4 já garante unicidade lógica;
+//   constraint DB protege contra silently overwriting Supabase Storage.
+//
+// CHECK constraints (defesa em profundidade — gerenciadas via SQL raw na
+// migration, Prisma não suporta declarativamente):
+//   - chk_file_size_positive: file_size > 0 AND file_size <= 104857600 (100MB)
+//   - chk_purge_attempts_nonneg: purge_attempts >= 0
+//
+// PARTIAL INDEXES via SQL raw (Prisma não suporta declarativamente):
+//   - idx_filehistory_expires_active: (expires_at) WHERE deleted_at IS NULL
+//     -- listagem active hot path + query da cron purge candidates
+//   - idx_filehistory_purge_pending: (deleted_at) WHERE deleted_at IS NOT NULL
+//     -- cron purge two-phase 5.2b
+// Não usar `prisma migrate dev` (drop dos partials); preferir `prisma db pull`
+// ou migration SQL ao editar esta model.
+
+model FileHistory {
+  id               String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId           String    @map("user_id") @db.Uuid
+  // Path no Supabase Storage no formato `{userId}/{yyyy-mm-dd UTC}/{jobId}.{ext}`
+  // (UserScopedPath branded em src/lib/storage/types.ts, montado por key-builder.ts).
+  // UNIQUE bloqueia overwrite silencioso. CHECK regex no DB valida formato.
+  storagePath      String    @unique @map("storage_path") @db.VarChar(255)
+  // Nome literal do upload do user. Pode conter PII (ex: cliente_2024.xlsx) —
+  // scrubbing é responsabilidade do logger (REDACT_PATHS) e Sentry, NÃO do DB.
+  // Validação Zod no controller: max 255, reject control chars \x00-\x1F.
+  originalFilename String    @map("original_filename") @db.VarChar(255)
+  // RFC 6838 max 127 chars por subtipo. Cache do MIME já validado pelo
+  // adapter no upload (ALLOWED_MIME_TYPES) — economiza round-trip Supabase
+  // metadata API na listagem (hot path PRO).
+  mimeType         String    @map("mime_type") @db.VarChar(127)
+  // SSOT de tamanho do arquivo. Adapter Card 5.1 getTotalSize() consome
+  // este campo (era fallback O(n) sobre Storage list). Int (max 2GB) é
+  // folgado pra cap PRO de 100MB. CHECK constraint garante invariante.
+  fileSize         Int       @map("file_size")
+  // Calculado em service via env.PRO_RETENTION_DAYS. Trigger da cron 5.2b.
+  expiresAt        DateTime  @map("expires_at") @db.Timestamptz(3)
+  // Sentinela two-phase: NULL=ACTIVE (visível ao user), NOT NULL=PURGE_PENDING
+  // (cron 5.2b apaga objeto físico depois). Nunca volta pra NULL.
+  deletedAt        DateTime? @map("deleted_at") @db.Timestamptz(3)
+  // Contador de tentativas do cron 5.2b. Usado pra dead-letter (>3 tentativas
+  // = alerta Sentry + mover pra fila manual). Default 0, monotonicamente crescente.
+  purgeAttempts    Int       @default(0) @map("purge_attempts")
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  // Cascade alinhado com Session/Job. Delete user → cascata DB + cron Storage.
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt(sort: Desc)], map: "idx_filehistory_user_created")
+  @@map("file_history")
+}
+
+// ===========================================
+// CRON RUNS - Histórico persistente do scheduler
+// ===========================================
+// Substitui o cap-10 in-memory (Map em src/scheduler/cron.ts) por persistência
+// forte. Card #146 (5.2b) Fase 2.5. Decisão AMB-3=A após operador override.
+//
+// IMPORTANTE - DECISÕES IRREVERSÍVEIS (consultar antes de mudar):
+// .claude/plans/2026-05-18-card-146-5.2b-cron-purge-two-phase.md §16
+// supabase/migrations/20260518120000_card_146_f2_5_add_cron_runs.sql
+//
+// (id) UUID DB-side. NÃO reutiliza LockHandle.token (fencing secret operacional
+//   que NÃO deve vazar via SELECT). App passa randomUUID() explícito no INSERT;
+//   token Redis vive APENAS em memória + Lua script.
+//
+// (status/skipReason) WHITELIST via CHECK SQL. Espelha JobRunMeta de
+//   src/scheduler/types.ts. Adicionar valor exige migration SQL nova.
+//   skipReason 'redis_unavailable' foi REMOVIDO em F5 fix-pack (dead code).
+//
+// (jobName) SEM FK física — jobs definidos em código (CronJobDefinition).
+//   CHECK regex valida kebab-case.
+//
+// (durationMs) Computado app-side. NÃO usar GENERATED — subtração timestamptz
+//   não é IMMUTABLE em Postgres; rejeita expressão.
+//
+// (cleanup) Retenção 30d via cron cron-runs-cleanup (F4.5 daily). Sem partition
+//   por ora — volume baixo (~150 rows/mês). Repensar se virar ~10k.
+//
+// CHECK constraints (defesa em profundidade — gerenciadas via SQL raw):
+//   cron_runs_status_check, cron_runs_skip_reason_check,
+//   cron_runs_terminal_finished_check, cron_runs_finished_after_started_check,
+//   cron_runs_skip_reason_consistency_check, cron_runs_error_consistency_check,
+//   cron_runs_duration_positive_check, cron_runs_rows_processed_nonneg_check,
+//   cron_runs_attempts_check (1-10), cron_runs_job_name_format_check (regex).
+//
+// PARTIAL INDEXES via SQL raw:
+//   idx_cron_runs_failures (WHERE status IN ('failure','expired'))
+//   idx_cron_runs_running (WHERE status = 'running')
+// NÃO usar `prisma migrate dev` (drop dos partials + CHECK); preferir SQL.
+
+model CronRun {
+  id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  jobName       String    @map("job_name") @db.VarChar(64)
+  startedAt     DateTime  @map("started_at") @db.Timestamptz(3)
+  finishedAt    DateTime? @map("finished_at") @db.Timestamptz(3)
+  status        String    @db.VarChar(16)
+  skipReason    String?   @map("skip_reason") @db.VarChar(32)
+  durationMs    Int?      @map("duration_ms")
+  rowsProcessed Int?      @map("rows_processed")
+  attempts      Int       @default(1) @db.SmallInt
+  errorCode     String?   @map("error_code") @db.VarChar(80)
+  errorMessage  String?   @map("error_message") @db.VarChar(500)
+  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  @@index([jobName, startedAt(sort: Desc)], map: "idx_cron_runs_job_started_desc")
+  @@index([createdAt], map: "idx_cron_runs_created_at")
+  @@map("cron_runs")
+}
+
+// ===========================================
+// FILE HISTORY DEAD LETTER - Quarentena de purga
+// ===========================================
+// Recebe rows de FileHistory cujo purgeAttempts >= 5 (Storage delete falhou 5x).
+// Cron weekly dead-letter-reprocess tenta novamente até 3x; após isso requer
+// intervenção humana (alerta Sentry CRITICAL).
+// Card #146 (5.2b) Fase 2.5. Decisão AMB-4=C após operador override.
+//
+// IMPORTANTE - DECISÕES IRREVERSÍVEIS:
+// supabase/migrations/20260518120100_card_146_f2_5_add_file_history_dead_letter.sql
+//
+// (id) UUID próprio (NÃO reutiliza file_history.id). file_history.id pode ter
+//   sido cascateado e desaparecido; dead-letter precisa de identidade própria.
+//
+// (userId) SEM FK pra users.id. INTENCIONAL (mesma decisão D-5 audit_log_legal):
+//   dead-letter é prova jurídica de tentativa de purga — deve SOBREVIVER ao
+//   delete do user. Mitigação LGPD: job dead-letter-anonymization-on-user-delete
+//   (Card #178 Backlog, Fase 7) anonimiza originalFilename após user delete.
+//
+// (originalFileHistoryId) FK lógica sem física (row na origem pode ter sido
+//   hard-deletada pelo cron pós-move). UNIQUE PARTIAL via SQL raw garante
+//   1 row ATIVO por origem.
+//
+// (storagePath) CRU (não hash). Necessário pro retry. Mitigação: REDACT em
+//   logs/Sentry + RLS DENY ALL + CHECK regex strict.
+//
+// (retenção) 5 ANOS alinhado audit_log_legal. Job de purga em Card LGPD-AUDIT
+//   futuro com role dedicada.
+//
+// (DELETE bloqueado) Trigger BEFORE DELETE raise exception. Pattern Card #150.
+//   UPDATE permitido (cron weekly precisa atualizar reprocessCount + resolvedAt).
+//
+// CHECK constraints (defesa em profundidade — gerenciadas via SQL raw):
+//   fhdl_file_size_positive_check, fhdl_purge_attempts_threshold_check (>=5),
+//   fhdl_storage_path_format_check, fhdl_mime_type_nonempty_check,
+//   fhdl_original_filename_check, fhdl_reprocess_count_check (0-3),
+//   fhdl_timing_consistency_check, fhdl_reprocess_consistency_check,
+//   fhdl_resolution_consistency_check, fhdl_resolution_type_check.
+//
+// PARTIAL INDEXES + UNIQUE PARTIAL via SQL raw:
+//   idx_fhdl_reprocess_candidates (WHERE resolved_at IS NULL AND reprocess_count < 3)
+//   idx_fhdl_human_required (WHERE resolved_at IS NULL AND reprocess_count >= 3)
+//   uq_fhdl_active_per_origin UNIQUE (original_file_history_id) WHERE resolved_at IS NULL
+
+model FileHistoryDeadLetter {
+  id                        String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  originalFileHistoryId     String    @map("original_file_history_id") @db.Uuid
+  userId                    String    @map("user_id") @db.Uuid
+  storagePath               String    @map("storage_path") @db.VarChar(255)
+  originalFilename          String    @map("original_filename") @db.VarChar(255)
+  mimeType                  String    @map("mime_type") @db.VarChar(127)
+  fileSize                  Int       @map("file_size")
+  expiresAt                 DateTime  @map("expires_at") @db.Timestamptz(3)
+  deletedAt                 DateTime  @map("deleted_at") @db.Timestamptz(3)
+  purgeAttempts             Int       @map("purge_attempts")
+  lastErrorCode             String    @map("last_error_code") @db.VarChar(80)
+  lastErrorMessage          String?   @map("last_error_message") @db.VarChar(500)
+  movedToDeadLetterAt       DateTime  @default(now()) @map("moved_to_dead_letter_at") @db.Timestamptz(3)
+  reprocessCount            Int       @default(0) @map("reprocess_count") @db.SmallInt
+  lastReprocessAttemptAt    DateTime? @map("last_reprocess_attempt_at") @db.Timestamptz(3)
+  lastReprocessErrorCode    String?   @map("last_reprocess_error_code") @db.VarChar(80)
+  lastReprocessErrorMessage String?   @map("last_reprocess_error_message") @db.VarChar(500)
+  resolvedAt                DateTime? @map("resolved_at") @db.Timestamptz(3)
+  resolutionType            String?   @map("resolution_type") @db.VarChar(32)
+  createdAt                 DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  @@index([userId, movedToDeadLetterAt(sort: Desc)], map: "idx_fhdl_user_moved")
+  @@map("file_history_dead_letter")
+}
+
+// ===========================================
+// QUOTA ALERTS SENT - dedupe Card #147 (5.2c)
+// ===========================================
+// 1 row = 1 alerta enviado. UNIQUE(user_id, threshold, period) absorve retry
+// e garante 1 email por threshold por mês por user. Cron quota-alert insere
+// via INSERT...ON CONFLICT DO NOTHING (atômico, espelha pattern Card 4.2).
+// Reset implícito: nova `period` (mês UTC) permite reenvio.
+
+model QuotaAlertSent {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  threshold Int // 70 ou 90 (CHECK constraint no DB)
+  period    String   @db.VarChar(7) // YYYY-MM UTC (alinhado com usage.service.getCurrentPeriod)
+  sentAt    DateTime @default(now()) @map("sent_at") @db.Timestamptz(3)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, threshold, period], map: "quota_alerts_unique_user_threshold_period")
+  @@map("quota_alerts_sent")
+}
+
+// ===========================================
 // ENUMS
 // ===========================================
+
+enum Role {
+  FREE
+  PRO
+}
 
 enum Plan {
   PRO

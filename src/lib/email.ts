@@ -7,7 +7,7 @@ const resend = env.RESEND_API_KEY ? new Resend(env.RESEND_API_KEY) : null
 
 function getResend(): Resend {
   if (!resend) {
-    throw Errors.internal('Resend não configurado. Verifique RESEND_API_KEY.')
+    throw Errors.internal()
   }
   return resend
 }
@@ -29,6 +29,27 @@ export interface SendPaymentFailedEmailParams {
   to: string
 }
 
+// Card #147 (5.2c) F2 — params dos alertas de quota PRO mensal.
+// Variáveis vêm pré-calculadas do handler do cron (não inferimos aqui pra
+// manter a função pura e fácil de testar com fixtures).
+export interface SendQuotaWarningEmailParams {
+  to: string
+  usagePercent: number
+  unificationsCount: number
+  limit: number
+  remaining: number
+  resetAtFormatted: string
+}
+
+export interface SendQuotaCriticalEmailParams {
+  to: string
+  usagePercent: number
+  unificationsCount: number
+  limit: number
+  remaining: number
+  resetAtFormatted: string
+}
+
 /**
  * Envia email com o token Pro para o cliente
  */
@@ -36,27 +57,18 @@ export async function sendTokenEmail(
   params: SendTokenEmailParams,
 ): Promise<void> {
   const client = getResend()
-
   const { to, token } = params
 
-  try {
-    const { error } = await client.emails.send({
-      from: FROM_EMAIL,
-      to,
-      subject: 'Seu token Pro do Tablix',
-      html: generateTokenEmailHtml(token),
-      text: generateTokenEmailText(token),
-    })
+  const { error } = await client.emails.send({
+    from: FROM_EMAIL,
+    to,
+    subject: 'Seu token Pro do Tablix',
+    html: generateTokenEmailHtml(token),
+    text: generateTokenEmailText(token),
+  })
 
-    if (error) {
-      console.error('[Email] Erro ao enviar token:', error)
-      throw Errors.internal(`Erro ao enviar email: ${error.message}`)
-    }
-
-    console.log('[Email] Token enviado para:', to)
-  } catch (error) {
-    console.error('[Email] Falha ao enviar token:', error)
-    throw error
+  if (error) {
+    throw Errors.internal('Erro ao enviar email')
   }
 }
 
@@ -67,27 +79,18 @@ export async function sendCancellationEmail(
   params: SendCancellationEmailParams,
 ): Promise<void> {
   const client = getResend()
-
   const { to, expiresAt } = params
 
-  try {
-    const { error } = await client.emails.send({
-      from: FROM_EMAIL,
-      to,
-      subject: 'Sua assinatura Tablix Pro foi cancelada',
-      html: generateCancellationEmailHtml(expiresAt),
-      text: generateCancellationEmailText(expiresAt),
-    })
+  const { error } = await client.emails.send({
+    from: FROM_EMAIL,
+    to,
+    subject: 'Sua assinatura Tablix Pro foi cancelada',
+    html: generateCancellationEmailHtml(expiresAt),
+    text: generateCancellationEmailText(expiresAt),
+  })
 
-    if (error) {
-      console.error('[Email] Erro ao enviar cancelamento:', error)
-      throw Errors.internal(`Erro ao enviar email: ${error.message}`)
-    }
-
-    console.log('[Email] Cancelamento enviado para:', to)
-  } catch (error) {
-    console.error('[Email] Falha ao enviar cancelamento:', error)
-    throw error
+  if (error) {
+    throw Errors.internal('Erro ao enviar email')
   }
 }
 
@@ -98,27 +101,18 @@ export async function sendPaymentFailedEmail(
   params: SendPaymentFailedEmailParams,
 ): Promise<void> {
   const client = getResend()
-
   const { to } = params
 
-  try {
-    const { error } = await client.emails.send({
-      from: FROM_EMAIL,
-      to,
-      subject: 'Problema com seu pagamento - Tablix Pro',
-      html: generatePaymentFailedEmailHtml(),
-      text: generatePaymentFailedEmailText(),
-    })
+  const { error } = await client.emails.send({
+    from: FROM_EMAIL,
+    to,
+    subject: 'Problema com seu pagamento - Tablix Pro',
+    html: generatePaymentFailedEmailHtml(),
+    text: generatePaymentFailedEmailText(),
+  })
 
-    if (error) {
-      console.error('[Email] Erro ao enviar falha de pagamento:', error)
-      throw Errors.internal(`Erro ao enviar email: ${error.message}`)
-    }
-
-    console.log('[Email] Falha de pagamento enviado para:', to)
-  } catch (error) {
-    console.error('[Email] Falha ao enviar notificação:', error)
-    throw error
+  if (error) {
+    throw Errors.internal('Erro ao enviar email')
   }
 }
 
@@ -408,4 +402,296 @@ Se precisar de ajuda, responda este email.
 ---
 Tablix - Unifique suas planilhas com facilidade
   `.trim()
+}
+
+// ===========================================
+// QUOTA ALERTS (Card #147, 5.2c)
+// ===========================================
+// Emails transacionais de alerta de uso da quota PRO mensal.
+// Disparados pelo cron `quota-alert` (08:00 BRT diário) quando o usuário
+// cruza 70% ou 90% do limite mensal. Dedupe via tabela quota_alerts_sent
+// (UNIQUE user_id+threshold+period) — 1 alerta por threshold por mês.
+// Sem unsubscribe: alertas são essenciais ao serviço PRO ativo (transacional,
+// não marketing). LGPD/CASL distinguem transacional de marketing.
+
+/**
+ * Envia email de alerta amarelo: usuário cruzou 70% da quota mensal.
+ * Tom: avisar com tempo, sem alarme.
+ */
+export async function sendQuotaWarningEmail(
+  params: SendQuotaWarningEmailParams,
+): Promise<void> {
+  const client = getResend()
+  const { to } = params
+
+  const { error } = await client.emails.send({
+    from: FROM_EMAIL,
+    to,
+    subject: 'Voce ja usou 70% da sua quota mensal do Tablix Pro',
+    html: generateQuotaWarningEmailHtml(params),
+    text: generateQuotaWarningEmailText(params),
+  })
+
+  if (error) {
+    throw Errors.internal('Erro ao enviar email')
+  }
+}
+
+/**
+ * Envia email de alerta vermelho: usuário cruzou 90% da quota mensal.
+ * Tom: alertar com urgência factual, sem ameaça.
+ */
+export async function sendQuotaCriticalEmail(
+  params: SendQuotaCriticalEmailParams,
+): Promise<void> {
+  const client = getResend()
+  const { to } = params
+
+  const { error } = await client.emails.send({
+    from: FROM_EMAIL,
+    to,
+    subject: 'Atencao: voce esta chegando ao limite do seu plano Pro',
+    html: generateQuotaCriticalEmailHtml(params),
+    text: generateQuotaCriticalEmailText(params),
+  })
+
+  if (error) {
+    throw Errors.internal('Erro ao enviar email')
+  }
+}
+
+// ===========================================
+// TEMPLATES — Quota Warning (70%)
+// ===========================================
+// Card #147 fix-pack ciclo 1 (@copywriter BAIXO): plural correto pra
+// remaining ∈ {0,1,2,...}. "1 unificacoes" é gramaticalmente errado em
+// PT-BR; helper inline resolve sem custo significativo.
+function unificacaoLabel(n: number): string {
+  return n === 1 ? 'unificacao' : 'unificacoes'
+}
+
+function generateQuotaWarningEmailHtml(
+  opts: SendQuotaWarningEmailParams,
+): string {
+  const {
+    usagePercent,
+    unificationsCount,
+    limit,
+    remaining,
+    resetAtFormatted,
+  } = opts
+  return `
+<!-- Transactional email — user has active PRO subscription -->
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Alerta de quota — Tablix Pro</title>
+</head>
+<body style="margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; background-color: #f4f4f5;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background-color: #f4f4f5; padding: 40px 20px;">
+    <tr>
+      <td align="center">
+        <table width="100%" style="max-width: 600px; background-color: #ffffff; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
+          <!-- Header -->
+          <tr>
+            <td style="background-color: #18181b; padding: 32px; text-align: center;">
+              <h1 style="margin: 0; color: #ffffff; font-size: 24px; font-weight: 600;">Tablix Pro</h1>
+            </td>
+          </tr>
+
+          <!-- Content -->
+          <tr>
+            <td style="padding: 40px 32px;">
+              <h2 style="margin: 0 0 16px; color: #18181b; font-size: 20px; font-weight: 600;">
+                Sua quota do mes esta em ${usagePercent}%
+              </h2>
+
+              <p style="margin: 0 0 24px; color: #52525b; font-size: 16px; line-height: 1.6;">
+                Voce ja realizou <strong>${unificationsCount} de ${limit} unificacoes</strong> disponiveis no seu plano Pro este mes.
+              </p>
+
+              <!-- Alert box amarelo -->
+              <div style="background-color: #fef3c7; border-left: 4px solid #f59e0b; padding: 12px 16px; border-radius: 0 4px 4px 0; margin-bottom: 24px;">
+                <p style="margin: 0; color: #92400e; font-size: 14px;">
+                  Restam <strong>${remaining} ${unificacaoLabel(remaining)}</strong> ate o reset em <strong>${resetAtFormatted}</strong>.
+                </p>
+              </div>
+
+              <div style="text-align: center; margin-bottom: 24px;">
+                <a href="${env.FRONTEND_URL}" style="display: inline-block; background-color: #18181b; color: #ffffff; padding: 12px 24px; border-radius: 6px; text-decoration: none; font-weight: 500;">
+                  Ver meu uso
+                </a>
+              </div>
+
+              <p style="margin: 0; color: #71717a; font-size: 14px;">
+                Se tiver qualquer duvida, responda este email.
+              </p>
+            </td>
+          </tr>
+
+          <!-- Footer -->
+          <tr>
+            <td style="background-color: #f4f4f5; padding: 24px 32px; text-align: center;">
+              <p style="margin: 0; color: #71717a; font-size: 12px;">
+                Tablix - Unifique suas planilhas com facilidade
+              </p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>
+  `.trim()
+}
+
+function generateQuotaWarningEmailText(
+  opts: SendQuotaWarningEmailParams,
+): string {
+  const {
+    usagePercent,
+    unificationsCount,
+    limit,
+    remaining,
+    resetAtFormatted,
+  } = opts
+  return `
+Sua quota do mes esta em ${usagePercent}%
+
+Voce ja realizou ${unificationsCount} de ${limit} unificacoes disponiveis
+no seu plano Pro este mes.
+
+Restam ${remaining} ${unificacaoLabel(remaining)} ate o reset em ${resetAtFormatted}.
+
+Ver meu uso: ${env.FRONTEND_URL}
+
+Se tiver qualquer duvida, responda este email.
+
+---
+Tablix - Unifique suas planilhas com facilidade
+  `.trim()
+}
+
+// ===========================================
+// TEMPLATES — Quota Critical (90%)
+// ===========================================
+
+function generateQuotaCriticalEmailHtml(
+  opts: SendQuotaCriticalEmailParams,
+): string {
+  const {
+    usagePercent,
+    unificationsCount,
+    limit,
+    remaining,
+    resetAtFormatted,
+  } = opts
+  return `
+<!-- Transactional email — user has active PRO subscription -->
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Alerta de quota — Tablix Pro</title>
+</head>
+<body style="margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; background-color: #f4f4f5;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background-color: #f4f4f5; padding: 40px 20px;">
+    <tr>
+      <td align="center">
+        <table width="100%" style="max-width: 600px; background-color: #ffffff; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
+          <!-- Header -->
+          <tr>
+            <td style="background-color: #18181b; padding: 32px; text-align: center;">
+              <h1 style="margin: 0; color: #ffffff; font-size: 24px; font-weight: 600;">Tablix Pro</h1>
+            </td>
+          </tr>
+
+          <!-- Content -->
+          <tr>
+            <td style="padding: 40px 32px;">
+              <h2 style="margin: 0 0 16px; color: #18181b; font-size: 20px; font-weight: 600;">
+                Voce esta usando ${usagePercent}% da sua quota mensal
+              </h2>
+
+              <p style="margin: 0 0 24px; color: #52525b; font-size: 16px; line-height: 1.6;">
+                Ja sao <strong>${unificationsCount} de ${limit} unificacoes</strong> no seu plano Pro este mes.
+              </p>
+
+              <!-- Alert box vermelho-claro -->
+              <div style="background-color: #fef2f2; border-left: 4px solid #dc2626; padding: 12px 16px; border-radius: 0 4px 4px 0; margin-bottom: 24px;">
+                <p style="margin: 0; color: #991b1b; font-size: 14px;">
+                  Restam <strong>apenas ${remaining} ${unificacaoLabel(remaining)}</strong> ate o reset em <strong>${resetAtFormatted}</strong>. Ao atingir o limite, novas unificacoes ficarao indisponiveis ate la.
+                </p>
+              </div>
+
+              <div style="text-align: center; margin-bottom: 24px;">
+                <a href="${env.FRONTEND_URL}" style="display: inline-block; background-color: #18181b; color: #ffffff; padding: 12px 24px; border-radius: 6px; text-decoration: none; font-weight: 500;">
+                  Ver meu uso
+                </a>
+              </div>
+
+              <p style="margin: 0; color: #71717a; font-size: 14px;">
+                Se tiver qualquer duvida, responda este email.
+              </p>
+            </td>
+          </tr>
+
+          <!-- Footer -->
+          <tr>
+            <td style="background-color: #f4f4f5; padding: 24px 32px; text-align: center;">
+              <p style="margin: 0; color: #71717a; font-size: 12px;">
+                Tablix - Unifique suas planilhas com facilidade
+              </p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>
+  `.trim()
+}
+
+function generateQuotaCriticalEmailText(
+  opts: SendQuotaCriticalEmailParams,
+): string {
+  const {
+    usagePercent,
+    unificationsCount,
+    limit,
+    remaining,
+    resetAtFormatted,
+  } = opts
+  return `
+Voce esta usando ${usagePercent}% da sua quota mensal
+
+Ja sao ${unificationsCount} de ${limit} unificacoes no seu plano Pro este mes.
+
+Restam apenas ${remaining} ${unificacaoLabel(remaining)} ate o reset em ${resetAtFormatted}.
+Ao atingir o limite, novas unificacoes ficarao indisponiveis ate la.
+
+Ver meu uso: ${env.FRONTEND_URL}
+
+Se tiver qualquer duvida, responda este email.
+
+---
+Tablix - Unifique suas planilhas com facilidade
+  `.trim()
+}
+
+// ===========================================
+// __testing — helpers expostos APENAS para tests
+// ===========================================
+// Permitem snapshot/render dos templates sem precisar mockar Resend.
+// Não usar em produção.
+export const __testing = {
+  generateQuotaWarningEmailHtml,
+  generateQuotaWarningEmailText,
+  generateQuotaCriticalEmailHtml,
+  generateQuotaCriticalEmailText,
 }

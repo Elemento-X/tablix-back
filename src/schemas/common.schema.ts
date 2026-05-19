@@ -82,16 +82,16 @@ export const userInfoSchema = z.object({
 export type UserInfo = z.infer<typeof userInfoSchema>
 
 // ============================================
-// JWT PAYLOAD
+// ACCESS TOKEN PAYLOAD
 // ============================================
 
-export const jwtPayloadSchema = z.object({
-  tokenId: z.string().uuid(),
+export const accessTokenPayloadSchema = z.object({
+  sub: z.string().uuid().describe('Session ID'),
+  userId: z.string().uuid(),
   email: z.string().email(),
-  plan: planSchema,
-  stripeCustomerId: z.string(),
+  role: planSchema,
   iat: z.number().optional(),
   exp: z.number().optional(),
 })
 
-export type JwtPayload = z.infer<typeof jwtPayloadSchema>
+export type AccessTokenPayloadSchema = z.infer<typeof accessTokenPayloadSchema>

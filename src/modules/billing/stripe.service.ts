@@ -11,9 +11,7 @@ const stripe = env.STRIPE_SECRET_KEY
 
 function getStripe(): Stripe {
   if (!stripe) {
-    throw Errors.internal(
-      'Stripe não configurado. Verifique STRIPE_SECRET_KEY.',
-    )
+    throw Errors.internal()
   }
   return stripe
 }
@@ -23,6 +21,12 @@ export interface CreateCheckoutParams {
   priceId: string
   successUrl: string
   cancelUrl: string
+  /**
+   * Card #74 — Idempotency-Key encaminhada ao Stripe SDK (`idempotencyKey`
+   * option). Stripe dedupa chamadas idênticas por 24h mesmo sem nosso
+   * cache Redis — defesa em profundidade.
+   */
+  idempotencyKey?: string
 }
 
 export interface CreateCheckoutResult {
@@ -39,22 +43,30 @@ export async function createCheckoutSession(
   const stripeClient = getStripe()
 
   try {
-    const session = await stripeClient.checkout.sessions.create({
-      mode: 'subscription',
-      payment_method_types: ['card'],
-      customer_email: params.email,
-      line_items: [
-        {
-          price: params.priceId,
-          quantity: 1,
+    const session = await stripeClient.checkout.sessions.create(
+      {
+        mode: 'subscription',
+        payment_method_types: ['card'],
+        customer_email: params.email,
+        line_items: [
+          {
+            price: params.priceId,
+            quantity: 1,
+          },
+        ],
+        ui_mode: 'embedded',
+        return_url: params.successUrl,
+        metadata: {
+          email: params.email,
         },
-      ],
-      ui_mode: 'embedded',
-      return_url: params.successUrl,
-      metadata: {
-        email: params.email,
       },
-    })
+      // 2º argumento — RequestOptions do Stripe SDK. `idempotencyKey` ali
+      // garante que Stripe dedupe a chamada no lado deles (além do nosso
+      // cache Redis).
+      params.idempotencyKey
+        ? { idempotencyKey: params.idempotencyKey }
+        : undefined,
+    )
 
     if (!session.client_secret) {
       throw Errors.checkoutFailed('Stripe não retornou client_secret')
@@ -66,7 +78,7 @@ export async function createCheckoutSession(
     }
   } catch (error) {
     if (error instanceof Stripe.errors.StripeError) {
-      throw Errors.checkoutFailed(error.message)
+      throw Errors.checkoutFailed()
     }
     throw error
   }
@@ -90,7 +102,7 @@ export async function createPortalSession(
     return session.url
   } catch (error) {
     if (error instanceof Stripe.errors.StripeError) {
-      throw Errors.portalFailed(error.message)
+      throw Errors.portalFailed()
     }
     throw error
   }
@@ -106,7 +118,7 @@ export function constructWebhookEvent(
   const stripeClient = getStripe()
 
   if (!env.STRIPE_WEBHOOK_SECRET) {
-    throw Errors.webhookFailed('STRIPE_WEBHOOK_SECRET não configurado')
+    throw Errors.webhookFailed()
   }
 
   try {
@@ -137,7 +149,7 @@ export async function getCheckoutSession(
     })
   } catch (error) {
     if (error instanceof Stripe.errors.StripeError) {
-      throw Errors.internal(`Erro ao buscar sessão: ${error.message}`)
+      throw Errors.internal('Erro ao buscar sessão de checkout')
     }
     throw error
   }
@@ -155,18 +167,59 @@ export async function getSubscription(
     return await stripeClient.subscriptions.retrieve(subscriptionId)
   } catch (error) {
     if (error instanceof Stripe.errors.StripeError) {
-      throw Errors.internal(`Erro ao buscar assinatura: ${error.message}`)
+      throw Errors.internal('Erro ao buscar assinatura')
     }
     throw error
   }
 }
 
+export type Currency = 'BRL' | 'USD' | 'EUR'
+export type Interval = 'monthly' | 'yearly'
+
 /**
- * Retorna os IDs de preço configurados
+ * Mapa de preços por moeda e intervalo.
+ * Resolução server-side — cliente nunca envia priceId.
  */
-export function getPriceIds() {
-  return {
-    monthly: env.STRIPE_PRO_MONTHLY_PRICE_ID,
-    yearly: env.STRIPE_PRO_YEARLY_PRICE_ID,
-  }
+const PRICE_MAP: Record<Currency, Record<Interval, string | undefined>> = {
+  BRL: {
+    monthly: env.STRIPE_PRO_MONTHLY_BRL_PRICE_ID,
+    yearly: env.STRIPE_PRO_YEARLY_BRL_PRICE_ID,
+  },
+  USD: {
+    monthly: env.STRIPE_PRO_MONTHLY_USD_PRICE_ID,
+    yearly: env.STRIPE_PRO_YEARLY_USD_PRICE_ID,
+  },
+  EUR: {
+    monthly: env.STRIPE_PRO_MONTHLY_EUR_PRICE_ID,
+    yearly: env.STRIPE_PRO_YEARLY_EUR_PRICE_ID,
+  },
+}
+
+/**
+ * Retorna o priceId para uma moeda e intervalo específicos.
+ * Retorna undefined se não configurado.
+ */
+export function getPriceId(
+  currency: Currency,
+  interval: Interval,
+): string | undefined {
+  return PRICE_MAP[currency]?.[interval]
+}
+
+/**
+ * Retorna preços disponíveis por moeda.
+ * Filtra currencies sem nenhum price configurado (evita expor config operacional).
+ */
+export function getAllPrices() {
+  return Object.entries(PRICE_MAP)
+    .filter(([, intervals]) => intervals.monthly || intervals.yearly)
+    .map(([currency, intervals]) => ({
+      currency,
+      monthly: {
+        available: !!intervals.monthly,
+      },
+      yearly: {
+        available: !!intervals.yearly,
+      },
+    }))
 }

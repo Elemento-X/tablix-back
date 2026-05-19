@@ -2,17 +2,25 @@
 // TABLIX - TIPOS PARA PROCESSAMENTO DE PLANILHAS
 // ===========================================
 
+import { PRO_LIMITS as PLAN_PRO_LIMITS } from '../../config/plan-limits'
+
 /**
- * Limites do plano Pro
+ * Limites do plano Pro aplicados ao processamento de planilhas.
+ *
+ * Fonte única da verdade: `src/config/plan-limits.ts`. Este objeto só
+ * re-exporta os campos do PRO na forma esperada pelo pipeline de spreadsheet
+ * (com `maxRowsPerFile` como alias de `maxRows` pra clareza local).
+ *
+ * D.1: 30 unificações/mês no plano PRO.
  */
 export const PRO_LIMITS = {
-  unificationsPerMonth: 40,
-  maxInputFiles: 15,
-  maxFileSize: Infinity, // Sem limite por arquivo
-  maxTotalSize: 30 * 1024 * 1024, // 30MB
-  maxRowsPerFile: Infinity, // Sem limite por arquivo
-  maxTotalRows: 75000,
-  maxColumns: 15,
+  unificationsPerMonth: PLAN_PRO_LIMITS.unificationsPerMonth,
+  maxInputFiles: PLAN_PRO_LIMITS.maxInputFiles,
+  maxFileSize: PLAN_PRO_LIMITS.maxFileSize,
+  maxTotalSize: PLAN_PRO_LIMITS.maxTotalSize,
+  maxRowsPerFile: PLAN_PRO_LIMITS.maxRows,
+  maxTotalRows: PLAN_PRO_LIMITS.maxTotalRows,
+  maxColumns: PLAN_PRO_LIMITS.maxColumns,
 } as const
 
 /**

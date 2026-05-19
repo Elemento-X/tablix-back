@@ -13,6 +13,7 @@ import {
   MIME_TYPES,
 } from './types'
 import { findMatchingColumn } from './parser'
+import { sanitizeCell, sanitizeHeaders } from './sanitizer'
 
 /**
  * Combina múltiplas planilhas usando as colunas selecionadas
@@ -36,7 +37,7 @@ export function mergeSpreadsheets(
 
     // Extrai os dados de cada linha
     for (const row of spreadsheet.rows) {
-      const mergedRow: SpreadsheetRow = {}
+      const mergedRow: SpreadsheetRow = Object.create(null)
 
       for (const selectedCol of selectedColumns) {
         const actualCol = columnMapping.get(selectedCol)
@@ -81,22 +82,25 @@ export function generateOutputFile(
  * Gera arquivo CSV
  */
 function generateCsvOutput(merged: MergedResult, fileName: string): OutputFile {
+  const safeHeaders = sanitizeHeaders(merged.headers)
+
   // Converte os dados para o formato esperado pelo papaparse
   const data = merged.rows.map((row) => {
     const csvRow: Record<string, string> = {}
-    for (const header of merged.headers) {
-      const value = row[header]
+    for (let i = 0; i < merged.headers.length; i++) {
+      const value = row[merged.headers[i]]
       if (value === null || value === undefined) {
-        csvRow[header] = ''
+        csvRow[safeHeaders[i]] = ''
       } else {
-        csvRow[header] = String(value)
+        const sanitized = sanitizeCell(value)
+        csvRow[safeHeaders[i]] = String(sanitized)
       }
     }
     return csvRow
   })
 
   const csv = Papa.unparse(data, {
-    columns: merged.headers,
+    columns: safeHeaders,
     header: true,
   })
 
@@ -120,14 +124,15 @@ function generateXlsxOutput(
   // Cria array de arrays com headers + dados
   const data: (string | number | boolean | null)[][] = []
 
-  // Headers
-  data.push(merged.headers)
+  // Headers (sanitizados contra formula injection)
+  const safeHeaders = sanitizeHeaders(merged.headers)
+  data.push(safeHeaders)
 
-  // Dados
+  // Dados (sanitizados contra formula injection)
   for (const row of merged.rows) {
     const rowData: (string | number | boolean | null)[] = []
     for (const header of merged.headers) {
-      rowData.push(row[header] ?? null)
+      rowData.push(sanitizeCell(row[header] ?? null))
     }
     data.push(rowData)
   }

@@ -1,11 +1,11 @@
 import { FastifyRequest, FastifyReply } from 'fastify'
-import { extractBearerToken, verifyJwtOrThrow } from '../lib/jwt'
+import { extractBearerToken, verifyAccessTokenOrThrow } from '../lib/jwt'
 import { Errors } from '../errors/app-error'
 import { prisma } from '../lib/prisma'
 
 /**
- * Middleware de autenticação JWT
- * Valida o token e injeta o usuário no request
+ * Middleware de autenticação JWT + Session
+ * Valida o access token e verifica se a session está ativa no DB
  */
 export async function authMiddleware(
   request: FastifyRequest,
@@ -18,40 +18,35 @@ export async function authMiddleware(
     throw Errors.unauthorized('Token de autenticação não fornecido')
   }
 
-  // Verifica e decodifica o JWT
-  const payload = verifyJwtOrThrow(token)
+  // Verifica e decodifica o access token JWT
+  const payload = verifyAccessTokenOrThrow(token)
 
-  // Verifica se o token Pro ainda existe e está ativo no banco
-  const tokenRecord = await prisma.token.findUnique({
+  // Verifica se a session está ativa no banco
+  const session = await prisma.session.findUnique({
     where: { id: payload.sub },
   })
 
-  if (!tokenRecord) {
-    throw Errors.invalidToken('Token não encontrado')
+  if (!session) {
+    throw Errors.unauthorized('Sessão não encontrada')
   }
 
-  if (tokenRecord.status !== 'ACTIVE') {
-    if (tokenRecord.status === 'CANCELLED') {
-      // Verifica se ainda está no período de graça
-      if (tokenRecord.expiresAt && tokenRecord.expiresAt > new Date()) {
-        // Ainda tem acesso até expirar
-        request.user = payload
-        return
-      }
-      throw Errors.subscriptionExpired('Assinatura cancelada')
-    }
-    throw Errors.subscriptionExpired('Assinatura expirada')
+  if (session.revokedAt) {
+    throw Errors.unauthorized('Sessão revogada. Faça login novamente.')
   }
 
-  // Verifica se expirou (mesmo que status seja ACTIVE)
-  if (tokenRecord.expiresAt && tokenRecord.expiresAt < new Date()) {
-    // Atualiza status para EXPIRED
-    await prisma.token.update({
-      where: { id: tokenRecord.id },
-      data: { status: 'EXPIRED' },
+  if (session.expiresAt < new Date()) {
+    throw Errors.unauthorized('Sessão expirada. Faça login novamente.')
+  }
+
+  // Atualiza lastActivityAt (fire-and-forget, não bloqueia o request)
+  prisma.session
+    .update({
+      where: { id: session.id },
+      data: { lastActivityAt: new Date() },
     })
-    throw Errors.subscriptionExpired('Assinatura expirada')
-  }
+    .catch(() => {
+      // Falha silenciosa — não impede o request
+    })
 
   // Injeta o payload no request
   request.user = payload
@@ -70,15 +65,32 @@ export async function optionalAuthMiddleware(
   const token = extractBearerToken(authHeader)
 
   if (!token) {
-    // Sem token, continua como usuário Free
     return
   }
 
   try {
-    // Tenta autenticar
     await authMiddleware(request, _reply)
   } catch {
-    // Falha silenciosa - continua como Free
     request.user = undefined
+  }
+}
+
+/**
+ * Factory para middleware de verificação de role
+ * Deve ser usado APÓS authMiddleware
+ */
+export function requireRole(...roles: Array<'FREE' | 'PRO'>) {
+  return async (
+    request: FastifyRequest,
+    _reply: FastifyReply,
+  ): Promise<void> => {
+    if (!request.user) {
+      throw Errors.unauthorized('Autenticação necessária')
+    }
+
+    const userRole = request.user.role
+    if (!roles.includes(userRole)) {
+      throw Errors.forbidden()
+    }
   }
 }

@@ -1,0 +1,1408 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-05-19T00:16:10.393Z",
+  "database": "container:postgres-17-alpine",
+  "fingerprint": "5a515281a18bfd4af7809d4e4f32103d267d0f771aabe5239aacd3ff9566ffba",
+  "model": {
+    "extensions": [
+      "pgcrypto"
+    ],
+    "enums": [
+      {
+        "name": "JobStatus",
+        "values": [
+          "PENDING",
+          "PROCESSING",
+          "COMPLETED",
+          "FAILED"
+        ]
+      },
+      {
+        "name": "Plan",
+        "values": [
+          "PRO"
+        ]
+      },
+      {
+        "name": "Role",
+        "values": [
+          "FREE",
+          "PRO"
+        ]
+      },
+      {
+        "name": "TokenStatus",
+        "values": [
+          "ACTIVE",
+          "CANCELLED",
+          "EXPIRED"
+        ]
+      }
+    ],
+    "tables": [
+      {
+        "name": "audit_log",
+        "columns": [
+          {
+            "name": "id",
+            "type": "uuid",
+            "nullable": false,
+            "default": "gen_random_uuid()"
+          },
+          {
+            "name": "action",
+            "type": "character varying(50)",
+            "nullable": false,
+            "default": null
+          },
+          {
+            "name": "actor",
+            "type": "character varying(255)",
+            "nullable": true,
+            "default": null
+          },
+          {
+            "name": "ip",
+            "type": "character varying(45)",
+            "nullable": true,
+            "default": null
+          },
+          {
+            "name": "user_agent",
+            "type": "character varying(512)",
+            "nullable": true,
+            "default": null
+          },
+          {
+            "name": "success",
+            "type": "boolean",
+            "nullable": false,
+            "default": null
+          },
+          {
+            "name": "metadata",
+            "type": "jsonb",
+            "nullable": true,
+            "default": null
+          },
+          {
+            "name": "created_at",
+            "type": "timestamp with time zone(3)",
+            "nullable": false,
+            "default": "CURRENT_TIMESTAMP"
+          }
+        ],
+        "reloptions": [
+          "toast_tuple_target=4096"
+        ]
+      },
+      {
+        "name": "audit_log_legal",
+        "columns": [
+          {
+            "name": "id",
+            "type": "uuid",
+            "nullable": false,
+            "default": "gen_random_uuid()"
+          },
+          {
+            "name": "event_id",
+            "type": "uuid",
+            "nullable": false,
+            "default": null
+          },
+          {
+            "name": "event_type",
+            "type": "character varying(40)",
+            "nullable": false,
+            "default": null
+          },
+          {
+            "name": "timestamp",
+            "type": "timestamp with time zone(3)",
+            "nullable": false,
+            "default": "CURRENT_TIMESTAMP"
+          },
+          {
+            "name": "user_id",
+            "type": "uuid",
+            "nullable": false,
+            "default": null
+          },
+          {
+            "name": "resource_type",
+            "type": "character varying(40)",
+            "nullable": false,
+            "default": null
+          },
+          {
+            "name": "resource_id",
+            "type": "character varying(64)",
+            "nullable": false,
+            "default": null
+          },
+          {
+            "name": "legal_basis",
+            "type": "character varying(60)",
+            "nullable": false,
+            "default": null
+          },
+          {
+            "name": "actor",
+            "type": "character varying(40)",
+            "nullable": false,
+            "default": null
+          },
+          {
+            "name": "expires_at_original",
+            "type": "timestamp with time zone(3)",
+            "nullable": true,
+            "default": null
+          },
+          {
+            "name": "resource_hash",
+            "type": "bytea",
+            "nullable": true,
+            "default": null
+          },
+          {
+            "name": "resource_hash_algo",
+            "type": "character varying(8)",
+            "nullable": false,
+            "default": "'sha256v1'::character varying"
+          },
+          {
+            "name": "outcome",
+            "type": "character varying(16)",
+            "nullable": false,
+            "default": null
+          },
+          {
+            "name": "error_code",
+            "type": "character varying(80)",
+            "nullable": true,
+            "default": null
+          },
+          {
+            "name": "metadata",
+            "type": "jsonb",
+            "nullable": true,
+            "default": null
+          }
+        ],
+        "reloptions": [
+          "toast_tuple_target=4096"
+        ]
+      },
+      {
+        "name": "cron_runs",
+        "columns": [
+          {
+            "name": "id",
+            "type": "uuid",
+            "nullable": false,
+            "default": "gen_random_uuid()"
+          },
+          {
+            "name": "job_name",
+            "type": "character varying(64)",
+            "nullable": false,
+            "default": null
+          },
+          {
+            "name": "started_at",
+            "type": "timestamp with time zone(6)",
+            "nullable": false,
+            "default": null
+          },
+          {
+            "name": "finished_at",
+            "type": "timestamp with time zone(6)",
+            "nullable": true,
+            "default": null
+          },
+          {
+            "name": "status",
+            "type": "character varying(16)",
+            "nullable": false,
+            "default": null
+          },
+          {
+            "name": "skip_reason",
+            "type": "character varying(32)",
+            "nullable": true,
+            "default": null
+          },
+          {
+            "name": "duration_ms",
+            "type": "integer",
+            "nullable": true,
+            "default": null
+          },
+          {
+            "name": "rows_processed",
+            "type": "integer",
+            "nullable": true,
+            "default": null
+          },
+          {
+            "name": "attempts",
+            "type": "smallint",
+            "nullable": false,
+            "default": "1"
+          },
+          {
+            "name": "error_code",
+            "type": "character varying(80)",
+            "nullable": true,
+            "default": null
+          },
+          {
+            "name": "error_message",
+            "type": "character varying(500)",
+            "nullable": true,
+            "default": null
+          },
+          {
+            "name": "created_at",
+            "type": "timestamp with time zone(6)",
+            "nullable": false,
+            "default": "CURRENT_TIMESTAMP"
+          }
+        ],
+        "reloptions": []
+      },
+      {
+        "name": "file_history",
+        "columns": [
+          {
+            "name": "id",
+            "type": "uuid",
+            "nullable": false,
+            "default": "gen_random_uuid()"
+          },
+          {
+            "name": "user_id",
+            "type": "uuid",
+            "nullable": false,
+            "default": null
+          },
+          {
+            "name": "storage_path",
+            "type": "character varying(255)",
+            "nullable": false,
+            "default": null
+          },
+          {
+            "name": "original_filename",
+            "type": "character varying(255)",
+            "nullable": false,
+            "default": null
+          },
+          {
+            "name": "mime_type",
+            "type": "character varying(127)",
+            "nullable": false,
+            "default": null
+          },
+          {
+            "name": "file_size",
+            "type": "integer",
+            "nullable": false,
+            "default": null
+          },
+          {
+            "name": "expires_at",
+            "type": "timestamp with time zone(3)",
+            "nullable": false,
+            "default": null
+          },
+          {
+            "name": "deleted_at",
+            "type": "timestamp with time zone(3)",
+            "nullable": true,
+            "default": null
+          },
+          {
+            "name": "purge_attempts",
+            "type": "integer",
+            "nullable": false,
+            "default": "0"
+          },
+          {
+            "name": "created_at",
+            "type": "timestamp with time zone(3)",
+            "nullable": false,
+            "default": "CURRENT_TIMESTAMP"
+          }
+        ],
+        "reloptions": []
+      },
+      {
+        "name": "file_history_dead_letter",
+        "columns": [
+          {
+            "name": "id",
+            "type": "uuid",
+            "nullable": false,
+            "default": "gen_random_uuid()"
+          },
+          {
+            "name": "original_file_history_id",
+            "type": "uuid",
+            "nullable": false,
+            "default": null
+          },
+          {
+            "name": "user_id",
+            "type": "uuid",
+            "nullable": false,
+            "default": null
+          },
+          {
+            "name": "storage_path",
+            "type": "character varying(255)",
+            "nullable": false,
+            "default": null
+          },
+          {
+            "name": "original_filename",
+            "type": "character varying(255)",
+            "nullable": false,
+            "default": null
+          },
+          {
+            "name": "mime_type",
+            "type": "character varying(127)",
+            "nullable": false,
+            "default": null
+          },
+          {
+            "name": "file_size",
+            "type": "integer",
+            "nullable": false,
+            "default": null
+          },
+          {
+            "name": "expires_at",
+            "type": "timestamp with time zone(6)",
+            "nullable": false,
+            "default": null
+          },
+          {
+            "name": "deleted_at",
+            "type": "timestamp with time zone(6)",
+            "nullable": false,
+            "default": null
+          },
+          {
+            "name": "purge_attempts",
+            "type": "integer",
+            "nullable": false,
+            "default": null
+          },
+          {
+            "name": "last_error_code",
+            "type": "character varying(80)",
+            "nullable": false,
+            "default": null
+          },
+          {
+            "name": "last_error_message",
+            "type": "character varying(500)",
+            "nullable": true,
+            "default": null
+          },
+          {
+            "name": "moved_to_dead_letter_at",
+            "type": "timestamp with time zone(6)",
+            "nullable": false,
+            "default": "CURRENT_TIMESTAMP"
+          },
+          {
+            "name": "reprocess_count",
+            "type": "smallint",
+            "nullable": false,
+            "default": "0"
+          },
+          {
+            "name": "last_reprocess_attempt_at",
+            "type": "timestamp with time zone(6)",
+            "nullable": true,
+            "default": null
+          },
+          {
+            "name": "last_reprocess_error_code",
+            "type": "character varying(80)",
+            "nullable": true,
+            "default": null
+          },
+          {
+            "name": "last_reprocess_error_message",
+            "type": "character varying(500)",
+            "nullable": true,
+            "default": null
+          },
+          {
+            "name": "resolved_at",
+            "type": "timestamp with time zone(6)",
+            "nullable": true,
+            "default": null
+          },
+          {
+            "name": "resolution_type",
+            "type": "character varying(32)",
+            "nullable": true,
+            "default": null
+          },
+          {
+            "name": "created_at",
+            "type": "timestamp with time zone(6)",
+            "nullable": false,
+            "default": "CURRENT_TIMESTAMP"
+          }
+        ],
+        "reloptions": []
+      },
+      {
+        "name": "jobs",
+        "columns": [
+          {
+            "name": "id",
+            "type": "uuid",
+            "nullable": false,
+            "default": "gen_random_uuid()"
+          },
+          {
+            "name": "user_id",
+            "type": "uuid",
+            "nullable": false,
+            "default": null
+          },
+          {
+            "name": "status",
+            "type": "JobStatus",
+            "nullable": false,
+            "default": "'PENDING'::\"JobStatus\""
+          },
+          {
+            "name": "input_files",
+            "type": "jsonb",
+            "nullable": false,
+            "default": null
+          },
+          {
+            "name": "output_file_url",
+            "type": "character varying(500)",
+            "nullable": true,
+            "default": null
+          },
+          {
+            "name": "error_message",
+            "type": "text",
+            "nullable": true,
+            "default": null
+          },
+          {
+            "name": "created_at",
+            "type": "timestamp with time zone(3)",
+            "nullable": false,
+            "default": "CURRENT_TIMESTAMP"
+          },
+          {
+            "name": "started_at",
+            "type": "timestamp with time zone(3)",
+            "nullable": true,
+            "default": null
+          },
+          {
+            "name": "completed_at",
+            "type": "timestamp with time zone(3)",
+            "nullable": true,
+            "default": null
+          }
+        ],
+        "reloptions": []
+      },
+      {
+        "name": "quota_alerts_sent",
+        "columns": [
+          {
+            "name": "id",
+            "type": "uuid",
+            "nullable": false,
+            "default": "gen_random_uuid()"
+          },
+          {
+            "name": "user_id",
+            "type": "uuid",
+            "nullable": false,
+            "default": null
+          },
+          {
+            "name": "threshold",
+            "type": "integer",
+            "nullable": false,
+            "default": null
+          },
+          {
+            "name": "period",
+            "type": "character varying(7)",
+            "nullable": false,
+            "default": null
+          },
+          {
+            "name": "sent_at",
+            "type": "timestamp with time zone(6)",
+            "nullable": false,
+            "default": "now()"
+          }
+        ],
+        "reloptions": []
+      },
+      {
+        "name": "sessions",
+        "columns": [
+          {
+            "name": "id",
+            "type": "uuid",
+            "nullable": false,
+            "default": "gen_random_uuid()"
+          },
+          {
+            "name": "user_id",
+            "type": "uuid",
+            "nullable": false,
+            "default": null
+          },
+          {
+            "name": "fingerprint",
+            "type": "character varying(64)",
+            "nullable": true,
+            "default": null
+          },
+          {
+            "name": "user_agent",
+            "type": "character varying(512)",
+            "nullable": true,
+            "default": null
+          },
+          {
+            "name": "ip_address",
+            "type": "character varying(45)",
+            "nullable": true,
+            "default": null
+          },
+          {
+            "name": "refresh_token_hash",
+            "type": "character varying(64)",
+            "nullable": false,
+            "default": null
+          },
+          {
+            "name": "created_at",
+            "type": "timestamp with time zone(3)",
+            "nullable": false,
+            "default": "CURRENT_TIMESTAMP"
+          },
+          {
+            "name": "last_activity_at",
+            "type": "timestamp with time zone(3)",
+            "nullable": false,
+            "default": "CURRENT_TIMESTAMP"
+          },
+          {
+            "name": "expires_at",
+            "type": "timestamp with time zone(3)",
+            "nullable": false,
+            "default": null
+          },
+          {
+            "name": "revoked_at",
+            "type": "timestamp with time zone(3)",
+            "nullable": true,
+            "default": null
+          }
+        ],
+        "reloptions": []
+      },
+      {
+        "name": "stripe_events",
+        "columns": [
+          {
+            "name": "id",
+            "type": "character varying(255)",
+            "nullable": false,
+            "default": null
+          },
+          {
+            "name": "type",
+            "type": "character varying(255)",
+            "nullable": false,
+            "default": null
+          },
+          {
+            "name": "processed_at",
+            "type": "timestamp with time zone(3)",
+            "nullable": false,
+            "default": "CURRENT_TIMESTAMP"
+          }
+        ],
+        "reloptions": []
+      },
+      {
+        "name": "tokens",
+        "columns": [
+          {
+            "name": "id",
+            "type": "uuid",
+            "nullable": false,
+            "default": "gen_random_uuid()"
+          },
+          {
+            "name": "token",
+            "type": "character varying(64)",
+            "nullable": false,
+            "default": null
+          },
+          {
+            "name": "fingerprint",
+            "type": "character varying(64)",
+            "nullable": true,
+            "default": null
+          },
+          {
+            "name": "stripe_subscription_id",
+            "type": "character varying(255)",
+            "nullable": true,
+            "default": null
+          },
+          {
+            "name": "plan",
+            "type": "Plan",
+            "nullable": false,
+            "default": "'PRO'::\"Plan\""
+          },
+          {
+            "name": "status",
+            "type": "TokenStatus",
+            "nullable": false,
+            "default": "'ACTIVE'::\"TokenStatus\""
+          },
+          {
+            "name": "created_at",
+            "type": "timestamp with time zone(3)",
+            "nullable": false,
+            "default": "CURRENT_TIMESTAMP"
+          },
+          {
+            "name": "activated_at",
+            "type": "timestamp with time zone(3)",
+            "nullable": true,
+            "default": null
+          },
+          {
+            "name": "expires_at",
+            "type": "timestamp with time zone(3)",
+            "nullable": true,
+            "default": null
+          },
+          {
+            "name": "user_id",
+            "type": "uuid",
+            "nullable": false,
+            "default": null
+          }
+        ],
+        "reloptions": []
+      },
+      {
+        "name": "usage",
+        "columns": [
+          {
+            "name": "id",
+            "type": "uuid",
+            "nullable": false,
+            "default": "gen_random_uuid()"
+          },
+          {
+            "name": "user_id",
+            "type": "uuid",
+            "nullable": false,
+            "default": null
+          },
+          {
+            "name": "period",
+            "type": "character varying(7)",
+            "nullable": false,
+            "default": null
+          },
+          {
+            "name": "unifications_count",
+            "type": "integer",
+            "nullable": false,
+            "default": "0"
+          },
+          {
+            "name": "created_at",
+            "type": "timestamp with time zone(3)",
+            "nullable": false,
+            "default": "CURRENT_TIMESTAMP"
+          }
+        ],
+        "reloptions": []
+      },
+      {
+        "name": "users",
+        "columns": [
+          {
+            "name": "id",
+            "type": "uuid",
+            "nullable": false,
+            "default": "gen_random_uuid()"
+          },
+          {
+            "name": "email",
+            "type": "character varying(255)",
+            "nullable": false,
+            "default": null
+          },
+          {
+            "name": "role",
+            "type": "Role",
+            "nullable": false,
+            "default": "'FREE'::\"Role\""
+          },
+          {
+            "name": "stripe_customer_id",
+            "type": "character varying(255)",
+            "nullable": true,
+            "default": null
+          },
+          {
+            "name": "history_opt_in",
+            "type": "boolean",
+            "nullable": false,
+            "default": "false"
+          },
+          {
+            "name": "history_opt_in_at",
+            "type": "timestamp with time zone(3)",
+            "nullable": true,
+            "default": null
+          },
+          {
+            "name": "history_opt_out_at",
+            "type": "timestamp with time zone(3)",
+            "nullable": true,
+            "default": null
+          },
+          {
+            "name": "created_at",
+            "type": "timestamp with time zone(3)",
+            "nullable": false,
+            "default": "CURRENT_TIMESTAMP"
+          },
+          {
+            "name": "updated_at",
+            "type": "timestamp with time zone(3)",
+            "nullable": false,
+            "default": "CURRENT_TIMESTAMP"
+          }
+        ],
+        "reloptions": []
+      }
+    ],
+    "indexes": [
+      {
+        "table": "audit_log",
+        "name": "audit_log_pkey",
+        "definition": "CREATE UNIQUE INDEX audit_log_pkey ON public.audit_log USING btree (id)"
+      },
+      {
+        "table": "audit_log",
+        "name": "idx_audit_log_action",
+        "definition": "CREATE INDEX idx_audit_log_action ON public.audit_log USING btree (action)"
+      },
+      {
+        "table": "audit_log",
+        "name": "idx_audit_log_actor_created_at",
+        "definition": "CREATE INDEX idx_audit_log_actor_created_at ON public.audit_log USING btree (actor, created_at DESC)"
+      },
+      {
+        "table": "audit_log",
+        "name": "idx_audit_log_created_at",
+        "definition": "CREATE INDEX idx_audit_log_created_at ON public.audit_log USING btree (created_at)"
+      },
+      {
+        "table": "audit_log",
+        "name": "idx_audit_log_failures",
+        "definition": "CREATE INDEX idx_audit_log_failures ON public.audit_log USING btree (created_at DESC) WHERE (success = false)"
+      },
+      {
+        "table": "audit_log_legal",
+        "name": "audit_log_legal_event_id_key",
+        "definition": "CREATE UNIQUE INDEX audit_log_legal_event_id_key ON public.audit_log_legal USING btree (event_id)"
+      },
+      {
+        "table": "audit_log_legal",
+        "name": "audit_log_legal_pkey",
+        "definition": "CREATE UNIQUE INDEX audit_log_legal_pkey ON public.audit_log_legal USING btree (id)"
+      },
+      {
+        "table": "audit_log_legal",
+        "name": "idx_audit_log_legal_event_type_ts",
+        "definition": "CREATE INDEX idx_audit_log_legal_event_type_ts ON public.audit_log_legal USING btree (event_type, \"timestamp\" DESC)"
+      },
+      {
+        "table": "audit_log_legal",
+        "name": "idx_audit_log_legal_failures",
+        "definition": "CREATE INDEX idx_audit_log_legal_failures ON public.audit_log_legal USING btree (\"timestamp\" DESC) WHERE ((outcome)::text = 'failure'::text)"
+      },
+      {
+        "table": "audit_log_legal",
+        "name": "idx_audit_log_legal_hash_pending",
+        "definition": "CREATE INDEX idx_audit_log_legal_hash_pending ON public.audit_log_legal USING btree (resource_hash) WHERE (((event_type)::text = ANY ((ARRAY['purge_pending'::character varying, 'purge_completed'::character varying, 'purge_failed'::character varying])::text[])) AND (resource_hash IS NOT NULL))"
+      },
+      {
+        "table": "audit_log_legal",
+        "name": "idx_audit_log_legal_user_ts",
+        "definition": "CREATE INDEX idx_audit_log_legal_user_ts ON public.audit_log_legal USING btree (user_id, \"timestamp\" DESC)"
+      },
+      {
+        "table": "cron_runs",
+        "name": "cron_runs_pkey",
+        "definition": "CREATE UNIQUE INDEX cron_runs_pkey ON public.cron_runs USING btree (id)"
+      },
+      {
+        "table": "cron_runs",
+        "name": "idx_cron_runs_created_at",
+        "definition": "CREATE INDEX idx_cron_runs_created_at ON public.cron_runs USING btree (created_at)"
+      },
+      {
+        "table": "cron_runs",
+        "name": "idx_cron_runs_failures",
+        "definition": "CREATE INDEX idx_cron_runs_failures ON public.cron_runs USING btree (started_at DESC) WHERE ((status)::text = ANY ((ARRAY['failure'::character varying, 'expired'::character varying])::text[]))"
+      },
+      {
+        "table": "cron_runs",
+        "name": "idx_cron_runs_job_started_desc",
+        "definition": "CREATE INDEX idx_cron_runs_job_started_desc ON public.cron_runs USING btree (job_name, started_at DESC)"
+      },
+      {
+        "table": "cron_runs",
+        "name": "idx_cron_runs_running",
+        "definition": "CREATE INDEX idx_cron_runs_running ON public.cron_runs USING btree (started_at) WHERE ((status)::text = 'running'::text)"
+      },
+      {
+        "table": "file_history",
+        "name": "file_history_pkey",
+        "definition": "CREATE UNIQUE INDEX file_history_pkey ON public.file_history USING btree (id)"
+      },
+      {
+        "table": "file_history",
+        "name": "file_history_storage_path_key",
+        "definition": "CREATE UNIQUE INDEX file_history_storage_path_key ON public.file_history USING btree (storage_path)"
+      },
+      {
+        "table": "file_history",
+        "name": "idx_filehistory_expires_active",
+        "definition": "CREATE INDEX idx_filehistory_expires_active ON public.file_history USING btree (expires_at) WHERE (deleted_at IS NULL)"
+      },
+      {
+        "table": "file_history",
+        "name": "idx_filehistory_purge_pending",
+        "definition": "CREATE INDEX idx_filehistory_purge_pending ON public.file_history USING btree (deleted_at) WHERE (deleted_at IS NOT NULL)"
+      },
+      {
+        "table": "file_history",
+        "name": "idx_filehistory_user_created",
+        "definition": "CREATE INDEX idx_filehistory_user_created ON public.file_history USING btree (user_id, created_at DESC)"
+      },
+      {
+        "table": "file_history_dead_letter",
+        "name": "file_history_dead_letter_pkey",
+        "definition": "CREATE UNIQUE INDEX file_history_dead_letter_pkey ON public.file_history_dead_letter USING btree (id)"
+      },
+      {
+        "table": "file_history_dead_letter",
+        "name": "idx_fhdl_human_required",
+        "definition": "CREATE INDEX idx_fhdl_human_required ON public.file_history_dead_letter USING btree (moved_to_dead_letter_at DESC) WHERE ((resolved_at IS NULL) AND (reprocess_count >= 3))"
+      },
+      {
+        "table": "file_history_dead_letter",
+        "name": "idx_fhdl_reprocess_candidates",
+        "definition": "CREATE INDEX idx_fhdl_reprocess_candidates ON public.file_history_dead_letter USING btree (moved_to_dead_letter_at) WHERE ((resolved_at IS NULL) AND (reprocess_count < 3))"
+      },
+      {
+        "table": "file_history_dead_letter",
+        "name": "idx_fhdl_user_moved",
+        "definition": "CREATE INDEX idx_fhdl_user_moved ON public.file_history_dead_letter USING btree (user_id, moved_to_dead_letter_at DESC)"
+      },
+      {
+        "table": "file_history_dead_letter",
+        "name": "uq_fhdl_active_per_origin",
+        "definition": "CREATE UNIQUE INDEX uq_fhdl_active_per_origin ON public.file_history_dead_letter USING btree (original_file_history_id) WHERE (resolved_at IS NULL)"
+      },
+      {
+        "table": "jobs",
+        "name": "idx_jobs_status",
+        "definition": "CREATE INDEX idx_jobs_status ON public.jobs USING btree (status)"
+      },
+      {
+        "table": "jobs",
+        "name": "idx_jobs_user",
+        "definition": "CREATE INDEX idx_jobs_user ON public.jobs USING btree (user_id)"
+      },
+      {
+        "table": "jobs",
+        "name": "jobs_pkey",
+        "definition": "CREATE UNIQUE INDEX jobs_pkey ON public.jobs USING btree (id)"
+      },
+      {
+        "table": "quota_alerts_sent",
+        "name": "quota_alerts_sent_pkey",
+        "definition": "CREATE UNIQUE INDEX quota_alerts_sent_pkey ON public.quota_alerts_sent USING btree (id)"
+      },
+      {
+        "table": "quota_alerts_sent",
+        "name": "quota_alerts_unique_user_threshold_period",
+        "definition": "CREATE UNIQUE INDEX quota_alerts_unique_user_threshold_period ON public.quota_alerts_sent USING btree (user_id, threshold, period)"
+      },
+      {
+        "table": "sessions",
+        "name": "idx_sessions_expires_at",
+        "definition": "CREATE INDEX idx_sessions_expires_at ON public.sessions USING btree (expires_at)"
+      },
+      {
+        "table": "sessions",
+        "name": "idx_sessions_revoked_at",
+        "definition": "CREATE INDEX idx_sessions_revoked_at ON public.sessions USING btree (revoked_at)"
+      },
+      {
+        "table": "sessions",
+        "name": "sessions_pkey",
+        "definition": "CREATE UNIQUE INDEX sessions_pkey ON public.sessions USING btree (id)"
+      },
+      {
+        "table": "sessions",
+        "name": "sessions_refresh_token_hash_key",
+        "definition": "CREATE UNIQUE INDEX sessions_refresh_token_hash_key ON public.sessions USING btree (refresh_token_hash)"
+      },
+      {
+        "table": "sessions",
+        "name": "sessions_user_id_idx",
+        "definition": "CREATE INDEX sessions_user_id_idx ON public.sessions USING btree (user_id)"
+      },
+      {
+        "table": "stripe_events",
+        "name": "idx_stripe_events_processed_at",
+        "definition": "CREATE INDEX idx_stripe_events_processed_at ON public.stripe_events USING btree (processed_at)"
+      },
+      {
+        "table": "stripe_events",
+        "name": "stripe_events_pkey",
+        "definition": "CREATE UNIQUE INDEX stripe_events_pkey ON public.stripe_events USING btree (id)"
+      },
+      {
+        "table": "tokens",
+        "name": "idx_tokens_active_pro",
+        "definition": "CREATE INDEX idx_tokens_active_pro ON public.tokens USING btree (user_id, status) WHERE (status = 'ACTIVE'::\"TokenStatus\")"
+      },
+      {
+        "table": "tokens",
+        "name": "idx_tokens_user",
+        "definition": "CREATE INDEX idx_tokens_user ON public.tokens USING btree (user_id)"
+      },
+      {
+        "table": "tokens",
+        "name": "tokens_fingerprint_idx",
+        "definition": "CREATE INDEX tokens_fingerprint_idx ON public.tokens USING btree (fingerprint)"
+      },
+      {
+        "table": "tokens",
+        "name": "tokens_pkey",
+        "definition": "CREATE UNIQUE INDEX tokens_pkey ON public.tokens USING btree (id)"
+      },
+      {
+        "table": "tokens",
+        "name": "tokens_token_key",
+        "definition": "CREATE UNIQUE INDEX tokens_token_key ON public.tokens USING btree (token)"
+      },
+      {
+        "table": "tokens",
+        "name": "uq_tokens_user_subscription",
+        "definition": "CREATE UNIQUE INDEX uq_tokens_user_subscription ON public.tokens USING btree (user_id, stripe_subscription_id)"
+      },
+      {
+        "table": "usage",
+        "name": "usage_pkey",
+        "definition": "CREATE UNIQUE INDEX usage_pkey ON public.usage USING btree (id)"
+      },
+      {
+        "table": "usage",
+        "name": "usage_user_id_period_key",
+        "definition": "CREATE UNIQUE INDEX usage_user_id_period_key ON public.usage USING btree (user_id, period)"
+      },
+      {
+        "table": "users",
+        "name": "users_email_key",
+        "definition": "CREATE UNIQUE INDEX users_email_key ON public.users USING btree (email)"
+      },
+      {
+        "table": "users",
+        "name": "users_pkey",
+        "definition": "CREATE UNIQUE INDEX users_pkey ON public.users USING btree (id)"
+      },
+      {
+        "table": "users",
+        "name": "users_stripe_customer_id_key",
+        "definition": "CREATE UNIQUE INDEX users_stripe_customer_id_key ON public.users USING btree (stripe_customer_id)"
+      }
+    ],
+    "constraints": [
+      {
+        "table": "audit_log",
+        "name": "audit_log_action_format_check",
+        "type": "c",
+        "definition": "CHECK ((((action)::text ~ '^[A-Z_]+$'::text) AND (length((action)::text) >= 3) AND (length((action)::text) <= 50)))"
+      },
+      {
+        "table": "audit_log",
+        "name": "audit_log_pkey",
+        "type": "p",
+        "definition": "PRIMARY KEY (id)"
+      },
+      {
+        "table": "audit_log_legal",
+        "name": "audit_log_legal_actor_check",
+        "type": "c",
+        "definition": "CHECK (((actor)::text = ANY ((ARRAY['cron_purge_worker'::character varying, 'user_self_service'::character varying, 'admin_panel'::character varying])::text[])))"
+      },
+      {
+        "table": "audit_log_legal",
+        "name": "audit_log_legal_error_code_required_check",
+        "type": "c",
+        "definition": "CHECK ((((outcome)::text = 'success'::text) OR (((outcome)::text = 'failure'::text) AND (error_code IS NOT NULL))))"
+      },
+      {
+        "table": "audit_log_legal",
+        "name": "audit_log_legal_event_id_key",
+        "type": "u",
+        "definition": "UNIQUE (event_id)"
+      },
+      {
+        "table": "audit_log_legal",
+        "name": "audit_log_legal_event_type_check",
+        "type": "c",
+        "definition": "CHECK (((event_type)::text = ANY ((ARRAY['purge_pending'::character varying, 'purge_completed'::character varying, 'purge_failed'::character varying, 'consent_given'::character varying, 'consent_withdrawn'::character varying, 'dsar_request'::character varying, 'dsar_fulfilled'::character varying])::text[])))"
+      },
+      {
+        "table": "audit_log_legal",
+        "name": "audit_log_legal_legal_basis_format_check",
+        "type": "c",
+        "definition": "CHECK ((((legal_basis)::text ~ '^[a-z_]+$'::text) AND (length((legal_basis)::text) >= 3) AND (length((legal_basis)::text) <= 60)))"
+      },
+      {
+        "table": "audit_log_legal",
+        "name": "audit_log_legal_outcome_check",
+        "type": "c",
+        "definition": "CHECK (((outcome)::text = ANY ((ARRAY['success'::character varying, 'failure'::character varying])::text[])))"
+      },
+      {
+        "table": "audit_log_legal",
+        "name": "audit_log_legal_pkey",
+        "type": "p",
+        "definition": "PRIMARY KEY (id)"
+      },
+      {
+        "table": "audit_log_legal",
+        "name": "audit_log_legal_resource_hash_size_check",
+        "type": "c",
+        "definition": "CHECK (((resource_hash IS NULL) OR (octet_length(resource_hash) = 32)))"
+      },
+      {
+        "table": "cron_runs",
+        "name": "cron_runs_attempts_check",
+        "type": "c",
+        "definition": "CHECK (((attempts >= 1) AND (attempts <= 10)))"
+      },
+      {
+        "table": "cron_runs",
+        "name": "cron_runs_duration_positive_check",
+        "type": "c",
+        "definition": "CHECK (((duration_ms IS NULL) OR (duration_ms >= 0)))"
+      },
+      {
+        "table": "cron_runs",
+        "name": "cron_runs_error_consistency",
+        "type": "c",
+        "definition": "CHECK ((((status)::text = ANY ((ARRAY['failure'::character varying, 'expired'::character varying])::text[])) OR ((error_code IS NULL) AND (error_message IS NULL))))"
+      },
+      {
+        "table": "cron_runs",
+        "name": "cron_runs_finished_after_started",
+        "type": "c",
+        "definition": "CHECK (((finished_at IS NULL) OR (finished_at >= started_at)))"
+      },
+      {
+        "table": "cron_runs",
+        "name": "cron_runs_job_name_format_check",
+        "type": "c",
+        "definition": "CHECK (((job_name)::text ~ '^[a-z][a-z0-9-]{2,63}$'::text))"
+      },
+      {
+        "table": "cron_runs",
+        "name": "cron_runs_pkey",
+        "type": "p",
+        "definition": "PRIMARY KEY (id)"
+      },
+      {
+        "table": "cron_runs",
+        "name": "cron_runs_rows_processed_nonneg",
+        "type": "c",
+        "definition": "CHECK (((rows_processed IS NULL) OR (rows_processed >= 0)))"
+      },
+      {
+        "table": "cron_runs",
+        "name": "cron_runs_skip_reason_check",
+        "type": "c",
+        "definition": "CHECK (((skip_reason IS NULL) OR ((skip_reason)::text = ANY ((ARRAY['feature_disabled'::character varying, 'test_env'::character varying, 'lock_not_acquired'::character varying])::text[]))))"
+      },
+      {
+        "table": "cron_runs",
+        "name": "cron_runs_skip_reason_consistency",
+        "type": "c",
+        "definition": "CHECK (((((status)::text = 'skipped'::text) AND (skip_reason IS NOT NULL)) OR (((status)::text <> 'skipped'::text) AND (skip_reason IS NULL))))"
+      },
+      {
+        "table": "cron_runs",
+        "name": "cron_runs_status_check",
+        "type": "c",
+        "definition": "CHECK (((status)::text = ANY ((ARRAY['running'::character varying, 'success'::character varying, 'failure'::character varying, 'skipped'::character varying, 'expired'::character varying])::text[])))"
+      },
+      {
+        "table": "cron_runs",
+        "name": "cron_runs_terminal_finished_check",
+        "type": "c",
+        "definition": "CHECK (((((status)::text = 'running'::text) AND (finished_at IS NULL)) OR (((status)::text = ANY ((ARRAY['success'::character varying, 'failure'::character varying, 'skipped'::character varying, 'expired'::character varying])::text[])) AND (finished_at IS NOT NULL))))"
+      },
+      {
+        "table": "file_history",
+        "name": "file_history_expires_at_after_created_check",
+        "type": "c",
+        "definition": "CHECK ((expires_at >= created_at))"
+      },
+      {
+        "table": "file_history",
+        "name": "file_history_file_size_positive_check",
+        "type": "c",
+        "definition": "CHECK (((file_size > 0) AND (file_size <= 104857600)))"
+      },
+      {
+        "table": "file_history",
+        "name": "file_history_mime_type_nonempty_check",
+        "type": "c",
+        "definition": "CHECK ((length((mime_type)::text) > 0))"
+      },
+      {
+        "table": "file_history",
+        "name": "file_history_original_filename_check",
+        "type": "c",
+        "definition": "CHECK (((length((original_filename)::text) > 0) AND ((original_filename)::text !~ '[\\x00-\\x1F\\x7F]'::text)))"
+      },
+      {
+        "table": "file_history",
+        "name": "file_history_pkey",
+        "type": "p",
+        "definition": "PRIMARY KEY (id)"
+      },
+      {
+        "table": "file_history",
+        "name": "file_history_purge_attempts_nonneg_check",
+        "type": "c",
+        "definition": "CHECK ((purge_attempts >= 0))"
+      },
+      {
+        "table": "file_history",
+        "name": "file_history_storage_path_format_check",
+        "type": "c",
+        "definition": "CHECK (((storage_path)::text ~ '^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])/[a-z0-9]{7,64}\\.(csv|xlsx|xls)$'::text))"
+      },
+      {
+        "table": "file_history",
+        "name": "file_history_storage_path_key",
+        "type": "u",
+        "definition": "UNIQUE (storage_path)"
+      },
+      {
+        "table": "file_history",
+        "name": "file_history_user_id_fkey",
+        "type": "f",
+        "definition": "FOREIGN KEY (user_id) REFERENCES users(id) ON UPDATE CASCADE ON DELETE CASCADE"
+      },
+      {
+        "table": "file_history_dead_letter",
+        "name": "fhdl_file_size_positive_check",
+        "type": "c",
+        "definition": "CHECK (((file_size > 0) AND (file_size <= 104857600)))"
+      },
+      {
+        "table": "file_history_dead_letter",
+        "name": "fhdl_mime_type_nonempty",
+        "type": "c",
+        "definition": "CHECK ((length((mime_type)::text) > 0))"
+      },
+      {
+        "table": "file_history_dead_letter",
+        "name": "fhdl_original_filename_check",
+        "type": "c",
+        "definition": "CHECK (((length((original_filename)::text) > 0) AND ((original_filename)::text !~ '[\\x00-\\x1F\\x7F]'::text)))"
+      },
+      {
+        "table": "file_history_dead_letter",
+        "name": "fhdl_purge_attempts_threshold_check",
+        "type": "c",
+        "definition": "CHECK ((purge_attempts >= 5))"
+      },
+      {
+        "table": "file_history_dead_letter",
+        "name": "fhdl_reprocess_consistency",
+        "type": "c",
+        "definition": "CHECK ((((reprocess_count = 0) AND (last_reprocess_attempt_at IS NULL)) OR ((reprocess_count > 0) AND (last_reprocess_attempt_at IS NOT NULL))))"
+      },
+      {
+        "table": "file_history_dead_letter",
+        "name": "fhdl_reprocess_count_check",
+        "type": "c",
+        "definition": "CHECK (((reprocess_count >= 0) AND (reprocess_count <= 3)))"
+      },
+      {
+        "table": "file_history_dead_letter",
+        "name": "fhdl_resolution_consistency",
+        "type": "c",
+        "definition": "CHECK ((((resolved_at IS NULL) AND (resolution_type IS NULL)) OR ((resolved_at IS NOT NULL) AND (resolution_type IS NOT NULL))))"
+      },
+      {
+        "table": "file_history_dead_letter",
+        "name": "fhdl_resolution_type_check",
+        "type": "c",
+        "definition": "CHECK (((resolution_type IS NULL) OR ((resolution_type)::text = ANY ((ARRAY['cron_reprocess_success'::character varying, 'admin_manual_delete'::character varying, 'admin_manual_ignore'::character varying, 'storage_already_gone'::character varying])::text[]))))"
+      },
+      {
+        "table": "file_history_dead_letter",
+        "name": "fhdl_storage_path_format_check",
+        "type": "c",
+        "definition": "CHECK (((storage_path)::text ~ '^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])/[a-z0-9]{7,64}\\.(csv|xlsx|xls)$'::text))"
+      },
+      {
+        "table": "file_history_dead_letter",
+        "name": "fhdl_timing_consistency",
+        "type": "c",
+        "definition": "CHECK (((deleted_at <= moved_to_dead_letter_at) AND ((last_reprocess_attempt_at IS NULL) OR (last_reprocess_attempt_at >= moved_to_dead_letter_at)) AND ((resolved_at IS NULL) OR ((last_reprocess_attempt_at IS NOT NULL) AND (resolved_at >= last_reprocess_attempt_at)))))"
+      },
+      {
+        "table": "file_history_dead_letter",
+        "name": "file_history_dead_letter_pkey",
+        "type": "p",
+        "definition": "PRIMARY KEY (id)"
+      },
+      {
+        "table": "jobs",
+        "name": "jobs_pkey",
+        "type": "p",
+        "definition": "PRIMARY KEY (id)"
+      },
+      {
+        "table": "jobs",
+        "name": "jobs_user_id_fkey",
+        "type": "f",
+        "definition": "FOREIGN KEY (user_id) REFERENCES users(id) ON UPDATE CASCADE ON DELETE CASCADE"
+      },
+      {
+        "table": "quota_alerts_sent",
+        "name": "quota_alerts_period_format_check",
+        "type": "c",
+        "definition": "CHECK (((period)::text ~ '^[0-9]{4}-(0[1-9]|1[0-2])$'::text))"
+      },
+      {
+        "table": "quota_alerts_sent",
+        "name": "quota_alerts_sent_pkey",
+        "type": "p",
+        "definition": "PRIMARY KEY (id)"
+      },
+      {
+        "table": "quota_alerts_sent",
+        "name": "quota_alerts_sent_user_id_fkey",
+        "type": "f",
+        "definition": "FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE"
+      },
+      {
+        "table": "quota_alerts_sent",
+        "name": "quota_alerts_threshold_check",
+        "type": "c",
+        "definition": "CHECK ((threshold = ANY (ARRAY[70, 90])))"
+      },
+      {
+        "table": "quota_alerts_sent",
+        "name": "quota_alerts_unique_user_threshold_period",
+        "type": "u",
+        "definition": "UNIQUE (user_id, threshold, period)"
+      },
+      {
+        "table": "sessions",
+        "name": "sessions_pkey",
+        "type": "p",
+        "definition": "PRIMARY KEY (id)"
+      },
+      {
+        "table": "sessions",
+        "name": "sessions_user_id_fkey",
+        "type": "f",
+        "definition": "FOREIGN KEY (user_id) REFERENCES users(id) ON UPDATE CASCADE ON DELETE CASCADE"
+      },
+      {
+        "table": "stripe_events",
+        "name": "stripe_events_pkey",
+        "type": "p",
+        "definition": "PRIMARY KEY (id)"
+      },
+      {
+        "table": "tokens",
+        "name": "tokens_pkey",
+        "type": "p",
+        "definition": "PRIMARY KEY (id)"
+      },
+      {
+        "table": "tokens",
+        "name": "tokens_user_id_fkey",
+        "type": "f",
+        "definition": "FOREIGN KEY (user_id) REFERENCES users(id) ON UPDATE CASCADE ON DELETE RESTRICT"
+      },
+      {
+        "table": "tokens",
+        "name": "uq_tokens_user_subscription",
+        "type": "u",
+        "definition": "UNIQUE (user_id, stripe_subscription_id)"
+      },
+      {
+        "table": "usage",
+        "name": "usage_pkey",
+        "type": "p",
+        "definition": "PRIMARY KEY (id)"
+      },
+      {
+        "table": "usage",
+        "name": "usage_user_id_fkey",
+        "type": "f",
+        "definition": "FOREIGN KEY (user_id) REFERENCES users(id) ON UPDATE CASCADE ON DELETE RESTRICT"
+      },
+      {
+        "table": "users",
+        "name": "users_pkey",
+        "type": "p",
+        "definition": "PRIMARY KEY (id)"
+      }
+    ]
+  }
+}
