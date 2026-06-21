@@ -147,15 +147,25 @@ model Job {
 }
 
 // ===========================================
-// STRIPE EVENTS - Idempotencia de webhooks
+// STRIPE EVENTS - Idempotent receiver (Card #189)
 // ===========================================
-// Registra event.id processados para deduplicacao.
-// Insert duplicado gera P2002 (unique violation) = evento ja processado.
+// Idempotencia de webhooks com status RECEIVED -> PROCESSED.
+// O insert (status=RECEIVED) e o GATE de concorrencia (unique id). Apos o
+// handler concluir com sucesso, status vira PROCESSED. Em retry: P2002 ->
+// se PROCESSED, duplicata real; se RECEIVED, tentativa anterior falhou
+// (transitorio) -> reprocessa. Antes, o registro commitava antes do handler
+// e a falha transitoria perdia o evento no retry (cliente pagava e nao
+// recebia token). received_at = momento do gate; processed_at = NULL ate
+// concluir. Fase EXPAND: received_at/processed_at nullable (compat codigo
+// antigo durante o rolling deploy). CHECK status + idx parcial
+// idx_stripe_events_pending sao geridos via SQL (Card #189 migration).
 
 model StripeEvent {
-  id          String   @id @db.VarChar(255) // event.id do Stripe (evt_...)
-  type        String   @db.VarChar(255)
-  processedAt DateTime @default(now()) @map("processed_at") @db.Timestamptz(3)
+  id          String    @id @db.VarChar(255) // event.id do Stripe (evt_...)
+  type        String    @db.VarChar(255)
+  status      String    @default("RECEIVED") @db.VarChar(16)
+  receivedAt  DateTime? @map("received_at") @db.Timestamptz(3)
+  processedAt DateTime? @map("processed_at") @db.Timestamptz(3)
 
   @@index([processedAt], map: "idx_stripe_events_processed_at")
   @@map("stripe_events")

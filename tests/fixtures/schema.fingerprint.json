@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-05-19T00:16:10.393Z",
+  "generatedAt": "2026-06-21T19:19:23.075Z",
   "database": "container:postgres-17-alpine",
-  "fingerprint": "5a515281a18bfd4af7809d4e4f32103d267d0f771aabe5239aacd3ff9566ffba",
+  "fingerprint": "a948fc7cb7999a9ec2ce3f1d1a9093949914f2aa42dc7ec2ce0617acf57e3989",
   "model": {
     "extensions": [
       "pgcrypto"
@@ -642,10 +642,22 @@
             "default": null
           },
           {
+            "name": "status",
+            "type": "character varying(16)",
+            "nullable": false,
+            "default": "'RECEIVED'::character varying"
+          },
+          {
+            "name": "received_at",
+            "type": "timestamp with time zone(3)",
+            "nullable": true,
+            "default": null
+          },
+          {
             "name": "processed_at",
             "type": "timestamp with time zone(3)",
-            "nullable": false,
-            "default": "CURRENT_TIMESTAMP"
+            "nullable": true,
+            "default": null
           }
         ],
         "reloptions": []
@@ -993,6 +1005,11 @@
         "table": "sessions",
         "name": "sessions_user_id_idx",
         "definition": "CREATE INDEX sessions_user_id_idx ON public.sessions USING btree (user_id)"
+      },
+      {
+        "table": "stripe_events",
+        "name": "idx_stripe_events_pending",
+        "definition": "CREATE INDEX idx_stripe_events_pending ON public.stripe_events USING btree (received_at) WHERE ((status)::text = 'RECEIVED'::text)"
       },
       {
         "table": "stripe_events",
@@ -1366,6 +1383,12 @@
         "name": "stripe_events_pkey",
         "type": "p",
         "definition": "PRIMARY KEY (id)"
+      },
+      {
+        "table": "stripe_events",
+        "name": "stripe_events_status_check",
+        "type": "c",
+        "definition": "CHECK (((status)::text = ANY ((ARRAY['RECEIVED'::character varying, 'PROCESSED'::character varying])::text[])))"
       },
       {
         "table": "tokens",

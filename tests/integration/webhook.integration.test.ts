@@ -421,3 +421,183 @@ describe('POST /webhooks/stripe — customer.subscription.updated (integration)'
     expect(updated?.status).toBe('CANCELLED')
   })
 })
+
+// ===========================================================================
+// Card #189 — idempotent receiver RECEIVED → PROCESSED (DB real)
+//
+// O bug original: o controller gravava o event.id (autocommit) ANTES de
+// processar. Uma falha transitória no handler deixava a row gravada mas o
+// efeito (token+email) nunca acontecia; no retry, o INSERT batia o unique e o
+// controller respondia "duplicate" sem reprocessar → cliente pagava e nunca
+// recebia o token. Estes testes provam a correção contra Postgres real.
+// ===========================================================================
+describe('POST /webhooks/stripe — Card #189 idempotent receiver (integration)', () => {
+  function deliver(payload = VALID_PAYLOAD) {
+    return request(app.server)
+      .post('/webhooks/stripe')
+      .set('content-type', 'application/json')
+      .set('stripe-signature', VALID_SIG)
+      .send(payload.toString())
+  }
+
+  it('(a) evento novo: status PROCESSED + 1 token + 1 email', async () => {
+    const event = makeCheckoutSessionEvent({
+      id: 'evt_189_new',
+      email: 'a189@tablix.test',
+      customerId: 'cus_189_a',
+      subscriptionId: 'sub_189_a',
+    })
+    constructEventMock.mockReturnValueOnce(event)
+
+    await deliver().expect(200)
+
+    const prisma = getTestPrisma()
+    const stripeEvent = await prisma.stripeEvent.findUnique({
+      where: { id: 'evt_189_new' },
+    })
+    expect(stripeEvent?.status).toBe('PROCESSED')
+    expect(stripeEvent?.processedAt).not.toBeNull()
+
+    const tokens = await prisma.token.findMany({
+      where: { user: { email: 'a189@tablix.test' } },
+    })
+    expect(tokens).toHaveLength(1)
+    expect(tokens[0].status).toBe('ACTIVE')
+    expect(sendEmailMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('(b) PROVA DO FIX: stripe_event RECEIVED órfão sem token → reenvio reprocessa e CRIA o token', async () => {
+    const prisma = getTestPrisma()
+    // Simula a tentativa anterior que FALHOU pós-registro: a row existe com
+    // status RECEIVED mas nenhum user/token foi criado. No código antigo, o
+    // retry responderia "duplicate" e o cliente ficaria PARA SEMPRE sem token.
+    await prisma.stripeEvent.create({
+      data: {
+        id: 'evt_189_orphan',
+        type: 'checkout.session.completed',
+        status: 'RECEIVED',
+        receivedAt: new Date(),
+      },
+    })
+
+    // Nenhum token existe ainda.
+    const before = await prisma.token.findMany({
+      where: { user: { email: 'orphan189@tablix.test' } },
+    })
+    expect(before).toHaveLength(0)
+
+    // Stripe redelivera o MESMO event.id.
+    const event = makeCheckoutSessionEvent({
+      id: 'evt_189_orphan',
+      email: 'orphan189@tablix.test',
+      customerId: 'cus_189_orphan',
+      subscriptionId: 'sub_189_orphan',
+    })
+    constructEventMock.mockReturnValueOnce(event)
+
+    await deliver().expect(200)
+
+    // O reenvio REPROCESSOU: token criado e evento agora PROCESSED.
+    const after = await prisma.token.findMany({
+      where: { user: { email: 'orphan189@tablix.test' } },
+    })
+    expect(after).toHaveLength(1)
+    expect(after[0].status).toBe('ACTIVE')
+
+    const stripeEvent = await prisma.stripeEvent.findUnique({
+      where: { id: 'evt_189_orphan' },
+    })
+    expect(stripeEvent?.status).toBe('PROCESSED')
+  })
+
+  it('(c) evento já PROCESSED reenviado: 200 sem novo token nem novo email', async () => {
+    const event = makeCheckoutSessionEvent({
+      id: 'evt_189_dup',
+      email: 'dup189@tablix.test',
+      customerId: 'cus_189_dup',
+      subscriptionId: 'sub_189_dup',
+    })
+    constructEventMock.mockReturnValueOnce(event).mockReturnValueOnce(event)
+
+    await deliver().expect(200)
+    expect(sendEmailMock).toHaveBeenCalledTimes(1)
+
+    // Segundo delivery do mesmo event.id (já PROCESSED).
+    await deliver().expect(200)
+
+    const prisma = getTestPrisma()
+    const tokens = await prisma.token.findMany({
+      where: { user: { email: 'dup189@tablix.test' } },
+    })
+    expect(tokens).toHaveLength(1)
+    // Nenhum email adicional no replay.
+    expect(sendEmailMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('(d) atomicidade: handler que falha → status permanece RECEIVED, sem efeito parcial', async () => {
+    // customer.subscription.updated para um customer inexistente: o handler
+    // lança DENTRO da tx → rollback → o flip para PROCESSED nunca acontece.
+    // A row foi inserida (RECEIVED) ANTES da tx (gate de dedup) e persiste.
+    const event = {
+      id: 'evt_189_atomic',
+      type: 'customer.subscription.updated',
+      data: {
+        object: {
+          id: 'sub_189_ghost',
+          customer: 'cus_189_ghost', // não existe no DB
+          status: 'active',
+        },
+      },
+    }
+    constructEventMock.mockReturnValueOnce(event)
+
+    const res = await deliver()
+    expect(res.status).toBe(500) // Stripe redelivera
+
+    const prisma = getTestPrisma()
+    const stripeEvent = await prisma.stripeEvent.findUnique({
+      where: { id: 'evt_189_atomic' },
+    })
+    // Permanece RECEIVED — o retry vai reprocessar.
+    expect(stripeEvent?.status).toBe('RECEIVED')
+    expect(stripeEvent?.processedAt).toBeNull()
+
+    // Nenhum efeito parcial.
+    const tokens = await prisma.token.findMany()
+    expect(tokens).toHaveLength(0)
+  })
+
+  it('(e) concorrência: 2 deliveries simultâneos do mesmo event.id → EXATAMENTE 1 token', async () => {
+    const event = makeCheckoutSessionEvent({
+      id: 'evt_189_race',
+      email: 'race189@tablix.test',
+      customerId: 'cus_189_race',
+      subscriptionId: 'sub_189_race',
+    })
+    // Ambos os deliveries chamam constructEvent — retorna o mesmo evento.
+    constructEventMock.mockReturnValue(event)
+
+    const [r1, r2] = await Promise.all([deliver(), deliver()])
+
+    // Pelo menos um concluiu com 200; o perdedor do advisory lock pode ter
+    // recebido 500 (RECEIVED ainda não confirmado) OU 200 (já PROCESSED).
+    // O invariante que importa: NUNCA mais de 1 token.
+    const statuses = [r1.status, r2.status].sort()
+    expect(statuses).toContain(200)
+    for (const s of statuses) {
+      expect([200, 500]).toContain(s)
+    }
+
+    const prisma = getTestPrisma()
+    const tokens = await prisma.token.findMany({
+      where: { user: { email: 'race189@tablix.test' } },
+    })
+    expect(tokens).toHaveLength(1)
+
+    // Exatamente 1 row de evento (PK colapsa os deliveries).
+    const events = await prisma.stripeEvent.findMany({
+      where: { id: 'evt_189_race' },
+    })
+    expect(events).toHaveLength(1)
+  })
+})

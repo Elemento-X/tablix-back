@@ -152,13 +152,25 @@ CREATE INDEX "idx_jobs_status" ON "jobs" ("status");
 -- ----------------------------------------------------------------------------
 -- TABLE: stripe_events
 -- ----------------------------------------------------------------------------
+-- Card #189 (EXPAND): idempotent receiver RECEIVED -> PROCESSED.
+--   * status: RECEIVED no INSERT (gate de dedup); PROCESSED ao concluir a tx.
+--   * received_at / processed_at nullable na fase EXPAND (sem default no DB;
+--     setados explicitamente pelo app). Viram NOT NULL DEFAULT now() no CONTRACT.
 CREATE TABLE "stripe_events" (
-  "id"            VARCHAR(255)               NOT NULL,
-  "type"          VARCHAR(255)               NOT NULL,
-  "processed_at"  TIMESTAMPTZ(3)             NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  CONSTRAINT "stripe_events_pkey" PRIMARY KEY ("id")
+  "id"            VARCHAR(255)    NOT NULL,
+  "type"          VARCHAR(255)    NOT NULL,
+  "status"        VARCHAR(16)     NOT NULL DEFAULT 'RECEIVED',
+  "received_at"   TIMESTAMPTZ(3),
+  "processed_at"  TIMESTAMPTZ(3),
+  CONSTRAINT "stripe_events_pkey" PRIMARY KEY ("id"),
+  -- Espelha o CHECK VALIDATED de prod. Sem ele, o container de teste seria mais
+  -- frouxo que prod e uma regressão gravando status inválido passaria verde no
+  -- CI e estouraria 23514 em prod (@dba MÉDIO drift fixture↔prod, Card #189).
+  CONSTRAINT "stripe_events_status_check" CHECK ("status" IN ('RECEIVED', 'PROCESSED'))
 );
 CREATE INDEX "idx_stripe_events_processed_at" ON "stripe_events" ("processed_at");
+-- Índice parcial: varre eventos RECEIVED travados (observabilidade/reconciliação).
+CREATE INDEX "idx_stripe_events_pending" ON "stripe_events" ("received_at") WHERE "status" = 'RECEIVED';
 
 -- ----------------------------------------------------------------------------
 -- TABLE: audit_log

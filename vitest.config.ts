@@ -47,6 +47,8 @@ export default defineConfig({
         'src/http/controllers/webhook.controller.ts',
         'src/modules/billing/stripe.service.ts',
         'src/modules/billing/webhook.handler.ts',
+        // Card #189 — orquestrador idempotente RECEIVED → PROCESSED
+        'src/modules/billing/webhook-idempotency.ts',
         'src/lib/spreadsheet/sanitizer.ts',
         'src/lib/spreadsheet/merger.ts',
         'src/lib/spreadsheet/parser.ts',

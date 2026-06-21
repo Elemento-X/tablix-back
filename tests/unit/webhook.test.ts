@@ -1,19 +1,33 @@
 /**
- * Unit tests for webhook idempotency (Card 1.1)
- * Covers:
- *   - registerStripeEvent deduplication (P2002 handling)
- *   - Controller: duplicate event returns 200 without side effects
- *   - Controller: real errors propagate (500 for Stripe retry)
- *   - Handler: handleCheckoutCompleted atomic token creation
- *   - Handler: existing token for same user+subscription is not duplicated
- *   - Handler: errors throw instead of being swallowed
+ * Unit tests — webhook handlers + controller border (Card #189).
+ *
+ * ARQUITETURA PÓS-#189 (o que mudou e por que estes testes mudaram):
+ *   - Os 4 handlers (`handle*`) viraram UNIT-OF-WORK PURAS: recebem
+ *     `(obj, tx)`, fazem só DB-writes via `tx`, e RETORNAM os side-effects
+ *     (`{ emails?, audits? }`). NÃO emitem audit nem enviam email inline.
+ *     => Os asserts deixaram de checar "sendTokenEmail foi chamado" e passaram
+ *        a checar o VALOR RETORNADO (`result.emails`, `result.audits`).
+ *   - `handleSubscriptionUpdated` não usa mais `prisma.$transaction([...])`:
+ *     escreve sequencialmente via `tx.token.update` + `tx.user.update`.
+ *     => Removidos os asserts de `$transaction toHaveBeenCalled`.
+ *   - `handleCheckoutCompleted` cria token via `tx.token.create` SEM catch
+ *     P2002: dentro da tx do orquestrador, um conflito aborta a transação e o
+ *     retry do Stripe reprocessa. => o teste de P2002 agora PROPAGA o erro.
+ *   - O controller virou fino: signature + circuit-breaker + delega a
+ *     `processStripeEvent`. A dedup/lock/post-commit é testada em
+ *     `webhook-idempotency.test.ts`. Aqui o orquestrador é MOCKADO para isolar
+ *     a responsabilidade de BORDA do controller.
+ *
+ * Como os handlers só tocam `tx.*`, passamos o próprio `prismaMock` como `tx`
+ * (`prismaMock as unknown as Prisma.TransactionClient`) — todos os setups
+ * `prismaMock.user.upsert.mockResolvedValue(...)` continuam válidos.
  *
  * @owner: @tester
+ * @card: #189
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { Prisma } from '@prisma/client'
 
-// Import after mocks
 import {
   handleCheckoutCompleted,
   handleSubscriptionUpdated,
@@ -54,6 +68,7 @@ const { prismaMock } = vi.hoisted(() => {
     job: createModelMock(),
     stripeEvent: createModelMock(),
     $transaction: vi.fn(),
+    $queryRaw: vi.fn(),
     $connect: vi.fn(),
     $disconnect: vi.fn(),
   }
@@ -93,15 +108,22 @@ vi.mock('../../src/modules/billing/stripe.service', () => ({
   constructWebhookEvent: vi.fn(),
 }))
 
-// Mock do audit service — capturamos `emitAuditEvent` nos smoke tests de
-// observabilidade (Card 2.4). Comportamento real testado em audit-service.test.ts.
+// Controller é fino: delega ao orquestrador. Mockamos `processStripeEvent`
+// para isolar a BORDA (assinatura, circuit breaker, forgery audit, delegação).
+// A lógica de dedup/lock/post-commit é coberta em webhook-idempotency.test.ts.
+const processStripeEventMock = vi.fn().mockResolvedValue('processed')
+vi.mock('../../src/modules/billing/webhook-idempotency', () => ({
+  processStripeEvent: (...args: unknown[]) => processStripeEventMock(...args),
+}))
+
+// Mock do audit service — o controller ainda emite WEBHOOK_SIGNATURE_FAILED
+// inline na borda. Demais audits saem do orquestrador (mockado aqui).
 const emitAuditEventMock = vi.fn()
 vi.mock('../../src/lib/audit/audit.service', () => ({
   emitAuditEvent: (...args: unknown[]) => emitAuditEventMock(...args),
 }))
 
-// Mock do circuit breaker — por default NÃO está banido e recordFailure é no-op.
-// Os testes que querem exercer o caminho de ban sobrescrevem via mockResolvedValue.
+// Circuit breaker — por default NÃO banido e recordFailure é no-op.
 const isWebhookSignatureBannedMock = vi.fn().mockResolvedValue(false)
 const recordWebhookSignatureFailureMock = vi.fn().mockResolvedValue(undefined)
 vi.mock('../../src/lib/security/webhook-circuit-breaker', () => ({
@@ -112,6 +134,10 @@ vi.mock('../../src/lib/security/webhook-circuit-breaker', () => ({
 }))
 
 // --- Helpers ---
+
+// O handler só toca `tx.*`. Passar o prismaMock como tx mantém todos os
+// setups `prismaMock.<model>.<method>.mockResolvedValue(...)` funcionando.
+const tx = prismaMock as unknown as Prisma.TransactionClient
 
 function makeStripeEvent(
   overrides: Partial<{
@@ -146,9 +172,13 @@ function makeCheckoutSession(
   }
 }
 
-function makeFastifyRequest(signature = 'sig_test') {
+function makeFastifyRequest(signature: string | undefined = 'sig_test') {
   return {
-    headers: { 'stripe-signature': signature },
+    ip: '203.0.113.7',
+    headers: {
+      'stripe-signature': signature,
+      'user-agent': 'Stripe/1.0 (+https://stripe.com/docs/webhooks)',
+    },
     body: Buffer.from('{}'),
     log: {
       info: vi.fn(),
@@ -174,114 +204,91 @@ function makeP2002Error() {
   })
 }
 
+/** Executa todas as closures de email retornadas por um handler. */
+async function runEmails(effects: { emails?: Array<() => Promise<void>> }) {
+  for (const send of effects.emails ?? []) {
+    await send()
+  }
+}
+
+/** Extrai as AuditAction declaradas nos side-effects retornados. */
+function auditActions(effects: { audits?: Array<{ action: string }> }) {
+  return (effects.audits ?? []).map((a) => a.action)
+}
+
 // --- Tests ---
 
-describe('Webhook Idempotency (Card 1.1)', () => {
+describe('Webhook (Card #189)', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    isWebhookSignatureBannedMock.mockResolvedValue(false)
+    recordWebhookSignatureFailureMock.mockResolvedValue(undefined)
+    processStripeEventMock.mockResolvedValue('processed')
   })
 
   // ===========================================
-  // Controller: registerStripeEvent deduplication
+  // Controller (borda): signature + circuit breaker + delegação
   // ===========================================
-  describe('stripeWebhook controller', () => {
-    it('should process new event and return { received: true }', async () => {
+  describe('stripeWebhook controller (borda)', () => {
+    it('delega ao processStripeEvent e responde { received: true }', async () => {
       const event = makeStripeEvent()
       vi.mocked(constructWebhookEvent).mockReturnValue(event as never)
-      prismaMock.stripeEvent.create.mockResolvedValue({
-        id: event.id,
-        type: event.type,
-        processedAt: new Date(),
-      })
-
-      // Mock handler dependencies
-      prismaMock.user.upsert.mockResolvedValue({
-        id: 'user-1',
-        email: 'user@test.com',
-        stripeCustomerId: 'cus_test_123',
-        role: 'PRO',
-      })
-      prismaMock.token.findFirst.mockResolvedValue(null)
-      prismaMock.token.create.mockResolvedValue({
-        id: 'token-1',
-      })
 
       const request = makeFastifyRequest()
       const reply = makeFastifyReply()
 
       await stripeWebhook(request, reply)
 
-      expect(prismaMock.stripeEvent.create).toHaveBeenCalledWith({
-        data: { id: 'evt_test_123', type: 'checkout.session.completed' },
+      expect(processStripeEventMock).toHaveBeenCalledTimes(1)
+      const [passedEvent, ctx] = processStripeEventMock.mock.calls[0]!
+      expect(passedEvent).toBe(event)
+      expect(ctx).toMatchObject({
+        ip: '203.0.113.7',
+        userAgent: 'Stripe/1.0 (+https://stripe.com/docs/webhooks)',
       })
-      expect(reply.send).toHaveBeenCalledWith({
-        received: true,
-      })
+      expect(reply.send).toHaveBeenCalledWith({ received: true })
     })
 
-    it('should return { received: true, duplicate: true } for duplicate event', async () => {
+    it('responde { received: true } também quando o orquestrador reporta duplicate', async () => {
+      // Contrato: o response shape NÃO discrimina duplicate (webhookResponseSchema
+      // só declara `received`). 200 idempotente em ambos os casos.
       const event = makeStripeEvent()
       vi.mocked(constructWebhookEvent).mockReturnValue(event as never)
-      prismaMock.stripeEvent.create.mockRejectedValue(makeP2002Error())
+      processStripeEventMock.mockResolvedValue('duplicate')
 
       const request = makeFastifyRequest()
       const reply = makeFastifyReply()
 
       await stripeWebhook(request, reply)
 
-      expect(reply.send).toHaveBeenCalledWith({
-        received: true,
-        duplicate: true,
-      })
-      // No handler should have been called
-      expect(prismaMock.user.upsert).not.toHaveBeenCalled()
-      expect(prismaMock.token.create).not.toHaveBeenCalled()
+      expect(reply.send).toHaveBeenCalledWith({ received: true })
     })
 
-    it('should propagate non-P2002 errors from stripeEvent.create', async () => {
+    it('propaga erro do orquestrador (500 → Stripe redelivera)', async () => {
       const event = makeStripeEvent()
       vi.mocked(constructWebhookEvent).mockReturnValue(event as never)
-      const dbError = new Error('Connection lost')
-      prismaMock.stripeEvent.create.mockRejectedValue(dbError)
+      processStripeEventMock.mockRejectedValue(new Error('DB down'))
 
-      const request = makeFastifyRequest()
-      const reply = makeFastifyReply()
-
-      await expect(stripeWebhook(request, reply)).rejects.toThrow(
-        'Connection lost',
-      )
+      await expect(
+        stripeWebhook(makeFastifyRequest(), makeFastifyReply()),
+      ).rejects.toThrow('DB down')
     })
 
-    it('should propagate handler errors (500 for Stripe retry)', async () => {
-      const event = makeStripeEvent()
-      vi.mocked(constructWebhookEvent).mockReturnValue(event as never)
-      prismaMock.stripeEvent.create.mockResolvedValue({
-        id: event.id,
-        type: event.type,
-        processedAt: new Date(),
-      })
-
-      // Handler will fail
-      prismaMock.user.upsert.mockRejectedValue(new Error('DB down'))
-
-      const request = makeFastifyRequest()
-      const reply = makeFastifyReply()
-
-      await expect(stripeWebhook(request, reply)).rejects.toThrow('DB down')
-    })
-
-    it('should throw when stripe-signature header is missing', async () => {
+    it('lança quando header stripe-signature está ausente (sem chamar orquestrador)', async () => {
       const request = {
-        headers: {},
+        ip: '203.0.113.7',
+        headers: { 'user-agent': 'Stripe/1.0' },
         body: Buffer.from('{}'),
-        log: { info: vi.fn(), error: vi.fn() },
+        log: { info: vi.fn(), error: vi.fn(), warn: vi.fn(), debug: vi.fn() },
       } as unknown as Parameters<typeof stripeWebhook>[0]
       const reply = makeFastifyReply()
 
       await expect(stripeWebhook(request, reply)).rejects.toThrow()
+      expect(processStripeEventMock).not.toHaveBeenCalled()
+      expect(constructWebhookEvent).not.toHaveBeenCalled()
     })
 
-    it('should log and rethrow when constructWebhookEvent throws (invalid signature)', async () => {
+    it('assinatura inválida: emite WEBHOOK_SIGNATURE_FAILED, registra no circuit breaker e propaga', async () => {
       const sigError = new Error(
         'No signatures found matching the expected signature for payload',
       )
@@ -299,146 +306,75 @@ describe('Webhook Idempotency (Card 1.1)', () => {
         expect.objectContaining({ err: sigError }),
         '[Webhook] Erro de validacao de assinatura',
       )
-    })
-
-    it('should route customer.subscription.updated event to handler', async () => {
-      const event = makeStripeEvent({
-        type: 'customer.subscription.updated',
-        data: {
-          object: {
-            id: 'sub_test_123',
-            customer: 'cus_test_123',
-            status: 'active',
-          },
-        },
-      })
-      vi.mocked(constructWebhookEvent).mockReturnValue(event as never)
-      prismaMock.stripeEvent.create.mockResolvedValue({
-        id: event.id,
-        type: event.type,
-        processedAt: new Date(),
-      })
-      prismaMock.user.findUnique.mockResolvedValue({
-        id: 'user-1',
-        stripeCustomerId: 'cus_test_123',
-      })
-      prismaMock.token.findFirst.mockResolvedValue({
-        id: 'token-1',
-        userId: 'user-1',
-      })
-      prismaMock.$transaction.mockResolvedValue([])
-
-      const request = makeFastifyRequest()
-      const reply = makeFastifyReply()
-
-      await stripeWebhook(request, reply)
-
-      expect(prismaMock.$transaction).toHaveBeenCalledTimes(1)
-      expect(reply.send).toHaveBeenCalledWith({ received: true })
-    })
-
-    it('should route customer.subscription.deleted event to handler', async () => {
-      const event = makeStripeEvent({
-        type: 'customer.subscription.deleted',
-        data: {
-          object: {
-            id: 'sub_test_123',
-            customer: 'cus_test_123',
-            current_period_end: Math.floor(Date.now() / 1000) + 86400,
-          },
-        },
-      })
-      vi.mocked(constructWebhookEvent).mockReturnValue(event as never)
-      prismaMock.stripeEvent.create.mockResolvedValue({
-        id: event.id,
-        type: event.type,
-        processedAt: new Date(),
-      })
-      prismaMock.user.findUnique.mockResolvedValue({
-        id: 'user-1',
-        email: 'user@test.com',
-        stripeCustomerId: 'cus_test_123',
-      })
-      prismaMock.token.findFirst.mockResolvedValue({
-        id: 'token-1',
-        userId: 'user-1',
-      })
-      prismaMock.token.update.mockResolvedValue({})
-
-      const request = makeFastifyRequest()
-      const reply = makeFastifyReply()
-
-      await stripeWebhook(request, reply)
-
-      expect(prismaMock.token.update).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: expect.objectContaining({ status: 'CANCELLED' }),
-        }),
+      expect(recordWebhookSignatureFailureMock).toHaveBeenCalledWith(
+        '203.0.113.7',
       )
-      expect(reply.send).toHaveBeenCalledWith({ received: true })
-    })
-
-    it('should route invoice.payment_failed event to handler', async () => {
-      const event = makeStripeEvent({
-        type: 'invoice.payment_failed',
-        data: {
-          object: {
-            id: 'in_test_123',
-            customer: 'cus_test_123',
-          },
-        },
-      })
-      vi.mocked(constructWebhookEvent).mockReturnValue(event as never)
-      prismaMock.stripeEvent.create.mockResolvedValue({
-        id: event.id,
-        type: event.type,
-        processedAt: new Date(),
-      })
-      prismaMock.user.findUnique.mockResolvedValue({
-        id: 'user-1',
-        email: 'user@test.com',
-        stripeCustomerId: 'cus_test_123',
-      })
-
-      const request = makeFastifyRequest()
-      const reply = makeFastifyReply()
-
-      await stripeWebhook(request, reply)
-
-      expect(sendPaymentFailedEmail).toHaveBeenCalledWith({
-        to: 'user@test.com',
-      })
-      expect(reply.send).toHaveBeenCalledWith({ received: true })
-    })
-
-    it('should log and return received:true for unhandled event type', async () => {
-      const event = makeStripeEvent({ type: 'customer.created' })
-      vi.mocked(constructWebhookEvent).mockReturnValue(event as never)
-      prismaMock.stripeEvent.create.mockResolvedValue({
-        id: event.id,
-        type: event.type,
-        processedAt: new Date(),
-      })
-
-      const request = makeFastifyRequest()
-      const reply = makeFastifyReply()
-
-      await stripeWebhook(request, reply)
-
-      expect(request.log.info).toHaveBeenCalledWith(
-        expect.objectContaining({ type: 'customer.created' }),
-        '[Webhook] Evento nao tratado',
+      const emitted = emitAuditEventMock.mock.calls.map(
+        (c) => (c[0] as { action: string }).action,
       )
-      expect(reply.send).toHaveBeenCalledWith({ received: true })
+      expect(emitted).toContain(AuditAction.WEBHOOK_SIGNATURE_FAILED)
+      // Nunca processa um evento com assinatura inválida.
+      expect(processStripeEventMock).not.toHaveBeenCalled()
+    })
+
+    it('IP banido pelo circuit breaker: lança rateLimited antes de qualquer parsing', async () => {
+      isWebhookSignatureBannedMock.mockResolvedValue(true)
+
+      const request = makeFastifyRequest()
+      const reply = makeFastifyReply()
+
+      await expect(stripeWebhook(request, reply)).rejects.toMatchObject({
+        statusCode: 429,
+      })
+      expect(constructWebhookEvent).not.toHaveBeenCalled()
+      expect(processStripeEventMock).not.toHaveBeenCalled()
+    })
+
+    it('user-agent ausente → ctx.userAgent é null (fallback)', async () => {
+      const event = makeStripeEvent()
+      vi.mocked(constructWebhookEvent).mockReturnValue(event as never)
+      const request = {
+        ip: '203.0.113.7',
+        headers: { 'stripe-signature': 'sig_test' }, // sem user-agent
+        body: Buffer.from('{}'),
+        log: { info: vi.fn(), error: vi.fn(), warn: vi.fn(), debug: vi.fn() },
+      } as unknown as Parameters<typeof stripeWebhook>[0]
+
+      await stripeWebhook(request, makeFastifyReply())
+
+      const [, ctx] = processStripeEventMock.mock.calls[0]!
+      expect(ctx).toMatchObject({ userAgent: null })
+    })
+
+    it('assinatura inválida: falha do circuit breaker é fire-and-forget (catch não vaza)', async () => {
+      // Cobre o `.catch(() => {})` do recordWebhookSignatureFailure: mesmo que
+      // o registro de falha rejeite, o handler propaga o erro de assinatura
+      // original — nunca o erro do circuit breaker.
+      vi.mocked(constructWebhookEvent).mockImplementation(() => {
+        throw new Error('Invalid signature')
+      })
+      recordWebhookSignatureFailureMock.mockRejectedValue(
+        new Error('redis down'),
+      )
+
+      const request = makeFastifyRequest()
+
+      await expect(stripeWebhook(request, makeFastifyReply())).rejects.toThrow(
+        'Invalid signature',
+      )
+      // Deixa o microtask do .catch(() => {}) drenar.
+      await new Promise((resolve) => setImmediate(resolve))
+      expect(recordWebhookSignatureFailureMock).toHaveBeenCalledTimes(1)
     })
   })
 
   // ===========================================
-  // Handler: handleCheckoutCompleted atomicity
+  // handleCheckoutCompleted — retorna side-effects
   // ===========================================
   describe('handleCheckoutCompleted', () => {
-    it('should create user and token on first event', async () => {
+    it('cria user + token e RETORNA o email de token como side-effect', async () => {
       const session = makeCheckoutSession()
+      prismaMock.user.findUnique.mockResolvedValue(null)
       prismaMock.user.upsert.mockResolvedValue({
         id: 'user-1',
         email: 'user@test.com',
@@ -446,11 +382,9 @@ describe('Webhook Idempotency (Card 1.1)', () => {
         role: 'PRO',
       })
       prismaMock.token.findFirst.mockResolvedValue(null)
-      prismaMock.token.create.mockResolvedValue({
-        id: 'token-1',
-      })
+      prismaMock.token.create.mockResolvedValue({ id: 'token-1' })
 
-      await handleCheckoutCompleted(session as never)
+      const result = await handleCheckoutCompleted(session as never, tx)
 
       expect(prismaMock.user.upsert).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -472,15 +406,22 @@ describe('Webhook Idempotency (Card 1.1)', () => {
           }),
         }),
       )
+      // Side-effect declarado, NÃO executado pelo handler.
+      expect(result.emails).toHaveLength(1)
+      expect(sendTokenEmail).not.toHaveBeenCalled()
+      // A closure, quando invocada, manda o email com o token gerado.
+      await runEmails(result)
       expect(sendTokenEmail).toHaveBeenCalledWith(
-        expect.objectContaining({
-          to: 'user@test.com',
-        }),
+        expect.objectContaining({ to: 'user@test.com' }),
       )
     })
 
-    it('should not create duplicate token for same user+subscription', async () => {
+    it('não cria token duplicado para mesmo user+subscription (sem email)', async () => {
       const session = makeCheckoutSession()
+      prismaMock.user.findUnique.mockResolvedValue({
+        id: 'user-1',
+        role: 'PRO',
+      })
       prismaMock.user.upsert.mockResolvedValue({
         id: 'user-1',
         email: 'user@test.com',
@@ -494,14 +435,18 @@ describe('Webhook Idempotency (Card 1.1)', () => {
         status: 'ACTIVE',
       })
 
-      await handleCheckoutCompleted(session as never)
+      const result = await handleCheckoutCompleted(session as never, tx)
 
       expect(prismaMock.token.create).not.toHaveBeenCalled()
-      expect(sendTokenEmail).not.toHaveBeenCalled()
+      expect(result.emails).toBeUndefined()
     })
 
-    it('should reactivate cancelled token for same user+subscription', async () => {
+    it('reativa token CANCELLED do mesmo user+subscription (sem novo email)', async () => {
       const session = makeCheckoutSession()
+      prismaMock.user.findUnique.mockResolvedValue({
+        id: 'user-1',
+        role: 'PRO',
+      })
       prismaMock.user.upsert.mockResolvedValue({
         id: 'user-1',
         email: 'user@test.com',
@@ -519,16 +464,17 @@ describe('Webhook Idempotency (Card 1.1)', () => {
         status: 'ACTIVE',
       })
 
-      await handleCheckoutCompleted(session as never)
+      const result = await handleCheckoutCompleted(session as never, tx)
 
       expect(prismaMock.token.update).toHaveBeenCalledWith({
         where: { id: 'existing-token' },
         data: { status: 'ACTIVE', expiresAt: null },
       })
       expect(prismaMock.token.create).not.toHaveBeenCalled()
+      expect(result.emails).toBeUndefined()
     })
 
-    it('should throw when session has no email', async () => {
+    it('lança quando a session não tem email', async () => {
       const session = {
         id: 'cs_test_123',
         customer_email: null,
@@ -537,12 +483,12 @@ describe('Webhook Idempotency (Card 1.1)', () => {
         subscription: 'sub_test_123',
       }
 
-      await expect(handleCheckoutCompleted(session as never)).rejects.toThrow(
-        'Erro ao processar webhook',
-      )
+      await expect(
+        handleCheckoutCompleted(session as never, tx),
+      ).rejects.toThrow('Erro ao processar webhook')
     })
 
-    it('should throw when session has no customer', async () => {
+    it('lança quando a session não tem customer', async () => {
       const session = {
         id: 'cs_test_123',
         customer_email: 'user@test.com',
@@ -550,54 +496,47 @@ describe('Webhook Idempotency (Card 1.1)', () => {
         subscription: 'sub_test_123',
       }
 
-      await expect(handleCheckoutCompleted(session as never)).rejects.toThrow(
-        'Erro ao processar webhook',
-      )
-    })
-
-    it('should not block on email failure (fire-and-forget)', async () => {
-      const session = makeCheckoutSession()
-      prismaMock.user.upsert.mockResolvedValue({
-        id: 'user-1',
-        email: 'user@test.com',
-        stripeCustomerId: 'cus_test_123',
-        role: 'PRO',
-      })
-      prismaMock.token.findFirst.mockResolvedValue(null)
-      prismaMock.token.create.mockResolvedValue({
-        id: 'token-1',
-      })
-      vi.mocked(sendTokenEmail).mockRejectedValue(new Error('Resend down'))
-
-      // Should not throw despite email failure
       await expect(
-        handleCheckoutCompleted(session as never),
-      ).resolves.toBeUndefined()
+        handleCheckoutCompleted(session as never, tx),
+      ).rejects.toThrow('Erro ao processar webhook')
     })
 
-    it('should handle P2002 race condition on token.create (defense-in-depth)', async () => {
+    it('lança quando a session não tem subscription', async () => {
+      const session = {
+        id: 'cs_test_123',
+        customer_email: 'user@test.com',
+        customer: 'cus_test_123',
+        subscription: null,
+      }
+
+      await expect(
+        handleCheckoutCompleted(session as never, tx),
+      ).rejects.toThrow('Erro ao processar webhook')
+    })
+
+    it('PROPAGA P2002 em token.create (sem catch — rollback+retry converge)', async () => {
+      // Mudança #189: o handler não engole mais P2002. Dentro da tx do
+      // orquestrador, o conflito aborta a transação → status fica RECEIVED →
+      // o retry do Stripe reprocessa e encontra o token já existente.
       const session = makeCheckoutSession()
+      prismaMock.user.findUnique.mockResolvedValue(null)
       prismaMock.user.upsert.mockResolvedValue({
         id: 'user-1',
         email: 'user@test.com',
         stripeCustomerId: 'cus_test_123',
         role: 'PRO',
       })
-      // findFirst returns null (no existing token), but create hits P2002
-      // because another request created the token between findFirst and create
       prismaMock.token.findFirst.mockResolvedValue(null)
       prismaMock.token.create.mockRejectedValue(makeP2002Error())
 
-      // Should NOT throw — P2002 is treated as safe duplicate
       await expect(
-        handleCheckoutCompleted(session as never),
-      ).resolves.toBeUndefined()
-      // Email should NOT be sent (early return on race condition)
-      expect(sendTokenEmail).not.toHaveBeenCalled()
+        handleCheckoutCompleted(session as never, tx),
+      ).rejects.toMatchObject({ code: 'P2002' })
     })
 
-    it('should propagate non-P2002 errors from token.create', async () => {
+    it('propaga erro não-P2002 de token.create', async () => {
       const session = makeCheckoutSession()
+      prismaMock.user.findUnique.mockResolvedValue(null)
       prismaMock.user.upsert.mockResolvedValue({
         id: 'user-1',
         email: 'user@test.com',
@@ -607,598 +546,41 @@ describe('Webhook Idempotency (Card 1.1)', () => {
       prismaMock.token.findFirst.mockResolvedValue(null)
       prismaMock.token.create.mockRejectedValue(new Error('DB connection lost'))
 
-      await expect(handleCheckoutCompleted(session as never)).rejects.toThrow(
-        'DB connection lost',
-      )
+      await expect(
+        handleCheckoutCompleted(session as never, tx),
+      ).rejects.toThrow('DB connection lost')
     })
-  })
 
-  // ===========================================
-  // Handler: handleSubscriptionUpdated
-  // ===========================================
-  describe('handleSubscriptionUpdated', () => {
-    it('should throw when customer not found', async () => {
-      const subscription = {
-        id: 'sub_test_123',
-        customer: 'cus_unknown',
-        status: 'active',
+    it('resolve customer/subscription quando vêm como objeto expandido', async () => {
+      const session = {
+        id: 'cs_test_123',
+        customer_email: 'user@test.com',
+        customer_details: { email: 'user@test.com' },
+        customer: { id: 'cus_obj_123' },
+        subscription: { id: 'sub_obj_123' },
       }
       prismaMock.user.findUnique.mockResolvedValue(null)
-
-      await expect(
-        handleSubscriptionUpdated(subscription as never),
-      ).rejects.toThrow('Erro ao processar webhook')
-    })
-
-    it('should update token and user role in transaction', async () => {
-      const subscription = {
-        id: 'sub_test_123',
-        customer: 'cus_test_123',
-        status: 'active',
-      }
-      prismaMock.user.findUnique.mockResolvedValue({
+      prismaMock.user.upsert.mockResolvedValue({
         id: 'user-1',
-        stripeCustomerId: 'cus_test_123',
-      })
-      prismaMock.token.findFirst.mockResolvedValue({
-        id: 'token-1',
-        userId: 'user-1',
-      })
-      prismaMock.token.update.mockResolvedValue({})
-      prismaMock.user.update.mockResolvedValue({})
-      prismaMock.$transaction.mockResolvedValue([])
-
-      await handleSubscriptionUpdated(subscription as never)
-
-      expect(prismaMock.$transaction).toHaveBeenCalledTimes(1)
-      // Verify $transaction received an array (batch transaction)
-      const callArgs = prismaMock.$transaction.mock.calls[0]![0]
-      expect(Array.isArray(callArgs)).toBe(true)
-      expect(callArgs).toHaveLength(2)
-    })
-
-    it('should throw when token not found for user', async () => {
-      const subscription = {
-        id: 'sub_test_123',
-        customer: 'cus_test_123',
-        status: 'active',
-      }
-      prismaMock.user.findUnique.mockResolvedValue({
-        id: 'user-1',
-        stripeCustomerId: 'cus_test_123',
+        email: 'user@test.com',
+        role: 'PRO',
       })
       prismaMock.token.findFirst.mockResolvedValue(null)
+      prismaMock.token.create.mockResolvedValue({ id: 'token-1' })
 
-      await expect(
-        handleSubscriptionUpdated(subscription as never),
-      ).rejects.toThrow('Erro ao processar webhook')
-    })
+      await handleCheckoutCompleted(session as never, tx)
 
-    it('should set status CANCELLED and keep PRO role for canceled subscription', async () => {
-      const subscription = {
-        id: 'sub_test_123',
-        customer: 'cus_test_123',
-        status: 'canceled',
-      }
-      prismaMock.user.findUnique.mockResolvedValue({
-        id: 'user-1',
-        stripeCustomerId: 'cus_test_123',
-      })
-      prismaMock.token.findFirst.mockResolvedValue({
-        id: 'token-1',
-        userId: 'user-1',
-      })
-      prismaMock.$transaction.mockResolvedValue([])
-
-      await handleSubscriptionUpdated(subscription as never)
-
-      const txArgs = prismaMock.$transaction.mock.calls[0]![0] as Array<unknown>
-      // token.update call is first element — check it was called with status CANCELLED
-      expect(prismaMock.token.update).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: expect.objectContaining({ status: 'CANCELLED' }),
-        }),
-      )
-      expect(prismaMock.user.update).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: { role: 'PRO' },
-        }),
-      )
-      expect(txArgs).toHaveLength(2)
-    })
-
-    it('should set status ACTIVE and expiresAt for past_due subscription', async () => {
-      const periodEnd = Math.floor(Date.now() / 1000) + 86400
-      const subscription = {
-        id: 'sub_test_123',
-        customer: 'cus_test_123',
-        status: 'past_due',
-        current_period_end: periodEnd,
-      }
-      prismaMock.user.findUnique.mockResolvedValue({
-        id: 'user-1',
-        stripeCustomerId: 'cus_test_123',
-      })
-      prismaMock.token.findFirst.mockResolvedValue({
-        id: 'token-1',
-        userId: 'user-1',
-      })
-      prismaMock.$transaction.mockResolvedValue([])
-
-      await handleSubscriptionUpdated(subscription as never)
-
-      expect(prismaMock.token.update).toHaveBeenCalledWith(
+      expect(prismaMock.token.create).toHaveBeenCalledWith(
         expect.objectContaining({
           data: expect.objectContaining({
-            status: 'ACTIVE',
-            expiresAt: new Date(periodEnd * 1000),
+            stripeSubscriptionId: 'sub_obj_123',
           }),
         }),
       )
     })
 
-    it('should set status EXPIRED and FREE role for incomplete_expired subscription', async () => {
-      const subscription = {
-        id: 'sub_test_123',
-        customer: 'cus_test_123',
-        status: 'incomplete_expired',
-      }
-      prismaMock.user.findUnique.mockResolvedValue({
-        id: 'user-1',
-        stripeCustomerId: 'cus_test_123',
-      })
-      prismaMock.token.findFirst.mockResolvedValue({
-        id: 'token-1',
-        userId: 'user-1',
-      })
-      prismaMock.$transaction.mockResolvedValue([])
-
-      await handleSubscriptionUpdated(subscription as never)
-
-      expect(prismaMock.token.update).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: expect.objectContaining({ status: 'EXPIRED' }),
-        }),
-      )
-      expect(prismaMock.user.update).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: { role: 'FREE' },
-        }),
-      )
-    })
-
-    it('should set status ACTIVE and PRO role for trialing subscription', async () => {
-      const subscription = {
-        id: 'sub_test_123',
-        customer: 'cus_test_123',
-        status: 'trialing',
-      }
-      prismaMock.user.findUnique.mockResolvedValue({
-        id: 'user-1',
-        stripeCustomerId: 'cus_test_123',
-      })
-      prismaMock.token.findFirst.mockResolvedValue({
-        id: 'token-1',
-        userId: 'user-1',
-      })
-      prismaMock.$transaction.mockResolvedValue([])
-
-      await handleSubscriptionUpdated(subscription as never)
-
-      expect(prismaMock.token.update).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: expect.objectContaining({ status: 'ACTIVE' }),
-        }),
-      )
-      expect(prismaMock.user.update).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: { role: 'PRO' },
-        }),
-      )
-    })
-
-    it('should set status ACTIVE for unpaid subscription (same branch as past_due)', async () => {
-      const periodEnd = Math.floor(Date.now() / 1000) + 86400
-      const subscription = {
-        id: 'sub_test_123',
-        customer: 'cus_test_123',
-        status: 'unpaid',
-        current_period_end: periodEnd,
-      }
-      prismaMock.user.findUnique.mockResolvedValue({
-        id: 'user-1',
-        stripeCustomerId: 'cus_test_123',
-      })
-      prismaMock.token.findFirst.mockResolvedValue({
-        id: 'token-1',
-        userId: 'user-1',
-      })
-      prismaMock.$transaction.mockResolvedValue([])
-
-      await handleSubscriptionUpdated(subscription as never)
-
-      expect(prismaMock.token.update).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: expect.objectContaining({
-            status: 'ACTIVE',
-            expiresAt: new Date(periodEnd * 1000),
-          }),
-        }),
-      )
-    })
-
-    it('should set null expiresAt for past_due subscription without current_period_end', async () => {
-      const subscription = {
-        id: 'sub_test_123',
-        customer: 'cus_test_123',
-        status: 'past_due',
-        // no current_period_end
-      }
-      prismaMock.user.findUnique.mockResolvedValue({
-        id: 'user-1',
-        stripeCustomerId: 'cus_test_123',
-      })
-      prismaMock.token.findFirst.mockResolvedValue({
-        id: 'token-1',
-        userId: 'user-1',
-      })
-      prismaMock.$transaction.mockResolvedValue([])
-
-      await handleSubscriptionUpdated(subscription as never)
-
-      expect(prismaMock.token.update).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: expect.objectContaining({
-            status: 'ACTIVE',
-            expiresAt: null,
-          }),
-        }),
-      )
-    })
-  })
-
-  // ===========================================
-  // Handler: handleSubscriptionDeleted
-  // ===========================================
-  describe('handleSubscriptionDeleted', () => {
-    it('should mark token as cancelled and send email', async () => {
-      const subscription = {
-        id: 'sub_test_123',
-        customer: 'cus_test_123',
-        status: 'canceled',
-        current_period_end: Math.floor(Date.now() / 1000) + 86400,
-      }
-      prismaMock.user.findUnique.mockResolvedValue({
-        id: 'user-1',
-        email: 'user@test.com',
-        stripeCustomerId: 'cus_test_123',
-      })
-      prismaMock.token.findFirst.mockResolvedValue({
-        id: 'token-1',
-        userId: 'user-1',
-      })
-      prismaMock.token.update.mockResolvedValue({
-        id: 'token-1',
-        status: 'CANCELLED',
-      })
-
-      await handleSubscriptionDeleted(subscription as never)
-
-      expect(prismaMock.token.update).toHaveBeenCalledWith(
-        expect.objectContaining({
-          where: { id: 'token-1' },
-          data: expect.objectContaining({
-            status: 'CANCELLED',
-          }),
-        }),
-      )
-      expect(sendCancellationEmail).toHaveBeenCalledWith(
-        expect.objectContaining({
-          to: 'user@test.com',
-        }),
-      )
-    })
-
-    it('should not block on email failure', async () => {
-      const subscription = {
-        id: 'sub_test_123',
-        customer: 'cus_test_123',
-        current_period_end: Math.floor(Date.now() / 1000),
-      }
-      prismaMock.user.findUnique.mockResolvedValue({
-        id: 'user-1',
-        email: 'user@test.com',
-        stripeCustomerId: 'cus_test_123',
-      })
-      prismaMock.token.findFirst.mockResolvedValue({
-        id: 'token-1',
-        userId: 'user-1',
-      })
-      prismaMock.token.update.mockResolvedValue({})
-      vi.mocked(sendCancellationEmail).mockRejectedValue(
-        new Error('Resend down'),
-      )
-
-      await expect(
-        handleSubscriptionDeleted(subscription as never),
-      ).resolves.toBeUndefined()
-    })
-
-    it('should throw when user not found for customer', async () => {
-      const subscription = {
-        id: 'sub_test_123',
-        customer: 'cus_unknown',
-        current_period_end: Math.floor(Date.now() / 1000) + 86400,
-      }
+    it('RETORNA audit ACCOUNT_CREATED quando o user é novo', async () => {
       prismaMock.user.findUnique.mockResolvedValue(null)
-
-      await expect(
-        handleSubscriptionDeleted(subscription as never),
-      ).rejects.toThrow('Erro ao processar webhook')
-    })
-
-    it('should throw when token not found for user', async () => {
-      const subscription = {
-        id: 'sub_test_123',
-        customer: 'cus_test_123',
-        current_period_end: Math.floor(Date.now() / 1000) + 86400,
-      }
-      prismaMock.user.findUnique.mockResolvedValue({
-        id: 'user-1',
-        email: 'user@test.com',
-        stripeCustomerId: 'cus_test_123',
-      })
-      prismaMock.token.findFirst.mockResolvedValue(null)
-
-      await expect(
-        handleSubscriptionDeleted(subscription as never),
-      ).rejects.toThrow('Erro ao processar webhook')
-    })
-
-    it('should use current date as gracePeriodEnd when current_period_end is absent', async () => {
-      // subscription without current_period_end — gracePeriodEnd falls back to new Date()
-      const subscription = {
-        id: 'sub_test_123',
-        customer: 'cus_test_123',
-        // intentionally omitting current_period_end
-      }
-      prismaMock.user.findUnique.mockResolvedValue({
-        id: 'user-1',
-        email: 'user@test.com',
-        stripeCustomerId: 'cus_test_123',
-      })
-      prismaMock.token.findFirst.mockResolvedValue({
-        id: 'token-1',
-        userId: 'user-1',
-      })
-      prismaMock.token.update.mockResolvedValue({})
-
-      await handleSubscriptionDeleted(subscription as never)
-
-      // expiresAt must be a real Date (not null, not undefined)
-      const updateCall = prismaMock.token.update.mock.calls[0]![0] as {
-        data: { expiresAt: unknown }
-      }
-      expect(updateCall.data.expiresAt).toBeInstanceOf(Date)
-    })
-  })
-
-  // ===========================================
-  // Handler: handlePaymentFailed
-  // ===========================================
-  describe('handlePaymentFailed', () => {
-    it('should send payment failed email', async () => {
-      const invoice = {
-        id: 'in_test_123',
-        customer: 'cus_test_123',
-      }
-      prismaMock.user.findUnique.mockResolvedValue({
-        id: 'user-1',
-        email: 'user@test.com',
-        stripeCustomerId: 'cus_test_123',
-      })
-
-      await handlePaymentFailed(invoice as never)
-
-      expect(sendPaymentFailedEmail).toHaveBeenCalledWith({
-        to: 'user@test.com',
-      })
-    })
-
-    it('should throw when customer not found', async () => {
-      const invoice = {
-        id: 'in_test_123',
-        customer: 'cus_unknown',
-      }
-      prismaMock.user.findUnique.mockResolvedValue(null)
-
-      await expect(handlePaymentFailed(invoice as never)).rejects.toThrow(
-        'Erro ao processar webhook',
-      )
-    })
-
-    it('should not block on email failure', async () => {
-      const invoice = {
-        id: 'in_test_123',
-        customer: 'cus_test_123',
-      }
-      prismaMock.user.findUnique.mockResolvedValue({
-        id: 'user-1',
-        email: 'user@test.com',
-        stripeCustomerId: 'cus_test_123',
-      })
-      vi.mocked(sendPaymentFailedEmail).mockRejectedValue(
-        new Error('Resend down'),
-      )
-
-      await expect(
-        handlePaymentFailed(invoice as never),
-      ).resolves.toBeUndefined()
-    })
-
-    it('should resolve customerId when customer is an object with id', async () => {
-      // Stripe sometimes expands the customer field to an object
-      const invoice = {
-        id: 'in_test_123',
-        customer: { id: 'cus_test_123' },
-      }
-      prismaMock.user.findUnique.mockResolvedValue({
-        id: 'user-1',
-        email: 'user@test.com',
-        stripeCustomerId: 'cus_test_123',
-      })
-
-      await handlePaymentFailed(invoice as never)
-
-      expect(prismaMock.user.findUnique).toHaveBeenCalledWith({
-        where: { stripeCustomerId: 'cus_test_123' },
-      })
-      expect(sendPaymentFailedEmail).toHaveBeenCalledWith({
-        to: 'user@test.com',
-      })
-    })
-
-    it('should throw when customer is null (no customerId extractable)', async () => {
-      const invoice = {
-        id: 'in_test_123',
-        customer: null,
-      }
-
-      await expect(handlePaymentFailed(invoice as never)).rejects.toThrow(
-        'Erro ao processar webhook',
-      )
-    })
-  })
-
-  // ===========================================
-  // Handler: object-shape customer edge cases
-  // ===========================================
-  describe('handleSubscriptionUpdated — object customer', () => {
-    it('should resolve customerId when customer is an object with id', async () => {
-      const subscription = {
-        id: 'sub_test_123',
-        customer: { id: 'cus_test_123' },
-        status: 'active',
-      }
-      prismaMock.user.findUnique.mockResolvedValue({
-        id: 'user-1',
-        stripeCustomerId: 'cus_test_123',
-      })
-      prismaMock.token.findFirst.mockResolvedValue({
-        id: 'token-1',
-        userId: 'user-1',
-      })
-      prismaMock.$transaction.mockResolvedValue([])
-
-      await handleSubscriptionUpdated(subscription as never)
-
-      expect(prismaMock.user.findUnique).toHaveBeenCalledWith({
-        where: { stripeCustomerId: 'cus_test_123' },
-      })
-    })
-
-    it('should throw when customer object has no id (null customer)', async () => {
-      const subscription = {
-        id: 'sub_test_123',
-        customer: null,
-        status: 'active',
-      }
-
-      await expect(
-        handleSubscriptionUpdated(subscription as never),
-      ).rejects.toThrow('Erro ao processar webhook')
-    })
-  })
-
-  describe('handleSubscriptionDeleted — object customer', () => {
-    it('should resolve customerId when customer is an object with id', async () => {
-      const subscription = {
-        id: 'sub_test_123',
-        customer: { id: 'cus_test_123' },
-        current_period_end: Math.floor(Date.now() / 1000) + 86400,
-      }
-      prismaMock.user.findUnique.mockResolvedValue({
-        id: 'user-1',
-        email: 'user@test.com',
-        stripeCustomerId: 'cus_test_123',
-      })
-      prismaMock.token.findFirst.mockResolvedValue({
-        id: 'token-1',
-        userId: 'user-1',
-      })
-      prismaMock.token.update.mockResolvedValue({})
-
-      await handleSubscriptionDeleted(subscription as never)
-
-      expect(prismaMock.user.findUnique).toHaveBeenCalledWith({
-        where: { stripeCustomerId: 'cus_test_123' },
-      })
-    })
-
-    it('should throw when customer object has no id (null customer)', async () => {
-      const subscription = {
-        id: 'sub_test_123',
-        customer: null,
-        current_period_end: Math.floor(Date.now() / 1000) + 86400,
-      }
-
-      await expect(
-        handleSubscriptionDeleted(subscription as never),
-      ).rejects.toThrow('Erro ao processar webhook')
-    })
-  })
-
-  // =============================================
-  // Smoke tests — pontos de emissão de audit (Card 2.4)
-  // =============================================
-  // Garantia de contrato: os caminhos críticos de webhook emitem o evento
-  // forense correto. Não validamos payload completo (escopo do
-  // audit-service.test.ts); só que o evento disparou com a AuditAction certa.
-  describe('audit emissions', () => {
-    function emittedActions(): string[] {
-      return emitAuditEventMock.mock.calls.map(
-        (c) => (c[0] as { action: string }).action,
-      )
-    }
-
-    it('emite WEBHOOK_SIGNATURE_FAILED quando assinatura é inválida', async () => {
-      vi.mocked(constructWebhookEvent).mockImplementation(() => {
-        throw new Error('invalid signature')
-      })
-
-      await expect(
-        stripeWebhook(makeFastifyRequest(), makeFastifyReply()),
-      ).rejects.toThrow()
-
-      expect(emittedActions()).toContain(AuditAction.WEBHOOK_SIGNATURE_FAILED)
-    })
-
-    it('emite WEBHOOK_DUPLICATE quando stripeEvent.create dispara P2002', async () => {
-      const event = makeStripeEvent()
-      vi.mocked(constructWebhookEvent).mockReturnValue(event as never)
-      prismaMock.stripeEvent.create.mockRejectedValue(makeP2002Error())
-
-      await stripeWebhook(makeFastifyRequest(), makeFastifyReply())
-
-      expect(emittedActions()).toContain(AuditAction.WEBHOOK_DUPLICATE)
-    })
-
-    it('emite WEBHOOK_PROCESSED após processar evento novo com sucesso', async () => {
-      const event = makeStripeEvent({ type: 'customer.created' }) // rota default (sem handler de negócio)
-      vi.mocked(constructWebhookEvent).mockReturnValue(event as never)
-      prismaMock.stripeEvent.create.mockResolvedValue({
-        id: event.id,
-        type: event.type,
-        processedAt: new Date(),
-      })
-
-      await stripeWebhook(makeFastifyRequest(), makeFastifyReply())
-
-      expect(emittedActions()).toContain(AuditAction.WEBHOOK_PROCESSED)
-    })
-
-    it('emite ACCOUNT_CREATED quando handleCheckoutCompleted vê user novo', async () => {
-      prismaMock.user.findUnique.mockResolvedValue(null) // user não existe
       prismaMock.user.upsert.mockResolvedValue({
         id: 'user-new',
         email: 'newuser@test.com',
@@ -1207,16 +589,19 @@ describe('Webhook Idempotency (Card 1.1)', () => {
       prismaMock.token.findFirst.mockResolvedValue(null)
       prismaMock.token.create.mockResolvedValue({ id: 'tok-1' })
 
-      await handleCheckoutCompleted({
-        customer_email: 'newuser@test.com',
-        customer: 'cus_new',
-        subscription: 'sub_new',
-      } as never)
+      const result = await handleCheckoutCompleted(
+        {
+          customer_email: 'newuser@test.com',
+          customer: 'cus_new',
+          subscription: 'sub_new',
+        } as never,
+        tx,
+      )
 
-      expect(emittedActions()).toContain(AuditAction.ACCOUNT_CREATED)
+      expect(auditActions(result)).toContain(AuditAction.ACCOUNT_CREATED)
     })
 
-    it('emite ROLE_CHANGED quando handleCheckoutCompleted promove user FREE→PRO', async () => {
+    it('RETORNA audit ROLE_CHANGED ao promover user FREE→PRO (sem ACCOUNT_CREATED)', async () => {
       prismaMock.user.findUnique.mockResolvedValue({
         id: 'user-existing',
         role: 'FREE',
@@ -1229,19 +614,21 @@ describe('Webhook Idempotency (Card 1.1)', () => {
       prismaMock.token.findFirst.mockResolvedValue(null)
       prismaMock.token.create.mockResolvedValue({ id: 'tok-1' })
 
-      await handleCheckoutCompleted({
-        customer_email: 'existing@test.com',
-        customer: 'cus_existing',
-        subscription: 'sub_existing',
-      } as never)
+      const result = await handleCheckoutCompleted(
+        {
+          customer_email: 'existing@test.com',
+          customer: 'cus_existing',
+          subscription: 'sub_existing',
+        } as never,
+        tx,
+      )
 
-      const actions = emittedActions()
+      const actions = auditActions(result)
       expect(actions).toContain(AuditAction.ROLE_CHANGED)
-      // Idempotência: se user já era PRO, NÃO emite ACCOUNT_CREATED.
       expect(actions).not.toContain(AuditAction.ACCOUNT_CREATED)
     })
 
-    it('NÃO emite ROLE_CHANGED quando user existente já é PRO (idempotência)', async () => {
+    it('NÃO retorna audit de privilégio quando user já era PRO (idempotência)', async () => {
       prismaMock.user.findUnique.mockResolvedValue({
         id: 'user-pro',
         role: 'PRO',
@@ -1254,18 +641,31 @@ describe('Webhook Idempotency (Card 1.1)', () => {
       prismaMock.token.findFirst.mockResolvedValue(null)
       prismaMock.token.create.mockResolvedValue({ id: 'tok-1' })
 
-      await handleCheckoutCompleted({
-        customer_email: 'pro@test.com',
-        customer: 'cus_pro',
-        subscription: 'sub_pro',
-      } as never)
+      const result = await handleCheckoutCompleted(
+        {
+          customer_email: 'pro@test.com',
+          customer: 'cus_pro',
+          subscription: 'sub_pro',
+        } as never,
+        tx,
+      )
 
-      const actions = emittedActions()
+      const actions = auditActions(result)
       expect(actions).not.toContain(AuditAction.ROLE_CHANGED)
       expect(actions).not.toContain(AuditAction.ACCOUNT_CREATED)
     })
+  })
 
-    it('emite ROLE_CHANGED em handleSubscriptionUpdated quando role muda', async () => {
+  // ===========================================
+  // handleSubscriptionUpdated — writes sequenciais via tx
+  // ===========================================
+  describe('handleSubscriptionUpdated', () => {
+    it('atualiza token e role via tx.token.update + tx.user.update (sem $transaction interno)', async () => {
+      const subscription = {
+        id: 'sub_test_123',
+        customer: 'cus_test_123',
+        status: 'active',
+      }
       prismaMock.user.findUnique.mockResolvedValue({
         id: 'user-1',
         role: 'PRO',
@@ -1275,27 +675,275 @@ describe('Webhook Idempotency (Card 1.1)', () => {
         id: 'token-1',
         userId: 'user-1',
       })
-      prismaMock.$transaction.mockResolvedValue([])
+      prismaMock.token.update.mockResolvedValue({})
+      prismaMock.user.update.mockResolvedValue({})
 
-      // status incomplete_expired força userRole='FREE' → downgrade vs user.role='PRO'
-      await handleSubscriptionUpdated({
-        id: 'sub_test_123',
-        customer: 'cus_test_123',
-        status: 'incomplete_expired',
-      } as never)
+      await handleSubscriptionUpdated(subscription as never, tx)
 
-      const roleChanged = emitAuditEventMock.mock.calls.find(
-        (c) => (c[0] as { action: string }).action === AuditAction.ROLE_CHANGED,
+      // Writes sequenciais — NÃO mais batch $transaction.
+      expect(prismaMock.$transaction).not.toHaveBeenCalled()
+      expect(prismaMock.token.update).toHaveBeenCalledTimes(1)
+      expect(prismaMock.user.update).toHaveBeenCalledTimes(1)
+    })
+
+    it('lança quando o customer não é encontrado', async () => {
+      prismaMock.user.findUnique.mockResolvedValue(null)
+
+      await expect(
+        handleSubscriptionUpdated(
+          {
+            id: 'sub_test_123',
+            customer: 'cus_unknown',
+            status: 'active',
+          } as never,
+          tx,
+        ),
+      ).rejects.toThrow('Erro ao processar webhook')
+    })
+
+    it('lança quando o token não é encontrado para o user', async () => {
+      prismaMock.user.findUnique.mockResolvedValue({
+        id: 'user-1',
+        role: 'PRO',
+        stripeCustomerId: 'cus_test_123',
+      })
+      prismaMock.token.findFirst.mockResolvedValue(null)
+
+      await expect(
+        handleSubscriptionUpdated(
+          {
+            id: 'sub_test_123',
+            customer: 'cus_test_123',
+            status: 'active',
+          } as never,
+          tx,
+        ),
+      ).rejects.toThrow('Erro ao processar webhook')
+    })
+
+    it('status canceled → token CANCELLED mantendo role PRO (período de graça)', async () => {
+      prismaMock.user.findUnique.mockResolvedValue({
+        id: 'user-1',
+        role: 'PRO',
+        stripeCustomerId: 'cus_test_123',
+      })
+      prismaMock.token.findFirst.mockResolvedValue({
+        id: 'token-1',
+        userId: 'user-1',
+      })
+      prismaMock.token.update.mockResolvedValue({})
+      prismaMock.user.update.mockResolvedValue({})
+
+      await handleSubscriptionUpdated(
+        {
+          id: 'sub_test_123',
+          customer: 'cus_test_123',
+          status: 'canceled',
+        } as never,
+        tx,
+      )
+
+      expect(prismaMock.token.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ status: 'CANCELLED' }),
+        }),
+      )
+      expect(prismaMock.user.update).toHaveBeenCalledWith(
+        expect.objectContaining({ data: { role: 'PRO' } }),
+      )
+    })
+
+    it('status past_due → ACTIVE com expiresAt = current_period_end', async () => {
+      const periodEnd = Math.floor(Date.now() / 1000) + 86400
+      prismaMock.user.findUnique.mockResolvedValue({
+        id: 'user-1',
+        role: 'PRO',
+        stripeCustomerId: 'cus_test_123',
+      })
+      prismaMock.token.findFirst.mockResolvedValue({
+        id: 'token-1',
+        userId: 'user-1',
+      })
+      prismaMock.token.update.mockResolvedValue({})
+      prismaMock.user.update.mockResolvedValue({})
+
+      await handleSubscriptionUpdated(
+        {
+          id: 'sub_test_123',
+          customer: 'cus_test_123',
+          status: 'past_due',
+          current_period_end: periodEnd,
+        } as never,
+        tx,
+      )
+
+      expect(prismaMock.token.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            status: 'ACTIVE',
+            expiresAt: new Date(periodEnd * 1000),
+          }),
+        }),
+      )
+    })
+
+    it('status unpaid → mesma lógica de past_due (ACTIVE + expiresAt)', async () => {
+      const periodEnd = Math.floor(Date.now() / 1000) + 86400
+      prismaMock.user.findUnique.mockResolvedValue({
+        id: 'user-1',
+        role: 'PRO',
+        stripeCustomerId: 'cus_test_123',
+      })
+      prismaMock.token.findFirst.mockResolvedValue({
+        id: 'token-1',
+        userId: 'user-1',
+      })
+      prismaMock.token.update.mockResolvedValue({})
+      prismaMock.user.update.mockResolvedValue({})
+
+      await handleSubscriptionUpdated(
+        {
+          id: 'sub_test_123',
+          customer: 'cus_test_123',
+          status: 'unpaid',
+          current_period_end: periodEnd,
+        } as never,
+        tx,
+      )
+
+      expect(prismaMock.token.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            status: 'ACTIVE',
+            expiresAt: new Date(periodEnd * 1000),
+          }),
+        }),
+      )
+    })
+
+    it('status past_due sem current_period_end → expiresAt null', async () => {
+      prismaMock.user.findUnique.mockResolvedValue({
+        id: 'user-1',
+        role: 'PRO',
+        stripeCustomerId: 'cus_test_123',
+      })
+      prismaMock.token.findFirst.mockResolvedValue({
+        id: 'token-1',
+        userId: 'user-1',
+      })
+      prismaMock.token.update.mockResolvedValue({})
+      prismaMock.user.update.mockResolvedValue({})
+
+      await handleSubscriptionUpdated(
+        {
+          id: 'sub_test_123',
+          customer: 'cus_test_123',
+          status: 'past_due',
+        } as never,
+        tx,
+      )
+
+      expect(prismaMock.token.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ status: 'ACTIVE', expiresAt: null }),
+        }),
+      )
+    })
+
+    it('status trialing → ACTIVE + role PRO', async () => {
+      prismaMock.user.findUnique.mockResolvedValue({
+        id: 'user-1',
+        role: 'PRO',
+        stripeCustomerId: 'cus_test_123',
+      })
+      prismaMock.token.findFirst.mockResolvedValue({
+        id: 'token-1',
+        userId: 'user-1',
+      })
+      prismaMock.token.update.mockResolvedValue({})
+      prismaMock.user.update.mockResolvedValue({})
+
+      await handleSubscriptionUpdated(
+        {
+          id: 'sub_test_123',
+          customer: 'cus_test_123',
+          status: 'trialing',
+        } as never,
+        tx,
+      )
+
+      expect(prismaMock.token.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ status: 'ACTIVE' }),
+        }),
+      )
+      expect(prismaMock.user.update).toHaveBeenCalledWith(
+        expect.objectContaining({ data: { role: 'PRO' } }),
+      )
+    })
+
+    it('status incomplete_expired → EXPIRED + role FREE', async () => {
+      prismaMock.user.findUnique.mockResolvedValue({
+        id: 'user-1',
+        role: 'PRO',
+        stripeCustomerId: 'cus_test_123',
+      })
+      prismaMock.token.findFirst.mockResolvedValue({
+        id: 'token-1',
+        userId: 'user-1',
+      })
+      prismaMock.token.update.mockResolvedValue({})
+      prismaMock.user.update.mockResolvedValue({})
+
+      await handleSubscriptionUpdated(
+        {
+          id: 'sub_test_123',
+          customer: 'cus_test_123',
+          status: 'incomplete_expired',
+        } as never,
+        tx,
+      )
+
+      expect(prismaMock.token.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ status: 'EXPIRED' }),
+        }),
+      )
+      expect(prismaMock.user.update).toHaveBeenCalledWith(
+        expect.objectContaining({ data: { role: 'FREE' } }),
+      )
+    })
+
+    it('RETORNA audit ROLE_CHANGED com from/to quando o role muda (downgrade)', async () => {
+      prismaMock.user.findUnique.mockResolvedValue({
+        id: 'user-1',
+        role: 'PRO',
+        stripeCustomerId: 'cus_test_123',
+      })
+      prismaMock.token.findFirst.mockResolvedValue({
+        id: 'token-1',
+        userId: 'user-1',
+      })
+      prismaMock.token.update.mockResolvedValue({})
+      prismaMock.user.update.mockResolvedValue({})
+
+      const result = await handleSubscriptionUpdated(
+        {
+          id: 'sub_test_123',
+          customer: 'cus_test_123',
+          status: 'incomplete_expired',
+        } as never,
+        tx,
+      )
+
+      const roleChanged = (result.audits ?? []).find(
+        (a) => a.action === AuditAction.ROLE_CHANGED,
       )
       expect(roleChanged).toBeDefined()
-      const input = roleChanged![0] as { metadata?: Record<string, unknown> }
-      expect(input.metadata).toMatchObject({
-        from: 'PRO',
-        to: 'FREE',
-      })
+      expect(roleChanged?.metadata).toMatchObject({ from: 'PRO', to: 'FREE' })
     })
 
-    it('NÃO emite ROLE_CHANGED em handleSubscriptionUpdated quando role não muda (webhook retry)', async () => {
+    it('NÃO retorna ROLE_CHANGED quando o role não muda (retry idempotente)', async () => {
       prismaMock.user.findUnique.mockResolvedValue({
         id: 'user-1',
         role: 'PRO',
@@ -1305,41 +953,263 @@ describe('Webhook Idempotency (Card 1.1)', () => {
         id: 'token-1',
         userId: 'user-1',
       })
-      prismaMock.$transaction.mockResolvedValue([])
+      prismaMock.token.update.mockResolvedValue({})
+      prismaMock.user.update.mockResolvedValue({})
 
-      await handleSubscriptionUpdated({
-        id: 'sub_test_123',
-        customer: 'cus_test_123',
-        status: 'active', // user já é PRO, role='PRO' igual
-      } as never)
+      const result = await handleSubscriptionUpdated(
+        {
+          id: 'sub_test_123',
+          customer: 'cus_test_123',
+          status: 'active',
+        } as never,
+        tx,
+      )
 
-      expect(emittedActions()).not.toContain(AuditAction.ROLE_CHANGED)
+      expect(auditActions(result)).not.toContain(AuditAction.ROLE_CHANGED)
     })
 
-    it('emite PAYMENT_FAILED em handlePaymentFailed com invoiceId nos metadados', async () => {
+    it('resolve customerId quando customer vem como objeto', async () => {
+      prismaMock.user.findUnique.mockResolvedValue({
+        id: 'user-1',
+        role: 'PRO',
+        stripeCustomerId: 'cus_test_123',
+      })
+      prismaMock.token.findFirst.mockResolvedValue({
+        id: 'token-1',
+        userId: 'user-1',
+      })
+      prismaMock.token.update.mockResolvedValue({})
+      prismaMock.user.update.mockResolvedValue({})
+
+      await handleSubscriptionUpdated(
+        {
+          id: 'sub_test_123',
+          customer: { id: 'cus_test_123' },
+          status: 'active',
+        } as never,
+        tx,
+      )
+
+      expect(prismaMock.user.findUnique).toHaveBeenCalledWith({
+        where: { stripeCustomerId: 'cus_test_123' },
+      })
+    })
+
+    it('lança quando customer é null (sem customerId extraível)', async () => {
+      await expect(
+        handleSubscriptionUpdated(
+          { id: 'sub_test_123', customer: null, status: 'active' } as never,
+          tx,
+        ),
+      ).rejects.toThrow('Erro ao processar webhook')
+    })
+  })
+
+  // ===========================================
+  // handleSubscriptionDeleted — retorna email de cancelamento
+  // ===========================================
+  describe('handleSubscriptionDeleted', () => {
+    it('marca token CANCELLED e RETORNA email de cancelamento', async () => {
+      const subscription = {
+        id: 'sub_test_123',
+        customer: 'cus_test_123',
+        status: 'canceled',
+        current_period_end: Math.floor(Date.now() / 1000) + 86400,
+      }
+      prismaMock.user.findUnique.mockResolvedValue({
+        id: 'user-1',
+        email: 'user@test.com',
+        stripeCustomerId: 'cus_test_123',
+      })
+      prismaMock.token.findFirst.mockResolvedValue({
+        id: 'token-1',
+        userId: 'user-1',
+      })
+      prismaMock.token.update.mockResolvedValue({
+        id: 'token-1',
+        status: 'CANCELLED',
+      })
+
+      const result = await handleSubscriptionDeleted(subscription as never, tx)
+
+      expect(prismaMock.token.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 'token-1' },
+          data: expect.objectContaining({ status: 'CANCELLED' }),
+        }),
+      )
+      expect(result.emails).toHaveLength(1)
+      expect(sendCancellationEmail).not.toHaveBeenCalled()
+      await runEmails(result)
+      expect(sendCancellationEmail).toHaveBeenCalledWith(
+        expect.objectContaining({ to: 'user@test.com' }),
+      )
+    })
+
+    it('lança quando user não encontrado', async () => {
+      prismaMock.user.findUnique.mockResolvedValue(null)
+
+      await expect(
+        handleSubscriptionDeleted(
+          {
+            id: 'sub_test_123',
+            customer: 'cus_unknown',
+            current_period_end: Math.floor(Date.now() / 1000) + 86400,
+          } as never,
+          tx,
+        ),
+      ).rejects.toThrow('Erro ao processar webhook')
+    })
+
+    it('lança quando token não encontrado', async () => {
+      prismaMock.user.findUnique.mockResolvedValue({
+        id: 'user-1',
+        email: 'user@test.com',
+        stripeCustomerId: 'cus_test_123',
+      })
+      prismaMock.token.findFirst.mockResolvedValue(null)
+
+      await expect(
+        handleSubscriptionDeleted(
+          {
+            id: 'sub_test_123',
+            customer: 'cus_test_123',
+            current_period_end: Math.floor(Date.now() / 1000) + 86400,
+          } as never,
+          tx,
+        ),
+      ).rejects.toThrow('Erro ao processar webhook')
+    })
+
+    it('usa data atual como gracePeriodEnd quando current_period_end ausente', async () => {
+      prismaMock.user.findUnique.mockResolvedValue({
+        id: 'user-1',
+        email: 'user@test.com',
+        stripeCustomerId: 'cus_test_123',
+      })
+      prismaMock.token.findFirst.mockResolvedValue({
+        id: 'token-1',
+        userId: 'user-1',
+      })
+      prismaMock.token.update.mockResolvedValue({})
+
+      await handleSubscriptionDeleted(
+        { id: 'sub_test_123', customer: 'cus_test_123' } as never,
+        tx,
+      )
+
+      const updateCall = prismaMock.token.update.mock.calls[0]![0] as {
+        data: { expiresAt: unknown }
+      }
+      expect(updateCall.data.expiresAt).toBeInstanceOf(Date)
+    })
+
+    it('resolve customerId quando customer vem como objeto', async () => {
+      prismaMock.user.findUnique.mockResolvedValue({
+        id: 'user-1',
+        email: 'user@test.com',
+        stripeCustomerId: 'cus_test_123',
+      })
+      prismaMock.token.findFirst.mockResolvedValue({
+        id: 'token-1',
+        userId: 'user-1',
+      })
+      prismaMock.token.update.mockResolvedValue({})
+
+      await handleSubscriptionDeleted(
+        {
+          id: 'sub_test_123',
+          customer: { id: 'cus_test_123' },
+          current_period_end: Math.floor(Date.now() / 1000) + 86400,
+        } as never,
+        tx,
+      )
+
+      expect(prismaMock.user.findUnique).toHaveBeenCalledWith({
+        where: { stripeCustomerId: 'cus_test_123' },
+      })
+    })
+
+    it('lança quando customer é null', async () => {
+      await expect(
+        handleSubscriptionDeleted(
+          {
+            id: 'sub_test_123',
+            customer: null,
+            current_period_end: Math.floor(Date.now() / 1000) + 86400,
+          } as never,
+          tx,
+        ),
+      ).rejects.toThrow('Erro ao processar webhook')
+    })
+  })
+
+  // ===========================================
+  // handlePaymentFailed — retorna audit + email
+  // ===========================================
+  describe('handlePaymentFailed', () => {
+    it('RETORNA audit PAYMENT_FAILED (success:false) + email de cobrança recusada', async () => {
       prismaMock.user.findUnique.mockResolvedValue({
         id: 'user-1',
         email: 'user@test.com',
         stripeCustomerId: 'cus_test_123',
       })
 
-      await handlePaymentFailed({
-        id: 'in_test_123',
-        customer: 'cus_test_123',
-      } as never)
-
-      const call = emitAuditEventMock.mock.calls.find(
-        (c) =>
-          (c[0] as { action: string }).action === AuditAction.PAYMENT_FAILED,
+      const result = await handlePaymentFailed(
+        { id: 'in_test_123', customer: 'cus_test_123' } as never,
+        tx,
       )
-      expect(call).toBeDefined()
-      const input = call![0] as {
-        metadata?: Record<string, unknown>
-        success: boolean
-      }
-      expect(input.success).toBe(false)
-      expect(input.metadata?.invoiceId).toBe('in_test_123')
-      expect(input.metadata?.customerId).toBe('cus_test_123')
+
+      const audit = (result.audits ?? []).find(
+        (a) => a.action === AuditAction.PAYMENT_FAILED,
+      )
+      expect(audit).toBeDefined()
+      expect(audit?.success).toBe(false)
+      expect(audit?.metadata).toMatchObject({
+        invoiceId: 'in_test_123',
+        customerId: 'cus_test_123',
+      })
+
+      expect(result.emails).toHaveLength(1)
+      expect(sendPaymentFailedEmail).not.toHaveBeenCalled()
+      await runEmails(result)
+      expect(sendPaymentFailedEmail).toHaveBeenCalledWith({
+        to: 'user@test.com',
+      })
+    })
+
+    it('lança quando customer não encontrado', async () => {
+      prismaMock.user.findUnique.mockResolvedValue(null)
+
+      await expect(
+        handlePaymentFailed(
+          { id: 'in_test_123', customer: 'cus_unknown' } as never,
+          tx,
+        ),
+      ).rejects.toThrow('Erro ao processar webhook')
+    })
+
+    it('resolve customerId quando customer vem como objeto', async () => {
+      prismaMock.user.findUnique.mockResolvedValue({
+        id: 'user-1',
+        email: 'user@test.com',
+        stripeCustomerId: 'cus_test_123',
+      })
+
+      await handlePaymentFailed(
+        { id: 'in_test_123', customer: { id: 'cus_test_123' } } as never,
+        tx,
+      )
+
+      expect(prismaMock.user.findUnique).toHaveBeenCalledWith({
+        where: { stripeCustomerId: 'cus_test_123' },
+      })
+    })
+
+    it('lança quando customer é null', async () => {
+      await expect(
+        handlePaymentFailed({ id: 'in_test_123', customer: null } as never, tx),
+      ).rejects.toThrow('Erro ao processar webhook')
     })
   })
 })
