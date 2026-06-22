@@ -595,11 +595,11 @@ describe('emitAuditEvent — falha de persistência', () => {
   })
 })
 
-describe('emitAuditEvent — cobertura dos 14 AuditAction', () => {
+describe('emitAuditEvent — cobertura dos 15 AuditAction', () => {
   const allActions = Object.values(AuditAction)
 
-  it('tem exatamente 14 eventos (11 iniciais + FINGERPRINT_MISMATCH + ACCOUNT_CREATED + ROLE_CHANGED)', () => {
-    expect(allActions).toHaveLength(14)
+  it('tem exatamente 15 eventos (11 iniciais + FINGERPRINT_MISMATCH + ACCOUNT_CREATED + ROLE_CHANGED + PROCESS_DOWNLOAD)', () => {
+    expect(allActions).toHaveLength(15)
   })
 
   for (const action of Object.values(AuditAction)) {

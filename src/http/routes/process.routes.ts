@@ -5,12 +5,14 @@ import { rateLimitMiddleware } from '../../middleware/rate-limit.middleware'
 import * as processController from '../controllers/process.controller'
 import { processAsync } from '../controllers/process-async.controller'
 import { processStatus } from '../controllers/process-status.controller'
+import { processDownload } from '../controllers/process-download.controller'
 import { errorResponseSchema } from '../../modules/process/process.schema'
 import { processAsyncResponseSchema } from '../../modules/process/process-async.schema'
 import {
   processStatusParamsSchema,
   processStatusResponseSchema,
 } from '../../modules/process/process-status.schema'
+import { processDownloadParamsSchema } from '../../modules/process/process-download.schema'
 import { env } from '../../config/env'
 
 export async function processRoutes(app: FastifyInstance) {
@@ -160,6 +162,49 @@ Job de outro usuário ou inexistente → **404** (não 403, anti-enumeração).
         },
       },
       handler: processStatus,
+    })
+
+    // GET /process/download/:jobId — entrega única do output (Card 6.6). Mesmo
+    // dark launch. Stream via backend (D-4): claim atômico downloaded_at +
+    // remove output pós-entrega + audita. Ownership por userId → 404 anti-enum;
+    // já baixado → 410 Gone; não concluído → 409.
+    server.get('/download/:jobId', {
+      preHandler: [
+        rateLimitMiddleware.process,
+        authMiddleware,
+        requireRole('PRO'),
+      ],
+      schema: {
+        tags: ['Process'],
+        summary: 'Baixar o output de um job assíncrono (entrega única)',
+        description: `
+Entrega o arquivo unificado de um job \`COMPLETED\`, via backend (não signed-URL).
+
+**Entrega única:** o output é removido após o download. Uma 2ª chamada retorna
+**410 Gone**. Job não concluído → **409**; de outro usuário/inexistente → **404**.
+        `,
+        security: [{ bearerAuth: [] }],
+        produces: [
+          'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+          'text/csv',
+        ],
+        params: processDownloadParamsSchema,
+        response: {
+          400: errorResponseSchema,
+          401: errorResponseSchema,
+          403: errorResponseSchema,
+          404: errorResponseSchema,
+          409: errorResponseSchema,
+          410: errorResponseSchema,
+          429: errorResponseSchema,
+          // 500: storage indisponível / output em formato inconsistente /
+          // falha transiente ao recuperar o output (downloaded_at intacto →
+          // cliente PRO pode retentar). Declarado pro contrato/Swagger refletir
+          // os 3 ramos de internal() do controller.
+          500: errorResponseSchema,
+        },
+      },
+      handler: processDownload,
     })
   }
 }

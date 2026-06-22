@@ -22,6 +22,9 @@ export const ErrorCodes = {
   // Processamento assíncrono (Card 6.3 — LRO)
   QUEUE_UNAVAILABLE: 'QUEUE_UNAVAILABLE',
   IDEMPOTENCY_KEY_REQUIRED: 'IDEMPOTENCY_KEY_REQUIRED',
+  // Download de output async (Card 6.6 — entrega única)
+  JOB_NOT_READY: 'JOB_NOT_READY',
+  JOB_ALREADY_DOWNLOADED: 'JOB_ALREADY_DOWNLOADED',
 
   // Billing
   CHECKOUT_FAILED: 'CHECKOUT_FAILED',
@@ -130,6 +133,26 @@ export const Errors = {
     new AppError(ErrorCodes.JOB_NOT_FOUND, 'Job não encontrado', 404, {
       jobId,
     }),
+
+  // Download (Card 6.6): job ainda não está COMPLETED — 409 Conflict. Informa
+  // o status atual (o job é do próprio usuário; sem leak cross-tenant).
+  jobNotReady: (jobId: string, status: string) =>
+    new AppError(
+      ErrorCodes.JOB_NOT_READY,
+      'Job ainda não está pronto para download',
+      409,
+      { jobId, status },
+    ),
+
+  // Download (Card 6.6): output já foi baixado (entrega única) e removido —
+  // 410 Gone. Não é 404 (o recurso EXISTIU e foi conscientemente consumido).
+  jobAlreadyDownloaded: (jobId: string) =>
+    new AppError(
+      ErrorCodes.JOB_ALREADY_DOWNLOADED,
+      'O output já foi baixado (entrega única) e não está mais disponível',
+      410,
+      { jobId },
+    ),
 
   // Fila assíncrona indisponível (Card 6.3). 503 — Redis/BullMQ inalcançável
   // no enqueue. Distinto de PROCESSING_FAILED (erro no processamento em si):

@@ -93,6 +93,12 @@ export default defineConfig({
         // enfileira). Fecha o débito de gate apontado pelo @tester do 6.5: o
         // read path (6.5) estava gateado mas o write path (mais crítico) não.
         'src/http/controllers/process-async.controller.ts',
+        // Card 6.6 — controller do GET /process/download (entrega única). Claim
+        // atômico downloaded_at + remove output pós-entrega. 100% cobertura unit
+        // (stmts/branch/funcs/lines); a invariante de entrega única real (claim
+        // sob race + ownership) é provada no process-download.integration.test.ts
+        // contra Postgres. Fecha o fluxo LRO (status 6.5 → download 6.6).
+        'src/http/controllers/process-download.controller.ts',
       ],
       exclude: [
         // Entrypoints — testados via smoke/integration, não unitários
