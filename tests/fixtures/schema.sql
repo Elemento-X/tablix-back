@@ -139,15 +139,27 @@ CREATE TABLE "jobs" (
   "status"            "JobStatus"     NOT NULL DEFAULT 'PENDING',
   "input_files"       JSONB           NOT NULL,
   "output_file_url"   VARCHAR(500),
+  -- Card 6.3 (migration 20260621190000_card_6_3_jobs_async_expand): colunas
+  -- aditivas/nullable do caminho LRO. Mantidas em sync com prisma/schema.prisma
+  -- (model Job) e a migration aplicada. @tester Card 6.3 — fixture regen.
+  "output_format"     VARCHAR(8),
+  "output_size"       BIGINT,
   "error_message"     TEXT,
   "created_at"        TIMESTAMPTZ(3)  NOT NULL DEFAULT CURRENT_TIMESTAMP,
   "started_at"        TIMESTAMPTZ(3),
   "completed_at"      TIMESTAMPTZ(3),
+  "downloaded_at"     TIMESTAMPTZ(3),
+  "inputs_purged_at"  TIMESTAMPTZ(3),
+  "expires_at"        TIMESTAMPTZ(3),
   CONSTRAINT "jobs_pkey" PRIMARY KEY ("id"),
+  CONSTRAINT "jobs_output_format_check"
+    CHECK ("output_format" IS NULL OR "output_format" IN ('xlsx','csv')),
   CONSTRAINT "jobs_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "users"("id") ON UPDATE CASCADE ON DELETE CASCADE
 );
 CREATE INDEX "idx_jobs_user"   ON "jobs" ("user_id");
 CREATE INDEX "idx_jobs_status" ON "jobs" ("status");
+-- Índice parcial pro cleanup 6.7 (Card 6.3) — espelha o CONCURRENTLY de prod.
+CREATE INDEX "idx_jobs_expires_at" ON "jobs" ("expires_at") WHERE ("expires_at" IS NOT NULL);
 
 -- ----------------------------------------------------------------------------
 -- TABLE: stripe_events

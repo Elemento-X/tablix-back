@@ -1,3 +1,4 @@
+/* eslint-disable import/first */
 /**
  * Admin middleware tests — Card #145 (5.2a) F4 + WV-2026-006.
  *

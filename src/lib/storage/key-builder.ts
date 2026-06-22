@@ -194,3 +194,118 @@ export function buildUserPrefix(userId: string): UserScopedPath {
   // Trailing slash pra Supabase tratar como folder prefix
   return brand(`${userId}/`)
 }
+
+// ============================================
+// MULTI-INPUT (Card 6.2 — Fase 6 Fila Assíncrona)
+// ============================================
+
+/**
+ * Teto de índice de input por job (padding de 2 dígitos → `input-00`..`input-99`).
+ *
+ * **SSOT do limite de negócio é `PRO_LIMITS.maxInputFiles` (15)**, enforçado
+ * upstream no `/process/async` (Card 6.3). Aqui o teto serve só pra garantir
+ * que o NOME do arquivo nunca estoura o padding — desacopla o key-builder do
+ * config de planos mantendo-o uma lib pura. Se um plano futuro permitir >99
+ * inputs, ampliar o padding aqui.
+ */
+export const MAX_JOB_INPUT_INDEX = 99
+
+/**
+ * Deriva a chave de storage a partir do `Job.id` (UUID v4 com hífens).
+ *
+ * **D-5 (decisão fechada 2026-06-21):** `Job.id` é UUID (`8c7e...-...`), mas o
+ * `JOB_ID_REGEX` rejeita hífen (anti path-traversal). Em vez de afrouxar o
+ * regex, derivamos uma chave storage-safe removendo os hífens → 32 hex
+ * lowercase, que passa em `JOB_ID_REGEX` por construção. Determinístico e
+ * reversível só de forma posicional (não precisamos reverter — o `Job.id`
+ * canônico vive no DB).
+ *
+ * @throws Error com `storageError` INVALID_JOB_ID se não for UUID v4.
+ */
+export function toStorageJobKey(jobId: string): string {
+  if (typeof jobId !== 'string' || !UUID_V4_REGEX.test(jobId)) {
+    throwStorageError({
+      code: 'INVALID_JOB_ID',
+      message: 'jobId must be a valid UUID v4 to derive a storage key',
+    })
+  }
+  return jobId.replace(/-/g, '')
+}
+
+/**
+ * Valida o índice de input (inteiro em `[0, MAX_JOB_INPUT_INDEX]`).
+ */
+function assertValidInputIndex(index: number): void {
+  if (!Number.isInteger(index) || index < 0 || index > MAX_JOB_INPUT_INDEX) {
+    throwStorageError({
+      code: 'INVALID_JOB_ID',
+      message: `input index must be an integer in [0, ${MAX_JOB_INPUT_INDEX}]`,
+    })
+  }
+}
+
+/**
+ * Monta o path de um arquivo de INPUT de um job async.
+ *
+ * Pattern: `{userId}/{yyyy-mm-dd UTC}/{jobKey}/input-{NN}.{ext}`
+ *
+ * **G-3 (subpasta por job):** um job tem N inputs; agrupá-los numa subpasta
+ * própria (`{jobKey}/`) evita colisão e permite ao cleanup (Card 6.7) e ao
+ * purge LGPD (Card #146) deletarem o prefixo inteiro do job de uma vez.
+ *
+ * @throws Error com `storageError` se algum input inválido.
+ */
+export function buildJobInputPath(args: {
+  userId: string
+  /** `Job.id` UUID — derivado pra jobKey internamente (D-5). */
+  jobId: string
+  /** Índice 0-based do input dentro do job. */
+  index: number
+  ext: AllowedExtension
+  /** Injetar `Date` pra teste determinístico. Default: `new Date()`. */
+  now?: Date
+}): UserScopedPath {
+  assertValidUserId(args.userId)
+  assertValidExtension(args.ext)
+  assertValidInputIndex(args.index)
+  const jobKey = toStorageJobKey(args.jobId)
+
+  // Defesa em profundidade — paranoia justificada em key builder
+  assertNoPathTraversal(args.userId)
+  assertNoPathTraversal(jobKey)
+  assertNoPathTraversal(args.ext)
+
+  const datePart = formatUtcDate(args.now)
+  const idx = args.index.toString().padStart(2, '0')
+  return brand(`${args.userId}/${datePart}/${jobKey}/input-${idx}.${args.ext}`)
+}
+
+/**
+ * Monta o path do arquivo de OUTPUT (resultado da unificação) de um job async.
+ *
+ * Pattern: `{userId}/{yyyy-mm-dd UTC}/{jobKey}/output.{ext}`
+ *
+ * Caminho fixo por job — o download (Card 6.6) localiza o output sem precisar
+ * de índice.
+ *
+ * @throws Error com `storageError` se algum input inválido.
+ */
+export function buildJobOutputPath(args: {
+  userId: string
+  /** `Job.id` UUID — derivado pra jobKey internamente (D-5). */
+  jobId: string
+  ext: AllowedExtension
+  /** Injetar `Date` pra teste determinístico. Default: `new Date()`. */
+  now?: Date
+}): UserScopedPath {
+  assertValidUserId(args.userId)
+  assertValidExtension(args.ext)
+  const jobKey = toStorageJobKey(args.jobId)
+
+  assertNoPathTraversal(args.userId)
+  assertNoPathTraversal(jobKey)
+  assertNoPathTraversal(args.ext)
+
+  const datePart = formatUtcDate(args.now)
+  return brand(`${args.userId}/${datePart}/${jobKey}/output.${args.ext}`)
+}

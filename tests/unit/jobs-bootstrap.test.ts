@@ -19,6 +19,9 @@ const { registerCronJobMock, envMock } = vi.hoisted(() => ({
   envMock: {
     HISTORY_FEATURE_ENABLED: false,
     CRON_PURGE_ENABLED: false,
+    // Card 6.7: gate dedicado dos crons de cleanup async.
+    ASYNC_PROCESSING_ENABLED: false,
+    CRON_JOBS_CLEANUP_ENABLED: false,
   },
 }))
 
@@ -38,6 +41,10 @@ vi.mock('../../src/jobs/dead-letter-reprocess.job', () => ({
 vi.mock('../../src/jobs/quota-alert.job', () => ({
   scanUsageAndAlert: vi.fn(),
 }))
+vi.mock('../../src/jobs/async-cleanup.job', () => ({
+  sweepOrphanJobs: vi.fn(),
+  purgeAsyncJobStorage: vi.fn(),
+}))
 
 /* eslint-disable import/first */
 import { bootstrapCronJobs } from '../../src/scheduler/jobs.bootstrap'
@@ -47,12 +54,14 @@ beforeEach(() => {
   vi.clearAllMocks()
   envMock.HISTORY_FEATURE_ENABLED = false
   envMock.CRON_PURGE_ENABLED = false
+  envMock.ASYNC_PROCESSING_ENABLED = false
+  envMock.CRON_JOBS_CLEANUP_ENABLED = false
 })
 
-describe('bootstrapCronJobs — registra 4 jobs', () => {
-  it('chama registerCronJob 4 vezes', () => {
+describe('bootstrapCronJobs — registra 6 jobs', () => {
+  it('chama registerCronJob 6 vezes', () => {
     bootstrapCronJobs()
-    expect(registerCronJobMock).toHaveBeenCalledTimes(4)
+    expect(registerCronJobMock).toHaveBeenCalledTimes(6)
   })
 
   it('registra history-purge com schedule 06:00 UTC (= 03:00 BRT) + TTL 30min', () => {
@@ -97,37 +106,85 @@ describe('bootstrapCronJobs — registra 4 jobs', () => {
     expect(quota.lockTtlMs).toBe(10 * 60 * 1000)
     expect(quota.idempotent).toBe(true)
   })
+
+  it('registra async-job-sweeper a cada 5min + TTL 4min (Card 6.7 / #197)', () => {
+    bootstrapCronJobs()
+    const calls = registerCronJobMock.mock.calls.map((c) => c[0])
+    const sweeper = calls.find((c) => c.name === 'async-job-sweeper')
+    expect(sweeper).toBeDefined()
+    expect(sweeper.schedule).toBe('*/5 * * * *')
+    expect(sweeper.lockTtlMs).toBe(4 * 60 * 1000)
+    expect(sweeper.idempotent).toBe(true)
+  })
+
+  it('registra async-storage-cleanup 12:00 UTC (= 09:00 BRT daily) + TTL 15min (Card 6.7)', () => {
+    // 12:00 UTC (não 11:00) pra escalonar vs quota-alert (11:00) — @devops BAIXO.
+    bootstrapCronJobs()
+    const calls = registerCronJobMock.mock.calls.map((c) => c[0])
+    const storage = calls.find((c) => c.name === 'async-storage-cleanup')
+    expect(storage).toBeDefined()
+    expect(storage.schedule).toBe('0 12 * * *')
+    expect(storage.lockTtlMs).toBe(15 * 60 * 1000)
+    expect(storage.idempotent).toBe(true)
+  })
 })
 
 describe('bootstrapCronJobs — kill-switch gate', () => {
-  it('enabled=false quando HISTORY_FEATURE_ENABLED=false', () => {
+  /** Helper: mapa name→enabled das chamadas. */
+  function enabledByName(): Record<string, boolean> {
+    return Object.fromEntries(
+      registerCronJobMock.mock.calls.map((c) => [c[0].name, c[0].enabled]),
+    )
+  }
+  const LGPD_JOBS = [
+    'history-purge',
+    'cron-runs-cleanup',
+    'dead-letter-reprocess',
+    'quota-alert',
+  ]
+  const ASYNC_JOBS = ['async-job-sweeper', 'async-storage-cleanup']
+
+  it('jobs LGPD: enabled=false quando HISTORY_FEATURE_ENABLED=false', () => {
     envMock.HISTORY_FEATURE_ENABLED = false
     envMock.CRON_PURGE_ENABLED = true
     bootstrapCronJobs()
-    const enabledStates = registerCronJobMock.mock.calls.map(
-      (c) => c[0].enabled,
-    )
-    expect(enabledStates).toEqual([false, false, false, false])
+    const map = enabledByName()
+    LGPD_JOBS.forEach((j) => expect(map[j]).toBe(false))
   })
 
-  it('enabled=false quando CRON_PURGE_ENABLED=false', () => {
+  it('jobs LGPD: enabled=false quando CRON_PURGE_ENABLED=false', () => {
     envMock.HISTORY_FEATURE_ENABLED = true
     envMock.CRON_PURGE_ENABLED = false
     bootstrapCronJobs()
-    const enabledStates = registerCronJobMock.mock.calls.map(
-      (c) => c[0].enabled,
-    )
-    expect(enabledStates).toEqual([false, false, false, false])
+    const map = enabledByName()
+    LGPD_JOBS.forEach((j) => expect(map[j]).toBe(false))
   })
 
-  it('enabled=true quando AMBOS HISTORY_FEATURE_ENABLED+CRON_PURGE_ENABLED=true', () => {
+  it('jobs LGPD: enabled=true quando AMBOS HISTORY+CRON_PURGE=true', () => {
     envMock.HISTORY_FEATURE_ENABLED = true
     envMock.CRON_PURGE_ENABLED = true
     bootstrapCronJobs()
-    const enabledStates = registerCronJobMock.mock.calls.map(
-      (c) => c[0].enabled,
-    )
-    expect(enabledStates).toEqual([true, true, true, true])
+    const map = enabledByName()
+    LGPD_JOBS.forEach((j) => expect(map[j]).toBe(true))
+  })
+
+  it('jobs async: gate DEDICADO (ASYNC_PROCESSING_ENABLED && CRON_JOBS_CLEANUP_ENABLED), independente do gate LGPD', () => {
+    // LGPD on, async off → async jobs ficam false (gates desacoplados).
+    envMock.HISTORY_FEATURE_ENABLED = true
+    envMock.CRON_PURGE_ENABLED = true
+    envMock.ASYNC_PROCESSING_ENABLED = true
+    envMock.CRON_JOBS_CLEANUP_ENABLED = false
+    bootstrapCronJobs()
+    let map = enabledByName()
+    ASYNC_JOBS.forEach((j) => expect(map[j]).toBe(false))
+
+    // AMBOS async on → async jobs true.
+    vi.clearAllMocks()
+    envMock.ASYNC_PROCESSING_ENABLED = true
+    envMock.CRON_JOBS_CLEANUP_ENABLED = true
+    bootstrapCronJobs()
+    map = enabledByName()
+    ASYNC_JOBS.forEach((j) => expect(map[j]).toBe(true))
   })
 })
 
@@ -135,7 +192,7 @@ describe('bootstrapCronJobs — handlers ligados corretamente', () => {
   it('cada job tem handler function ligado (não undefined)', () => {
     bootstrapCronJobs()
     const handlers = registerCronJobMock.mock.calls.map((c) => c[0].handler)
-    expect(handlers).toHaveLength(4)
+    expect(handlers).toHaveLength(6)
     handlers.forEach((h) => {
       expect(typeof h).toBe('function')
     })

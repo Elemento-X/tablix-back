@@ -30,6 +30,14 @@ export const testEnv = {
   UPSTASH_REDIS_REST_URL: undefined,
   UPSTASH_REDIS_REST_TOKEN: undefined,
 
+  // Fila assíncrona / worker (Cards 6.2/6.3/6.4) — espelha env.ts.
+  // REDIS_URL undefined → fila degrada (dev/test sem async). Defaults dos demais
+  // batem com os do Zod em env.ts.
+  REDIS_URL: undefined,
+  ASYNC_PROCESSING_ENABLED: false,
+  ASYNC_JOB_TTL_HOURS: 24,
+  PROCESS_WORKER_TIMEOUT_MS: 300_000,
+
   // Stripe core
   STRIPE_SECRET_KEY: undefined,
   STRIPE_WEBHOOK_SECRET: undefined,

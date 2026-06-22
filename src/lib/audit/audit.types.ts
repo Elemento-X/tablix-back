@@ -94,6 +94,16 @@ export const AuditAction = {
    * de motivo (o controller emite o FAILURE com metadata.reason genérico).
    */
   FINGERPRINT_MISMATCH: 'FINGERPRINT_MISMATCH',
+
+  // ========================================
+  // Process — acesso a output de job async (LGPD: quem baixou o quê e quando)
+  // ========================================
+  /**
+   * Download do output de um job async (Card 6.6). Entrega única — registra o
+   * acesso ao dado processado (forense LGPD). `success=false` quando a entrega
+   * falha após o claim (output ausente no Storage / erro de leitura).
+   */
+  PROCESS_DOWNLOAD: 'PROCESS_DOWNLOAD',
 } as const
 
 /**

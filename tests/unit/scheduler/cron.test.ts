@@ -1,3 +1,4 @@
+/* eslint-disable import/first */
 /**
  * Cron runner tests — Card #145 (5.2a) F4.
  *
@@ -259,7 +260,7 @@ describe('runJob — fim-a-fim com lockLost (heartbeat retorna false)', () => {
         // chamando direto: handler "longo" que dispararia interval.
         await lock.heartbeat()
         // Aguarda async tick pra setInterval IIFE setar lockLost
-        await new Promise((r) => setTimeout(r, 0))
+        await new Promise((resolve) => setTimeout(resolve, 0))
       }),
     })
     // Heartbeat real só roda dentro do setInterval — pra evitar dependência

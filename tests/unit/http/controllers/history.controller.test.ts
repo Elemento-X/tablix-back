@@ -1,3 +1,4 @@
+/* eslint-disable import/first */
 /**
  * History controller tests — Card #145 (5.2a) F3.
  *

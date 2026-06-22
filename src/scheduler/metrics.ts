@@ -45,6 +45,24 @@ import { env } from '../config/env'
 export type RunStatusLabel = 'success' | 'failure' | 'skipped' | 'expired'
 
 /**
+ * Métricas de gauge do cleanup async (Card 6.7). Bounded — exatamente 4 chaves,
+ * sem cardinality explosion:
+ *  - `orphan-reenqueued`: PENDING órfãos AUTO-CURADOS no último run (re-enfileirados
+ *    com sucesso). Spike = enqueue path quebrado, mas recuperável.
+ *  - `orphan-failed-refunded`: PENDING órfãos PERDIDOS no último run (FAILED +
+ *    estornados — TTL estourado / metadata inválida). Spike = serviço não prestado
+ *    ao cliente (sinal mais grave do #197; tem evento ALERTABLE dedicado).
+ *  - `stuck-processing`: jobs PROCESSING travados force-failed no último run (6.7b).
+ *  - `storage-purge-pending`: terminais com `inputs_purged_at IS NULL` ao fim do
+ *    último run do cleanup de Storage (6.7a). Converge a 0 em operação normal.
+ */
+export type AsyncCleanupMetric =
+  | 'orphan-reenqueued'
+  | 'orphan-failed-refunded'
+  | 'stuck-processing'
+  | 'storage-purge-pending'
+
+/**
  * Snapshot agregado dos counters/gauges. Stable shape — qualquer
  * mudança aqui é breaking change pro dashboard admin (DTO via
  * `scheduler/health.ts`).
@@ -108,6 +126,18 @@ export interface SchedulerMetricsSnapshot {
     count: number
     lastUpdatedAt: string
   }>
+
+  /**
+   * Gauges do cleanup async (Card 6.7). Atualizados ao fim de cada run dos crons
+   * `async-job-sweeper` (orphan-pending, stuck-processing) e
+   * `async-storage-cleanup` (storage-purge-pending). `lastUpdatedAt` detecta
+   * gauge stale (cron parado). Bounded — máx 4 entradas.
+   */
+  asyncCleanupCounts: Array<{
+    metric: AsyncCleanupMetric
+    count: number
+    lastUpdatedAt: string
+  }>
 }
 
 // ============================================
@@ -128,6 +158,10 @@ const purgePendingCount = new Map<
 >()
 const usersAboveThreshold = new Map<
   70 | 90,
+  { count: number; lastUpdatedAt: Date }
+>()
+const asyncCleanupCounts = new Map<
+  AsyncCleanupMetric,
   { count: number; lastUpdatedAt: Date }
 >()
 
@@ -212,6 +246,22 @@ export function setUsersAboveThreshold(
   })
 }
 
+/**
+ * Atualiza um gauge do cleanup async (Card 6.7). Chamado ao fim de cada run dos
+ * crons de sweeper/storage-cleanup. Rejeita NaN/negativo (mesma defesa dos
+ * outros setters). `lastUpdatedAt` permite detectar gauge stale.
+ */
+export function setAsyncCleanupCount(
+  metric: AsyncCleanupMetric,
+  count: number,
+): void {
+  if (!Number.isFinite(count) || count < 0) return
+  asyncCleanupCounts.set(metric, {
+    count: Math.floor(count),
+    lastUpdatedAt: new Date(),
+  })
+}
+
 // ============================================
 // SNAPSHOT (read-only)
 // ============================================
@@ -259,6 +309,13 @@ export function getSchedulerMetrics(): SchedulerMetricsSnapshot {
       lastUpdatedAt: entry.lastUpdatedAt.toISOString(),
     }))
 
+  const asyncCleanupList: SchedulerMetricsSnapshot['asyncCleanupCounts'] =
+    Array.from(asyncCleanupCounts.entries()).map(([metric, entry]) => ({
+      metric,
+      count: entry.count,
+      lastUpdatedAt: entry.lastUpdatedAt.toISOString(),
+    }))
+
   return {
     runsTotal: runsList,
     lockContentionTotal: lockContentionList,
@@ -267,6 +324,7 @@ export function getSchedulerMetrics(): SchedulerMetricsSnapshot {
     retentionDaysCurrent: env.PRO_RETENTION_DAYS,
     purgePendingCount: purgePendingList,
     usersAboveThreshold: usersAboveThresholdList,
+    asyncCleanupCounts: asyncCleanupList,
   }
 }
 
@@ -280,6 +338,7 @@ export const __testing = {
   lastDurationMs,
   purgePendingCount,
   usersAboveThreshold,
+  asyncCleanupCounts,
   resetForTests: () => {
     runsTotal.clear()
     lockContentionTotal.clear()
@@ -287,5 +346,6 @@ export const __testing = {
     lastDurationMs.clear()
     purgePendingCount.clear()
     usersAboveThreshold.clear()
+    asyncCleanupCounts.clear()
   },
 }

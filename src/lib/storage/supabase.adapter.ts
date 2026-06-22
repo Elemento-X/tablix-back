@@ -24,7 +24,9 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 import {
   ALLOWED_MIME_TYPES,
+  EXTENSION_TO_MIME,
   type AllowedExtension,
+  type AllowedMimeType,
   type StorageAdapter,
   type StorageError,
   type StorageObject,
@@ -32,10 +34,15 @@ import {
 } from './types'
 import {
   assertValidUserId,
+  buildJobInputPath,
+  buildJobOutputPath,
   buildUserPrefix,
   buildUserScopedPath,
 } from './key-builder'
-import { assertValidStoragePath } from './path-validator'
+import {
+  assertValidStoragePath,
+  extractExtensionFromValidPath,
+} from './path-validator'
 
 /**
  * Default signed URL TTL (5 minutos). Hard req #4 do @security:
@@ -144,6 +151,108 @@ export class SupabaseStorageAdapter implements StorageAdapter {
       throwStorageError({
         code: 'UPLOAD_FAILED',
         message: 'upload to storage failed',
+        cause: error.message,
+      })
+    }
+
+    return { path }
+  }
+
+  async uploadJobInput(args: {
+    userId: string
+    jobId: string
+    index: number
+    ext: AllowedExtension
+    buffer: Buffer
+    contentType: string
+    createdAt: Date
+  }): Promise<{ path: UserScopedPath }> {
+    // Hard req #5: validação de MIME no adapter (3a camada). Mesma defesa do
+    // uploadForUser contra config drift do bucket + erro upstream.
+    if (!(ALLOWED_MIME_TYPES as readonly string[]).includes(args.contentType)) {
+      throwStorageError({
+        code: 'INVALID_CONTENT_TYPE',
+        message: `contentType must be one of: ${ALLOWED_MIME_TYPES.join(', ')}`,
+      })
+    }
+
+    // Path por-input (G-3): {userId}/{date}/{jobKey}/input-NN.{ext}. Montado
+    // internamente — caller passa userId/jobId/index, nunca path raw. A data
+    // é ancorada em `createdAt` (SSOT, F-2) — NUNCA no relógio do upload.
+    const path = buildJobInputPath({
+      userId: args.userId,
+      jobId: args.jobId,
+      index: args.index,
+      ext: args.ext,
+      now: args.createdAt,
+    })
+
+    const { error } = await this.client.storage
+      .from(this.bucket)
+      .upload(path, args.buffer, {
+        contentType: args.contentType,
+        upsert: false, // rejeita overwrite — jobId+index colidente vira erro explícito
+      })
+
+    if (error) {
+      const isDuplicate = SUPABASE_ERROR_PATTERNS.alreadyExists.test(
+        error.message,
+      )
+      if (isDuplicate) {
+        throwStorageError({
+          code: 'OBJECT_ALREADY_EXISTS',
+          message: 'object already exists at the constructed input path',
+        })
+      }
+      throwStorageError({
+        code: 'UPLOAD_FAILED',
+        message: 'upload of job input to storage failed',
+        cause: error.message,
+      })
+    }
+
+    return { path }
+  }
+
+  async uploadJobOutput(args: {
+    userId: string
+    jobId: string
+    ext: AllowedExtension
+    buffer: Buffer
+    contentType: string
+    createdAt: Date
+  }): Promise<{ path: UserScopedPath }> {
+    // Hard req #5: validação de MIME no adapter (3a camada). Mesma defesa do
+    // uploadJobInput contra config drift do bucket + erro upstream.
+    if (!(ALLOWED_MIME_TYPES as readonly string[]).includes(args.contentType)) {
+      throwStorageError({
+        code: 'INVALID_CONTENT_TYPE',
+        message: `contentType must be one of: ${ALLOWED_MIME_TYPES.join(', ')}`,
+      })
+    }
+
+    // Path do output (G-3): {userId}/{date}/{jobKey}/output.{ext}, ancorado em
+    // createdAt (F-2). Montado internamente — caller passa userId/jobId/ext.
+    const path = buildJobOutputPath({
+      userId: args.userId,
+      jobId: args.jobId,
+      ext: args.ext,
+      now: args.createdAt,
+    })
+
+    const { error } = await this.client.storage
+      .from(this.bucket)
+      .upload(path, args.buffer, {
+        contentType: args.contentType,
+        // upsert:true (D-7): retry transiente do worker reescreve a própria
+        // saída no path determinístico — idempotente, sem OBJECT_ALREADY_EXISTS.
+        upsert: true,
+      })
+
+    if (error) {
+      throwStorageError({
+        code: 'UPLOAD_FAILED',
+        message: 'upload of job output to storage failed',
         cause: error.message,
       })
     }
@@ -276,6 +385,58 @@ export class SupabaseStorageAdapter implements StorageAdapter {
     // `data: []` (sem erro) = path não existia no Storage — idempotente.
     const deleted = Array.isArray(data) && data.length > 0
     return { deleted, notFound: !deleted }
+  }
+
+  /**
+   * Download de objeto por path (Card 6.2 — G-2). Buffer completo (decisão
+   * fechada: 30MB cabe com `concurrency=1`; parser não é streaming).
+   *
+   * Valida o path internamente (`assertValidStoragePath` — aceita forma sync
+   * legada e job-scoped async) ANTES de tocar o Storage. `contentType` é
+   * derivado da extensão do path, não do metadata do Blob.
+   *
+   * Not-found é ERRO (≠ `removeByPath`, que é idempotente): objeto que
+   * deveria existir sumiu → caller (worker / download endpoint) trata como
+   * falha (502/410). Mesmo contrato de `getSignedUrlForUser`.
+   */
+  async downloadByPath(
+    path: UserScopedPath | string,
+  ): Promise<{ buffer: Buffer; contentType: AllowedMimeType }> {
+    // Defesa em profundidade — narrowing pra UserScopedPath + rejeita shape
+    // inválido (path vindo do DB pode estar corrompido).
+    assertValidStoragePath(path)
+    const ext = extractExtensionFromValidPath(path)
+
+    const { data, error } = await this.client.storage
+      .from(this.bucket)
+      .download(path)
+
+    if (error || !data) {
+      // Sem `data` e sem mensagem reconhecível → tratar como not-found
+      // (Supabase 404 no download costuma vir como erro "Object not found").
+      const isNotFound = error
+        ? SUPABASE_ERROR_PATTERNS.notFound.test(error.message)
+        : true
+      if (isNotFound) {
+        throwStorageError({
+          code: 'OBJECT_NOT_FOUND',
+          message: 'object not found at the given path',
+        })
+      }
+      throwStorageError({
+        code: 'DOWNLOAD_FAILED',
+        message: 'failed to download object',
+        cause: error?.message,
+      })
+    }
+
+    // `data` é um Blob (supabase-js v2). `arrayBuffer()` materializa o
+    // conteúdo; `Buffer.from` copia pra Buffer do Node.
+    const arrayBuffer = await data.arrayBuffer()
+    return {
+      buffer: Buffer.from(arrayBuffer),
+      contentType: EXTENSION_TO_MIME[ext],
+    }
   }
 
   async listForUser(args: {

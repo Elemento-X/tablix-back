@@ -117,6 +117,11 @@ describe('rateLimitMiddleware — export shape', () => {
     'historyDeleteOne',
     'historyDeleteAll',
     'adminJobs',
+    // Card 6.3 — processamento assíncrono (LRO)
+    'processAsync',
+    'processAsyncGlobalCap', // anti denial-of-wallet em POST /process/async
+    // Card 6.5 — polling do status do job (GET /process/status/:jobId)
+    'processStatus',
   ] as const
 
   it('deve exportar todas as chaves esperadas', () => {

@@ -310,7 +310,7 @@ describe('completeIdempotentOperation', () => {
     // Lock inicial cria com TTL 86400s. Após gravação, o TTL restante deve
     // ser ≤ 86400s (não 86400 redondo). Garante que SET PX herdou PTTL real.
     await beginIdempotentOperation(baseParams)
-    await new Promise((r) => setTimeout(r, 20)) // simula tempo entre lock e complete
+    await new Promise((resolve) => setTimeout(resolve, 20)) // simula tempo entre lock e complete
     await completeIdempotentOperation({ ...baseParams, data: { x: 1 } })
 
     const completeSetCall = mockRedis.set.mock.calls[1]
