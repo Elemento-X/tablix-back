@@ -77,6 +77,14 @@ export const rateLimiters = {
   ),
   adminJobs: createLimiter(5, '1m', 'admin-jobs'),
   adminJobsGlobalCap: createLimiter(20, '1m', 'admin-jobs-global-cap'),
+  // Processamento assíncrono (Card 6.3):
+  // - processAsync: POST /process/async (5 req/min POR IP/USER) — cada job é
+  //   um processamento pago no worker + upload no Storage; limite estrito.
+  // - processAsyncGlobalCap: POST /process/async (30 req/min AGREGADO) — anti
+  //   denial-of-wallet. A fila BullMQ + worker + Storage têm custo; sem o cap,
+  //   N IPs × 5 enfileiramentos viram N×5 jobs pagos/min. Identifier fixo.
+  processAsync: createLimiter(5, '1m', 'process-async'),
+  processAsyncGlobalCap: createLimiter(30, '1m', 'process-async-global-cap'),
 } as const
 
 export type RateLimiterType = keyof typeof rateLimiters

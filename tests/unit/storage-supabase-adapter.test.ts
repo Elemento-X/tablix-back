@@ -607,3 +607,267 @@ describe('SupabaseStorageAdapter — cause sanitização em prod (fix-pack #3)',
     expect(captured?.storageError?.cause).toBe('debuggable error message')
   })
 })
+
+// ===========================================================================
+// uploadJobInput (Card 6.3, multi-input async) — wiring do F-2 no ADAPTER.
+//
+// Este é o ponto real onde `now: args.createdAt` é cabeado em buildJobInputPath.
+// O service prova que PASSA createdAt; o key-builder prova que buildJobInputPath
+// HONRA `now`; este bloco fecha o elo: o adapter ancora o path em createdAt e
+// NÃO no relógio do processo (a essência do F-2 — sem isso o worker/cleanup num
+// dia UTC distinto reconstruiria outro path → input órfão de PII).
+//
+// jobId DEVE ser UUID v4 (toStorageJobKey rejeita o formato cuid de VALID_JOB_ID).
+// ===========================================================================
+describe('SupabaseStorageAdapter — uploadJobInput (Card 6.3 / F-2)', () => {
+  const JOB_UUID = '8c7e1234-5678-4abc-89de-f01234567890'
+  const JOB_KEY = '8c7e123456784abc89def01234567890' // sem hífens (D-5)
+  const XLSX_MIME =
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+
+  it('sucesso: monta path por-input agrupado em subpasta do job + retorna { path }', async () => {
+    bucketAPI.upload.mockResolvedValue({ data: { path: 'mock' }, error: null })
+
+    const result = await adapter.uploadJobInput({
+      userId: VALID_USER_ID,
+      jobId: JOB_UUID,
+      index: 0,
+      ext: 'csv',
+      buffer: Buffer.from('a,b'),
+      contentType: 'text/csv',
+      createdAt: new Date('2026-06-21T10:00:00.000Z'),
+    })
+
+    expect(result.path).toBe(
+      `${VALID_USER_ID}/2026-06-21/${JOB_KEY}/input-00.csv`,
+    )
+    expect(bucketAPI.upload).toHaveBeenCalledWith(
+      result.path,
+      expect.any(Buffer),
+      expect.objectContaining({ upsert: false, contentType: 'text/csv' }),
+    )
+  })
+
+  it('F-2: ancora a data do path em createdAt, NÃO no relógio do processo', async () => {
+    bucketAPI.upload.mockResolvedValue({ data: { path: 'mock' }, error: null })
+    vi.useFakeTimers()
+    // Relógio do processo num dia diferente do createdAt — se o adapter usasse
+    // new Date() o path teria 2026-06-22; tem que permanecer 2026-06-21.
+    vi.setSystemTime(new Date('2026-06-22T23:59:00.000Z'))
+    try {
+      const result = await adapter.uploadJobInput({
+        userId: VALID_USER_ID,
+        jobId: JOB_UUID,
+        index: 3,
+        ext: 'csv',
+        buffer: Buffer.from('x'),
+        contentType: 'text/csv',
+        createdAt: new Date('2026-06-21T10:00:00.000Z'),
+      })
+      expect(result.path).toContain('/2026-06-21/')
+      expect(result.path).not.toContain('/2026-06-22/')
+      expect(result.path).toBe(
+        `${VALID_USER_ID}/2026-06-21/${JOB_KEY}/input-03.csv`,
+      )
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('index é zero-padded a 2 dígitos (input-07)', async () => {
+    bucketAPI.upload.mockResolvedValue({ data: { path: 'mock' }, error: null })
+    const result = await adapter.uploadJobInput({
+      userId: VALID_USER_ID,
+      jobId: JOB_UUID,
+      index: 7,
+      ext: 'xlsx',
+      buffer: Buffer.from('PK'),
+      contentType: XLSX_MIME,
+      createdAt: new Date('2026-06-21T10:00:00.000Z'),
+    })
+    expect(result.path.endsWith('/input-07.xlsx')).toBe(true)
+  })
+
+  it('rejeita contentType fora da whitelist (INVALID_CONTENT_TYPE) antes de tocar o Storage', async () => {
+    await expect(
+      adapter.uploadJobInput({
+        userId: VALID_USER_ID,
+        jobId: JOB_UUID,
+        index: 0,
+        ext: 'csv',
+        buffer: Buffer.from('x'),
+        contentType: 'application/x-evil',
+        createdAt: new Date('2026-06-21T10:00:00.000Z'),
+      }),
+    ).rejects.toThrow(/contentType must be one of/)
+    expect(bucketAPI.upload).not.toHaveBeenCalled()
+  })
+
+  it('rejeita jobId não-UUID (cuid não deriva jobKey — D-5) sem tocar o Storage', async () => {
+    await expect(
+      adapter.uploadJobInput({
+        userId: VALID_USER_ID,
+        jobId: VALID_JOB_ID, // cuid → toStorageJobKey rejeita
+        index: 0,
+        ext: 'csv',
+        buffer: Buffer.from('x'),
+        contentType: 'text/csv',
+        createdAt: new Date('2026-06-21T10:00:00.000Z'),
+      }),
+    ).rejects.toThrow(/UUID v4/)
+    expect(bucketAPI.upload).not.toHaveBeenCalled()
+  })
+
+  it('mapeia "already exists" → OBJECT_ALREADY_EXISTS (upsert:false, jobId+index colidente)', async () => {
+    bucketAPI.upload.mockResolvedValue({
+      data: null,
+      error: { message: 'The resource already exists' },
+    })
+    await expect(
+      adapter.uploadJobInput({
+        userId: VALID_USER_ID,
+        jobId: JOB_UUID,
+        index: 0,
+        ext: 'csv',
+        buffer: Buffer.from('x'),
+        contentType: 'text/csv',
+        createdAt: new Date('2026-06-21T10:00:00.000Z'),
+      }),
+    ).rejects.toThrow(/already exists/)
+  })
+
+  it('mapeia erro genérico do SDK → UPLOAD_FAILED', async () => {
+    bucketAPI.upload.mockResolvedValue({
+      data: null,
+      error: { message: 'Network timeout' },
+    })
+    await expect(
+      adapter.uploadJobInput({
+        userId: VALID_USER_ID,
+        jobId: JOB_UUID,
+        index: 0,
+        ext: 'csv',
+        buffer: Buffer.from('x'),
+        contentType: 'text/csv',
+        createdAt: new Date('2026-06-21T10:00:00.000Z'),
+      }),
+    ).rejects.toThrow(/upload of job input to storage failed/)
+  })
+})
+
+// ===========================================================================
+// uploadJobOutput (Card 6.4, worker) — grava o OUTPUT do job.
+//
+// Diferenças vs uploadJobInput: path fixo por job (output.{ext}, sem index),
+// e upsert:TRUE (D-7) — retry transiente do worker reescreve a própria saída
+// no path determinístico sem OBJECT_ALREADY_EXISTS. Mesma âncora F-2 (createdAt).
+// ===========================================================================
+describe('SupabaseStorageAdapter — uploadJobOutput (Card 6.4 / F-2 + D-7)', () => {
+  const JOB_UUID = '8c7e1234-5678-4abc-89de-f01234567890'
+  const JOB_KEY = '8c7e123456784abc89def01234567890' // sem hífens (D-5)
+  const XLSX_MIME =
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+
+  it('sucesso: monta path output.{ext} na subpasta do job + retorna { path }', async () => {
+    bucketAPI.upload.mockResolvedValue({ data: { path: 'mock' }, error: null })
+
+    const result = await adapter.uploadJobOutput({
+      userId: VALID_USER_ID,
+      jobId: JOB_UUID,
+      ext: 'xlsx',
+      buffer: Buffer.from('PK'),
+      contentType: XLSX_MIME,
+      createdAt: new Date('2026-06-21T10:00:00.000Z'),
+    })
+
+    expect(result.path).toBe(
+      `${VALID_USER_ID}/2026-06-21/${JOB_KEY}/output.xlsx`,
+    )
+  })
+
+  it('D-7: usa upsert:true (idempotente em retry do worker)', async () => {
+    bucketAPI.upload.mockResolvedValue({ data: { path: 'mock' }, error: null })
+
+    const result = await adapter.uploadJobOutput({
+      userId: VALID_USER_ID,
+      jobId: JOB_UUID,
+      ext: 'csv',
+      buffer: Buffer.from('a,b'),
+      contentType: 'text/csv',
+      createdAt: new Date('2026-06-21T10:00:00.000Z'),
+    })
+
+    expect(bucketAPI.upload).toHaveBeenCalledWith(
+      result.path,
+      expect.any(Buffer),
+      expect.objectContaining({ upsert: true, contentType: 'text/csv' }),
+    )
+  })
+
+  it('F-2: ancora a data do path em createdAt, NÃO no relógio do processo', async () => {
+    bucketAPI.upload.mockResolvedValue({ data: { path: 'mock' }, error: null })
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-06-22T23:59:00.000Z'))
+    try {
+      const result = await adapter.uploadJobOutput({
+        userId: VALID_USER_ID,
+        jobId: JOB_UUID,
+        ext: 'csv',
+        buffer: Buffer.from('x'),
+        contentType: 'text/csv',
+        createdAt: new Date('2026-06-21T10:00:00.000Z'),
+      })
+      expect(result.path).toBe(
+        `${VALID_USER_ID}/2026-06-21/${JOB_KEY}/output.csv`,
+      )
+      expect(result.path).not.toContain('/2026-06-22/')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('rejeita contentType fora da whitelist (INVALID_CONTENT_TYPE) antes de tocar o Storage', async () => {
+    await expect(
+      adapter.uploadJobOutput({
+        userId: VALID_USER_ID,
+        jobId: JOB_UUID,
+        ext: 'csv',
+        buffer: Buffer.from('x'),
+        contentType: 'application/x-evil',
+        createdAt: new Date('2026-06-21T10:00:00.000Z'),
+      }),
+    ).rejects.toThrow(/contentType must be one of/)
+    expect(bucketAPI.upload).not.toHaveBeenCalled()
+  })
+
+  it('rejeita jobId não-UUID (cuid não deriva jobKey — D-5) sem tocar o Storage', async () => {
+    await expect(
+      adapter.uploadJobOutput({
+        userId: VALID_USER_ID,
+        jobId: VALID_JOB_ID,
+        ext: 'csv',
+        buffer: Buffer.from('x'),
+        contentType: 'text/csv',
+        createdAt: new Date('2026-06-21T10:00:00.000Z'),
+      }),
+    ).rejects.toThrow(/UUID v4/)
+    expect(bucketAPI.upload).not.toHaveBeenCalled()
+  })
+
+  it('mapeia erro genérico do SDK → UPLOAD_FAILED', async () => {
+    bucketAPI.upload.mockResolvedValue({
+      data: null,
+      error: { message: 'Network timeout' },
+    })
+    await expect(
+      adapter.uploadJobOutput({
+        userId: VALID_USER_ID,
+        jobId: JOB_UUID,
+        ext: 'csv',
+        buffer: Buffer.from('x'),
+        contentType: 'text/csv',
+        createdAt: new Date('2026-06-21T10:00:00.000Z'),
+      }),
+    ).rejects.toThrow(/upload of job output to storage failed/)
+  })
+})

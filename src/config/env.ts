@@ -1,5 +1,6 @@
 import 'dotenv/config'
 import { z } from 'zod'
+import { redisHostsCollide } from './redis-host-guard'
 
 const isProd = process.env.NODE_ENV === 'production'
 
@@ -19,6 +20,47 @@ const envSchema = z
     // Redis (Upstash)
     UPSTASH_REDIS_REST_URL: z.string().url().optional(),
     UPSTASH_REDIS_REST_TOKEN: z.string().optional(),
+
+    // Redis TCP DEDICADO ao BullMQ (Card 6.2 — Fase 6 Fila Assíncrona).
+    // DB separado do rate-limit (políticas noeviction vs TTL incompatíveis +
+    // isolamento de budget de comandos). Conexão real configurada em
+    // src/config/redis-tcp.ts. A obrigatoriedade em produção é introduzida
+    // junto com a flag ASYNC_PROCESSING_ENABLED no Card 6.3 — aqui só
+    // validamos o FORMATO: se presente, DEVE ser rediss:// (TLS). redis://
+    // sem TLS expõe credenciais e payload de inputs do usuário em trânsito.
+    REDIS_URL: z
+      .string()
+      .url()
+      .startsWith(
+        'rediss://',
+        'REDIS_URL deve usar TLS (rediss://, com dois "s") — redis:// sem ' +
+          'TLS é rejeitado (credenciais e payload em texto claro no Upstash).',
+      )
+      .optional(),
+
+    // Processamento assíncrono (Card 6.3 — Fase 6 Fila Assíncrona).
+    // ASYNC_PROCESSING_ENABLED: flag de dark launch. Default false em todos os
+    // ambientes — a rota POST /process/async NÃO é registrada enquanto off
+    // (a feature nem existe publicamente). Enum estrito (não z.coerce.boolean,
+    // que trata "false" como truthy — mesma armadilha do HISTORY_FEATURE_ENABLED).
+    ASYNC_PROCESSING_ENABLED: z
+      .enum(['true', 'false'])
+      .default('false')
+      .transform((v) => v === 'true'),
+    // ASYNC_JOB_TTL_HOURS: janela até o cleanup (6.7) purgar output+inputs do
+    // job async. Range 1h..168h (7d); default 24h. Tunável sem rebuild conforme
+    // padrão do projeto (HEALTH_TIMEOUT_*, PRO_RETENTION_DAYS).
+    ASYNC_JOB_TTL_HOURS: z.coerce.number().int().min(1).max(168).default(24),
+    // PROCESS_WORKER_TIMEOUT_MS: timeout DURO do parse por arquivo no worker
+    // (Card 6.4). Excedido → o worker_thread é terminado (mata ReDoS/hang) e o
+    // job vira FAILED permanente. Range 5s..600s; default 300s (5min). Tunável
+    // sem rebuild. O timeout cobre o parse de UM arquivo, não o job inteiro.
+    PROCESS_WORKER_TIMEOUT_MS: z.coerce
+      .number()
+      .int()
+      .min(5_000)
+      .max(600_000)
+      .default(300_000),
 
     // Stripe
     STRIPE_SECRET_KEY: z.string().optional(),
@@ -220,6 +262,28 @@ const envSchema = z
       })
     }
 
+    // Card 6.2 fix-pack @dba MÉDIO — DB dedicado do BullMQ (D-1). No Upstash,
+    // REST (rate-limit) e TCP (BullMQ) são apenas dois PROTOCOLOS do MESMO
+    // database. Se REDIS_URL apontar pro mesmo host de UPSTASH_REDIS_REST_URL,
+    // o "DB dedicado" quebra silenciosamente: as políticas noeviction (fila,
+    // não pode perder job) e TTL/evicção (rate-limit) passam a compartilhar o
+    // mesmo database — jobs em voo podem ser despejados (cliente paga e não
+    // recebe output). Boot-fail barato contra essa misconfig, em qualquer
+    // ambiente onde ambas as vars existam. Predicado puro testável em
+    // `redis-host-guard.ts` (rede de regressão do guard — @reviewer F2).
+    if (redisHostsCollide(data.REDIS_URL, data.UPSTASH_REDIS_REST_URL)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['REDIS_URL'],
+        message:
+          'REDIS_URL (BullMQ/TCP) aponta para o MESMO host de ' +
+          'UPSTASH_REDIS_REST_URL (rate-limit). O BullMQ exige um database ' +
+          'Upstash DEDICADO (política noeviction) separado do rate-limit ' +
+          '(TTL/evicção) — Card 6.2 D-1. Provisione um segundo database no ' +
+          'Upstash para a fila.',
+      })
+    }
+
     if (isProd) {
       // Stripe obrigatório em produção
       if (!data.STRIPE_SECRET_KEY) {
@@ -234,6 +298,19 @@ const envSchema = z
           code: z.ZodIssueCode.custom,
           path: ['STRIPE_WEBHOOK_SECRET'],
           message: 'STRIPE_WEBHOOK_SECRET é obrigatório em produção',
+        })
+      }
+
+      // REDIS_URL (TCP/BullMQ) obrigatória em prod QUANDO o async está ligado
+      // (Card 6.3). Sem a fila, /process/async não tem como enfileirar — boot
+      // fail é melhor que 503 em runtime. O 6.2 deixou este gancho explícito.
+      if (data.ASYNC_PROCESSING_ENABLED && !data.REDIS_URL) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['REDIS_URL'],
+          message:
+            'REDIS_URL é obrigatória em produção quando ASYNC_PROCESSING_ENABLED=true ' +
+            '(a fila BullMQ do /process/async exige Redis TCP dedicado — Card 6.3).',
         })
       }
 

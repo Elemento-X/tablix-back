@@ -19,6 +19,9 @@ export const ErrorCodes = {
   // Processamento
   PROCESSING_FAILED: 'PROCESSING_FAILED',
   JOB_NOT_FOUND: 'JOB_NOT_FOUND',
+  // Processamento assíncrono (Card 6.3 — LRO)
+  QUEUE_UNAVAILABLE: 'QUEUE_UNAVAILABLE',
+  IDEMPOTENCY_KEY_REQUIRED: 'IDEMPOTENCY_KEY_REQUIRED',
 
   // Billing
   CHECKOUT_FAILED: 'CHECKOUT_FAILED',
@@ -127,6 +130,20 @@ export const Errors = {
     new AppError(ErrorCodes.JOB_NOT_FOUND, 'Job não encontrado', 404, {
       jobId,
     }),
+
+  // Fila assíncrona indisponível (Card 6.3). 503 — Redis/BullMQ inalcançável
+  // no enqueue. Distinto de PROCESSING_FAILED (erro no processamento em si):
+  // aqui o job nem foi aceito. Cliente deve retentar (Retry-After).
+  queueUnavailable: (
+    message = 'Serviço de processamento assíncrono temporariamente indisponível. Tente novamente em instantes.',
+  ) => new AppError(ErrorCodes.QUEUE_UNAVAILABLE, message, 503),
+
+  // Idempotency-Key obrigatória ausente (Card 6.3). 428 Precondition Required
+  // (RFC 6585) — força o cliente a enviar a key antes de criar recurso pago.
+  // Distinto de IDEMPOTENCY_CONFLICT (key presente mas reusada com body diferente).
+  idempotencyKeyRequired: (
+    message = 'Header Idempotency-Key é obrigatório nesta operação (UUID v4).',
+  ) => new AppError(ErrorCodes.IDEMPOTENCY_KEY_REQUIRED, message, 428),
 
   checkoutFailed: (message = 'Erro ao criar checkout') =>
     new AppError(ErrorCodes.CHECKOUT_FAILED, message, 500),

@@ -48,6 +48,19 @@ export const ALLOWED_MIME_TYPES = [
 export type AllowedMimeType = (typeof ALLOWED_MIME_TYPES)[number]
 
 /**
+ * Mapa determinístico extensão → MIME (Card 6.2). Usado no download pra
+ * derivar o `Content-Type` da extensão validada do path, em vez de confiar
+ * no metadata do Storage (que pode driftar / vir vazio). `Record` completo
+ * sobre `AllowedExtension` — adicionar uma extensão ao enum sem mapear aqui
+ * vira erro de compilação.
+ */
+export const EXTENSION_TO_MIME: Record<AllowedExtension, AllowedMimeType> = {
+  csv: 'text/csv',
+  xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  xls: 'application/vnd.ms-excel',
+}
+
+/**
  * Metadados de objeto retornados em `listForUser`. Subset estável dos
  * campos do Supabase Storage — não vazamos shape do SDK.
  */
@@ -112,6 +125,61 @@ export interface StorageAdapter {
   }): Promise<{ path: UserScopedPath }>
 
   /**
+   * Upload de um INPUT de job assíncrono (Card 6.3). Monta o path por-input
+   * via `buildJobInputPath` (`{userId}/{date}/{jobKey}/input-NN.{ext}`) — um
+   * job tem N inputs agrupados numa subpasta própria (G-3). Mesmo contrato de
+   * segurança do `uploadForUser`: valida MIME, `upsert: false` (rejeita
+   * overwrite), path montado internamente a partir de `userId`+`jobId`+`index`.
+   *
+   * @throws {StorageError} INVALID_USER_ID, INVALID_JOB_ID, INVALID_EXTENSION,
+   *   INVALID_CONTENT_TYPE, OBJECT_ALREADY_EXISTS, UPLOAD_FAILED
+   */
+  uploadJobInput(args: {
+    userId: string
+    /** `Job.id` UUID — derivado pra jobKey internamente (D-5). */
+    jobId: string
+    /** Índice 0-based do input dentro do job. */
+    index: number
+    ext: AllowedExtension
+    buffer: Buffer
+    contentType: string
+    /**
+     * Âncora temporal do path (`Job.createdAt`). OBRIGATÓRIO — o path embute a
+     * data UTC; derivá-la de `new Date()` a cada chamada torna o caminho
+     * NÃO-determinístico (worker 6.4 / cleanup 6.7 reconstroem em outro dia UTC
+     * → input não encontrado + órfão de PII). Ancorar em `Job.createdAt` é o
+     * SSOT que garante reconstrução determinística por qualquer consumidor
+     * (@security/@reviewer F-2).
+     */
+    createdAt: Date
+  }): Promise<{ path: UserScopedPath }>
+
+  /**
+   * Upload do OUTPUT (resultado da unificação) de um job assíncrono (Card 6.4).
+   * Monta o path via `buildJobOutputPath` (`{userId}/{date}/{jobKey}/output.{ext}`),
+   * ancorado em `Job.createdAt` (invariante F-2 — path determinístico, mesmo do
+   * worker e do download/cleanup).
+   *
+   * **Idempotente (`upsert: true`) — diferente de `uploadJobInput`:** o worker
+   * pode reprocessar o MESMO job num retry transiente (BullMQ attempts). Como o
+   * path é determinístico e exclusivo do job, sobrescrever a própria saída é
+   * seguro e desejável (evita OBJECT_ALREADY_EXISTS travando o retry).
+   *
+   * @throws {StorageError} INVALID_USER_ID, INVALID_JOB_ID, INVALID_EXTENSION,
+   *   INVALID_CONTENT_TYPE, UPLOAD_FAILED
+   */
+  uploadJobOutput(args: {
+    userId: string
+    /** `Job.id` UUID — derivado pra jobKey internamente (D-5). */
+    jobId: string
+    ext: AllowedExtension
+    buffer: Buffer
+    contentType: string
+    /** Âncora temporal do path — `Job.createdAt` (SSOT, invariante F-2). */
+    createdAt: Date
+  }): Promise<{ path: UserScopedPath }>
+
+  /**
    * Gera signed URL com TTL curto (default 5 min, max 7 dias enforced
    * por Supabase) pro download. Não autentica o caller — caller TEM
    * que ter validado ownership antes.
@@ -161,6 +229,33 @@ export interface StorageAdapter {
   removeByPath(
     path: UserScopedPath | string,
   ): Promise<{ deleted: boolean; notFound: boolean }>
+
+  /**
+   * Baixa o conteúdo de um objeto a partir de um path (Card 6.2 — G-2).
+   * Retorna o buffer completo (não stream): arquivos async vão até 30MB e
+   * o worker (Card 6.4) roda `concurrency=1`, então o pico de memória é
+   * limitado e previsível. O parser de planilha não é streaming de qualquer
+   * forma — bufferizar é o hot path real.
+   *
+   * **Casos de uso:** worker (6.4) baixando inputs, endpoint de download
+   * (6.6) baixando o output. Simétrico ao `removeByPath`: USO RESTRITO a
+   * paths construídos via `key-builder` ou lidos do DB.
+   *
+   * **Hard rule (mesma do `removeByPath`):** VALIDA o path internamente via
+   * `assertValidStoragePath` ANTES de tocar o Storage. O brand
+   * `UserScopedPath` em compile-time não prova validez quando o path vem do
+   * DB; validação runtime é defesa em profundidade.
+   *
+   * `contentType` é derivado da extensão do path (`EXTENSION_TO_MIME`), não
+   * do metadata do Storage.
+   *
+   * @throws {StorageError} PATH_TRAVERSAL_REJECTED, INVALID_EXTENSION,
+   *   OBJECT_NOT_FOUND, DOWNLOAD_FAILED
+   */
+  downloadByPath(path: UserScopedPath | string): Promise<{
+    buffer: Buffer
+    contentType: AllowedMimeType
+  }>
 
   /**
    * Lista objetos do prefixo do user. Adapter monta o prefixo

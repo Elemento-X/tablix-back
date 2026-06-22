@@ -194,6 +194,42 @@ export async function validateAndIncrementUsage(
   }
 }
 
+/**
+ * Estorna (decrementa) 1 unificação reservada — compensação atômica usada
+ * quando uma operação que JÁ reservou quota via `validateAndIncrementUsage`
+ * falha por motivo de INFRAESTRUTURA antes de prestar o serviço (Card 6.3:
+ * enqueue/upload falhou → o cliente não consumiu nada → seria roubo cobrar).
+ *
+ * **Distinto do A-REFUND:** falha de PROCESSAMENTO no worker (parse/merge
+ * corrompido) NÃO estorna — o serviço foi prestado. Este estorno é só pro
+ * caminho pré-aceitação (saga de compensação no async.service).
+ *
+ * **Atômico e condicional:** single-statement `UPDATE ... WHERE count > 0`.
+ * O guard `> 0` evita count negativo sob concorrência. A quota é fungível
+ * (cada slot vale 1; não estornamos "o nosso" especificamente — devolvemos
+ * 1 slot ao pool do período), então o decremento balanceia a reserva sem
+ * identidade. Usa o período corrente (mesma janela da reserva na mesma
+ * request — a virada de mês entre reserva e estorno é desprezível em ms).
+ *
+ * Retorna `true` se estornou (1 row afetada), `false` se não havia o que
+ * estornar (count já 0 — não deveria acontecer pós-reserva; sinaliza bug se
+ * ocorrer). Best-effort: o caller loga, não propaga.
+ *
+ * @owner: @dba + @security
+ * @card: 6.3 (estorno de quota em falha de enqueue/upload)
+ */
+export async function decrementUsage(userId: string): Promise<boolean> {
+  const period = getCurrentPeriod()
+  const affected = await prisma.$executeRaw`
+    UPDATE usage
+    SET unifications_count = unifications_count - 1
+    WHERE user_id = ${userId}::uuid
+      AND period = ${period}
+      AND unifications_count > 0
+  `
+  return affected > 0
+}
+
 export function getLimitsForPlanResponse(plan: PlanLike): LimitsWithPlan {
   const limits = getLimitsForPlan(toPrismaPlan(plan))
   // `Plan` enum no Prisma só tem PRO atualmente; FREE é o "implícito"

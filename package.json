@@ -7,6 +7,8 @@
   },
   "scripts": {
     "dev": "tsx watch src/server.ts",
+    "worker": "node dist/src/worker.js",
+    "worker:dev": "tsx watch src/worker.ts",
     "lint": "eslint src --ext .ts --fix",
     "build": "npm run lint && npx prisma generate && tsc",
     "start": "node dist/src/server.js",
@@ -52,7 +54,7 @@
     "dotenv": "^16.4.7",
     "fastify": "^5.8.5",
     "fastify-type-provider-zod": "^4.0.2",
-    "ioredis": "^5.11.1",
+    "ioredis": "5.10.1",
     "jsonwebtoken": "^9.0.3",
     "node-cron": "^3.0.3",
     "papaparse": "^5.5.3",

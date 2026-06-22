@@ -128,19 +128,29 @@ model Usage {
 // Para arquivos >10MB que precisam de processamento em fila
 
 model Job {
-  id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  userId        String    @map("user_id") @db.Uuid
-  status        JobStatus @default(PENDING)
-  inputFiles    Json      @map("input_files")
-  outputFileUrl String?   @map("output_file_url") @db.VarChar(500)
-  errorMessage  String?   @map("error_message")
-  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
-  startedAt     DateTime? @map("started_at") @db.Timestamptz(3)
-  completedAt   DateTime? @map("completed_at") @db.Timestamptz(3)
+  id             String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId         String    @map("user_id") @db.Uuid
+  status         JobStatus @default(PENDING)
+  inputFiles     Json      @map("input_files")
+  outputFileUrl  String?   @map("output_file_url") @db.VarChar(500)
+  outputFormat   String?   @map("output_format") @db.VarChar(8) // Card 6.3 — CHECK ('xlsx','csv') via SQL
+  outputSize     BigInt?   @map("output_size") // Card 6.3 — bytes do output (BIGINT, anti foot-gun int4)
+  errorMessage   String?   @map("error_message")
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  startedAt      DateTime? @map("started_at") @db.Timestamptz(3)
+  completedAt    DateTime? @map("completed_at") @db.Timestamptz(3)
+  downloadedAt   DateTime? @map("downloaded_at") @db.Timestamptz(3) // Card 6.3 — claim atômico entrega única (6.6)
+  inputsPurgedAt DateTime? @map("inputs_purged_at") @db.Timestamptz(3) // Card 6.3 — purge de inputs (worker/6.7)
+  expiresAt      DateTime? @map("expires_at") @db.Timestamptz(3) // Card 6.3 — TTL pro cleanup (6.7)
 
   // Relacionamento
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
+  // ATENÇÃO: idx_jobs_expires_at é índice PARCIAL (WHERE expires_at IS NOT NULL)
+  // e o CHECK jobs_output_format_check são geridos via SQL (Card 6.3 migration).
+  // Prisma não modela partial index nem CHECK — NÃO adicionar em @@index, senão
+  // migrate diff tenta recriar como índice FULL e gera drift (mesmo motivo do
+  // idx_stripe_events_pending / idx_tokens_active_pro serem SQL-managed).
   @@index([userId], map: "idx_jobs_user")
   @@index([status], map: "idx_jobs_status")
   @@map("jobs")

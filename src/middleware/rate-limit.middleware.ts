@@ -140,4 +140,8 @@ export const rateLimitMiddleware = {
   // em routes (pra deixar a ordem de aplicação explícita: cap → per-user)
   adminJobs: createRateLimitMiddleware('adminJobs'),
   // adminJobsGlobalCap idem
+  // Processamento assíncrono (Card 6.3) — cap global aplicado direto em routes
+  // (ordem explícita: cap global → per-IP), seguindo o padrão do checkout.
+  processAsync: createRateLimitMiddleware('processAsync'),
+  processAsyncGlobalCap: createGlobalCapMiddleware('processAsyncGlobalCap'),
 }
