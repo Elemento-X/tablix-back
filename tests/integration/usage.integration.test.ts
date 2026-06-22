@@ -188,7 +188,7 @@ describe('GET /usage (integration)', () => {
       .set('Authorization', `Bearer ${accessToken}`)
 
     expect(res.headers['cache-control']).toBe('private, no-cache')
-    expect(res.headers['vary']).toContain('Authorization')
+    expect(res.headers.vary).toContain('Authorization')
   })
 
   it('isolation: usuário A não vê usage do usuário B', async () => {
@@ -273,7 +273,7 @@ describe('GET /limits (integration)', () => {
       .set('Authorization', `Bearer ${accessToken}`)
 
     expect(res.headers['cache-control']).toBe('private, max-age=60')
-    expect(res.headers['vary']).toContain('Authorization')
+    expect(res.headers.vary).toContain('Authorization')
   })
 
   it('SECURITY: plan vem do JWT, query/body com plan diferente é ignorado', async () => {

@@ -9,7 +9,7 @@
     "dev": "tsx watch src/server.ts",
     "worker": "node dist/src/worker.js",
     "worker:dev": "tsx watch src/worker.ts",
-    "lint": "eslint src --ext .ts --fix",
+    "lint": "eslint src tests --ext .ts --fix",
     "build": "npm run lint && npx prisma generate && tsc",
     "start": "node dist/src/server.js",
     "test": "vitest run",
