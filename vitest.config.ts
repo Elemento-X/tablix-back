@@ -99,6 +99,12 @@ export default defineConfig({
         // sob race + ownership) é provada no process-download.integration.test.ts
         // contra Postgres. Fecha o fluxo LRO (status 6.5 → download 6.6).
         'src/http/controllers/process-download.controller.ts',
+        // Card 6.7 (+ #197) — crons de cleanup async. sweepOrphanJobs (#197 +
+        // 6.7b) + purgeAsyncJobStorage (6.7a). Lógica de transição de status +
+        // refund + purga idempotente coberta por unit (mocks de prisma/queue/
+        // storage); a anti-race real (sweeper×worker) é provada no integration
+        // contra Postgres. Gate de quota (vaza receita) + LGPD (resíduo de PII).
+        'src/jobs/async-cleanup.job.ts',
       ],
       exclude: [
         // Entrypoints — testados via smoke/integration, não unitários

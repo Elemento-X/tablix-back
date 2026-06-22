@@ -81,6 +81,20 @@ export type SchedulerEventName =
   | 'cron.quota_alert.email_failed'
   | 'cron.quota_alert.dedupe_skip'
   | 'cron.quota_alert.dry_run.start'
+  // Card 6.7 (+ #197): crons de cleanup async. stuck_failed (job PROCESSING
+  // force-failed) e purge_pending_overdue (gauge de purga acumulando) e
+  // inputfiles_unparseable (inputFiles corrompido — não dá pra purgar PII)
+  // são todos ALERTABLE.
+  | 'cron.async_cleanup.stuck_failed'
+  | 'cron.async_cleanup.purge_pending_overdue'
+  | 'cron.async_cleanup.inputfiles_unparseable'
+  // orphan_failed_refunded: sinal PRIMÁRIO do #197 — job órfão que NÃO pôde ser
+  // re-enfileirado (TTL estourado / metadata inválida) foi FAILED + estornado =
+  // serviço PERDIDO (cliente não recebe o que reservou). ALERTABLE.
+  // dry_run.start: ALERTABLE_IN_PROD_ONLY (mesmo padrão dos crons LGPD —
+  // dry-run "esquecido" em prod desliga a recuperação de quota silenciosamente).
+  | 'cron.async_cleanup.orphan_failed_refunded'
+  | 'cron.async_cleanup.dry_run.start'
 
 interface EmitArgs {
   level: SchedulerEventLevel
@@ -121,6 +135,15 @@ const ALERTABLE_EVENTS: ReadonlySet<SchedulerEventName> = new Set([
   // Por user falhado — Sentry agrupa por scheduler_job tag. Trade-off A-8:
   // INSERT em quota_alerts_sent acontece MESMO ASSIM pra não duplicar próximo run.
   'cron.quota_alert.email_failed',
+  // Card 6.7 (+ #197): cleanup async.
+  // stuck_failed = jobs PROCESSING travados foram force-failed (worker morto).
+  // purge_pending_overdue = gauge de inputs por purgar acumulando (Storage degradado).
+  // inputfiles_unparseable = inputFiles corrompido → PII não pôde ser purgada.
+  'cron.async_cleanup.stuck_failed',
+  'cron.async_cleanup.purge_pending_overdue',
+  'cron.async_cleanup.inputfiles_unparseable',
+  // #197: serviço perdido (órfão FAILED+estornado) — on-call investiga o enqueue path.
+  'cron.async_cleanup.orphan_failed_refunded',
 ])
 
 /**
@@ -138,6 +161,9 @@ const ALERTABLE_IN_PROD_ONLY: ReadonlySet<SchedulerEventName> = new Set([
   // Card #147 F3 (T-3.5): dry-run do cron de alerta em prod = sinal de
   // "dry-run esquecido" igual pattern do purge.dry_run.start. Warning.
   'cron.quota_alert.dry_run.start',
+  // Card 6.7: dry-run dos crons de cleanup async em prod = recuperação de quota
+  // / purga de PII silenciosamente desligada. Mesmo padrão dos irmãos LGPD.
+  'cron.async_cleanup.dry_run.start',
 ])
 
 /**

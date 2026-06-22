@@ -23,6 +23,8 @@ const { prismaMock } = vi.hoisted(() => ({
     },
     // Card 4.2: validateAndIncrementUsage usa $queryRaw atômico (template tag).
     $queryRaw: vi.fn(),
+    // Card 6.7: decrementUsageForPeriod usa $executeRaw (template tag).
+    $executeRaw: vi.fn(),
   },
 }))
 
@@ -42,6 +44,7 @@ import {
   getUserUsage,
   getLimitsForPlanResponse,
   validateAndIncrementUsage,
+  decrementUsageForPeriod,
 } from '../../src/modules/usage/usage.service'
 import { PRO_LIMITS, FREE_LIMITS } from '../../src/config/plan-limits'
 import { AppError, ErrorCodes } from '../../src/errors/app-error'
@@ -321,5 +324,25 @@ describe('validateAndIncrementUsage', () => {
     await validateAndIncrementUsage('user-atomic', 'PRO')
 
     expect(prismaMock.$queryRaw).toHaveBeenCalledTimes(1)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// decrementUsageForPeriod (Card 6.7 — estorno do sweeper #197)
+// ---------------------------------------------------------------------------
+describe('decrementUsageForPeriod', () => {
+  it('true quando estorna (1 row afetada) no período passado', async () => {
+    prismaMock.$executeRaw.mockResolvedValueOnce(1)
+    await expect(decrementUsageForPeriod('user-x', '2026-05')).resolves.toBe(
+      true,
+    )
+    expect(prismaMock.$executeRaw).toHaveBeenCalledTimes(1)
+  })
+
+  it('false quando não havia o que estornar (count 0 / usage ausente)', async () => {
+    prismaMock.$executeRaw.mockResolvedValueOnce(0)
+    await expect(decrementUsageForPeriod('user-x', '2026-05')).resolves.toBe(
+      false,
+    )
   })
 })

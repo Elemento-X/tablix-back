@@ -61,6 +61,37 @@ const envSchema = z
       .min(5_000)
       .max(600_000)
       .default(300_000),
+    // Crons de cleanup async (Card 6.7 + sweeper #197). Kill-switch DEDICADO
+    // (não acoplado a HISTORY_FEATURE_ENABLED como os crons LGPD): gate efetivo
+    // = ASYNC_PROCESSING_ENABLED && CRON_JOBS_CLEANUP_ENABLED. Default false em
+    // todos os ambientes (cron não dispara sem ativação explícita). Enum estrito
+    // (não z.coerce.boolean — "false" seria truthy).
+    CRON_JOBS_CLEANUP_ENABLED: z
+      .enum(['true', 'false'])
+      .default('false')
+      .transform((v) => v === 'true'),
+    // ASYNC_PENDING_SWEEP_MINUTES: idade mínima de um Job PENDING pra ser
+    // considerado órfão da fila pelo sweeper (#197). A SEGURANÇA vem deste
+    // limiar (não da cadência do cron): um job recém-criado leva segundos pra
+    // entrar na fila; só varremos bem depois disso. Range 5..1440min; default
+    // 10min. Tunável sem rebuild.
+    ASYNC_PENDING_SWEEP_MINUTES: z.coerce
+      .number()
+      .int()
+      .min(5)
+      .max(1_440)
+      .default(10),
+    // ASYNC_STUCK_PROCESSING_MINUTES: idade mínima de um Job PROCESSING (por
+    // started_at) pra ser candidato a force-fail (6.7b). Calibrar ACIMA do pior
+    // caso de 1 tentativa do worker (15 arquivos × PROCESS_WORKER_TIMEOUT_MS).
+    // O gate primário é o cross-check da fila (só falha se ausente/terminal nela);
+    // este limiar é a 2ª barreira. Range 15..1440min; default 60min.
+    ASYNC_STUCK_PROCESSING_MINUTES: z.coerce
+      .number()
+      .int()
+      .min(15)
+      .max(1_440)
+      .default(60),
 
     // Stripe
     STRIPE_SECRET_KEY: z.string().optional(),

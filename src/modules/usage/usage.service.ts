@@ -19,7 +19,7 @@
  * @owner: @planner + @dba
  * @card: 4.1 (#33)
  */
-import type { Plan } from '@prisma/client'
+import type { Plan, Prisma } from '@prisma/client'
 import { prisma } from '../../lib/prisma'
 import { getLimitsForPlan } from '../../config/plan-limits'
 import { Errors } from '../../errors/app-error'
@@ -221,6 +221,49 @@ export async function validateAndIncrementUsage(
 export async function decrementUsage(userId: string): Promise<boolean> {
   const period = getCurrentPeriod()
   const affected = await prisma.$executeRaw`
+    UPDATE usage
+    SET unifications_count = unifications_count - 1
+    WHERE user_id = ${userId}::uuid
+      AND period = ${period}
+      AND unifications_count > 0
+  `
+  return affected > 0
+}
+
+/**
+ * Estorna 1 unificação reservada **num período específico** — usado pelo cron
+ * de cleanup (Card 6.7 / sweeper #197) quando um job PENDING órfão (que reservou
+ * quota no enqueue mas nunca entrou na fila) é varrido e marcado FAILED.
+ *
+ * **Por que distinto do `decrementUsage`:** o `decrementUsage` opera no período
+ * CORRENTE (correto na saga in-request do 6.3, onde reserva e estorno acontecem
+ * na mesma request, em ms). O cron varre jobs criados em qualquer momento — um
+ * job criado em 2026-05-31 23:59 e varrido em 2026-06-01 00:10 deve estornar no
+ * período `2026-05` (o do `createdAt`), NÃO no corrente. Estornar no período
+ * errado corromperia a contabilidade (slot grátis num mês, slot a menos noutro).
+ * O caller passa `getCurrentPeriod(job.createdAt)`.
+ *
+ * **Atômico e condicional:** mesmo `UPDATE ... WHERE count > 0` do `decrementUsage`
+ * (guard anti-negativo). Idempotência do estorno do cron NÃO vem daqui — vem do
+ * gate por transição de status no sweeper (só estorna se o `updateMany` PENDING→
+ * FAILED afetou a linha, count===1). Esta função é a operação aritmética pura.
+ *
+ * Retorna `true` se estornou (1 row afetada), `false` se não havia o que estornar
+ * (count já 0 OU registro de usage inexistente pra aquele período — sinaliza
+ * inconsistência; caller loga).
+ *
+ * @owner: @dba + @security
+ * @card: 6.7 (sweeper #197 — estorno de PENDING órfão no período do createdAt)
+ */
+export async function decrementUsageForPeriod(
+  userId: string,
+  period: string,
+  // Card 6.7 fix-pack (@security/@dba): cliente opcional pra rodar o estorno na
+  // MESMA transação do claim PENDING→FAILED (status↔refund atômico). Sem tx, um
+  // crash entre claim e estorno deixaria o slot perdido (fail-safe, mas evitável).
+  client: Pick<Prisma.TransactionClient, '$executeRaw'> = prisma,
+): Promise<boolean> {
+  const affected = await client.$executeRaw`
     UPDATE usage
     SET unifications_count = unifications_count - 1
     WHERE user_id = ${userId}::uuid

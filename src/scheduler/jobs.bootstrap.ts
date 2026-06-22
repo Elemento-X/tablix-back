@@ -24,6 +24,10 @@
  * @card: #146 (5.2b) F4
  */
 import { env } from '../config/env'
+import {
+  purgeAsyncJobStorage,
+  sweepOrphanJobs,
+} from '../jobs/async-cleanup.job'
 import { cronRunsCleanup } from '../jobs/cron-runs-cleanup.job'
 import { deadLetterReprocess } from '../jobs/dead-letter-reprocess.job'
 import { scanUsageAndAlert } from '../jobs/quota-alert.job'
@@ -41,6 +45,8 @@ const JOB_NAMES = [
   'cron-runs-cleanup',
   'dead-letter-reprocess',
   'quota-alert',
+  'async-job-sweeper',
+  'async-storage-cleanup',
 ] as const
 
 /**
@@ -110,11 +116,42 @@ export function bootstrapCronJobs(): void {
     idempotent: true, // UNIQUE(user_id, threshold, period) + ON CONFLICT DO NOTHING
   })
 
+  // Crons de cleanup async (Card 6.7 + sweeper #197). Kill-switch DEDICADO
+  // (não acoplado a HISTORY): só rodam se o async está ligado E o cleanup
+  // habilitado. Sem isso, jobs PENDING órfãos vazariam quota silenciosamente.
+  const asyncCleanupEnabled =
+    env.ASYNC_PROCESSING_ENABLED && env.CRON_JOBS_CLEANUP_ENABLED
+
+  // Job 5: async-job-sweeper (#197 + 6.7b) — recuperação de estado TEMPO-SENSÍVEL.
+  // Schedule: a cada 5min (decisão do dono). Seguro pela idade-limiar do sweep
+  // (ASYNC_PENDING_SWEEP_MINUTES), não pela cadência. NÃO toca Storage.
+  registerCronJob({
+    name: 'async-job-sweeper',
+    schedule: '*/5 * * * *', // a cada 5 minutos
+    enabled: asyncCleanupEnabled,
+    handler: sweepOrphanJobs,
+    lockTtlMs: 4 * 60 * 1000, // 4min — job rápido (DB + queue-check); heartbeat renova
+    idempotent: true, // transições status-guarded + re-enqueue idempotente por Job.id
+  })
+
+  // Job 6: async-storage-cleanup (6.7a) — purga de Storage, NÃO tempo-sensível.
+  // Schedule: 09:00 BRT = '0 12 * * *' UTC (vale de tráfego), honra TTL 24h.
+  // @devops BAIXO fix-pack: escalonado p/ 12:00 UTC (era 11:00) pra NÃO colidir
+  // com quota-alert (11:00 UTC) — evita pico simultâneo de DB/Storage.
+  registerCronJob({
+    name: 'async-storage-cleanup',
+    schedule: '0 12 * * *', // 09:00 BRT daily (escalonado vs quota-alert 11:00 UTC)
+    enabled: asyncCleanupEnabled,
+    handler: purgeAsyncJobStorage,
+    lockTtlMs: 15 * 60 * 1000, // 15min — purga N inputs/outputs via Storage REST
+    idempotent: true, // M-03 (parcial→NULL) + removeByPath 404-safe + tombstone
+  })
+
   // Card #147 fix-pack ciclo 1 (@devops BAIXO): count derivado em vez de
   // hardcoded — futuras adições não esquecem de bumpar (Sentry dashboard
   // que pareie boot signal com count real não dá falso negativo silencioso).
-  // 4 = registerCronJob calls acima (history-purge, cron-runs-cleanup,
-  // dead-letter-reprocess, quota-alert).
+  // JOB_NAMES é o SSOT (6 jobs: history-purge, cron-runs-cleanup,
+  // dead-letter-reprocess, quota-alert, async-job-sweeper, async-storage-cleanup).
   const jobsRegistered = JOB_NAMES.length
   logger.info(
     { historyEnabled, jobsRegistered },

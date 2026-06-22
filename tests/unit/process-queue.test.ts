@@ -22,28 +22,36 @@ interface FakeQueueInstance {
   close: ReturnType<typeof vi.fn>
 }
 
-const { QueueMock, queueInstances, addMock, getQueueConnectionMock } =
-  vi.hoisted(() => {
-    const queueInstances: FakeQueueInstance[] = []
-    const addMock = vi.fn()
-    class QueueMock {
-      name: string
-      opts: Record<string, unknown>
-      add = addMock
-      close = vi.fn().mockResolvedValue(undefined)
-      constructor(name: string, opts: Record<string, unknown>) {
-        this.name = name
-        this.opts = opts
-        queueInstances.push(this as unknown as FakeQueueInstance)
-      }
+const {
+  QueueMock,
+  queueInstances,
+  addMock,
+  getJobMock,
+  getQueueConnectionMock,
+} = vi.hoisted(() => {
+  const queueInstances: FakeQueueInstance[] = []
+  const addMock = vi.fn()
+  const getJobMock = vi.fn()
+  class QueueMock {
+    name: string
+    opts: Record<string, unknown>
+    add = addMock
+    getJob = getJobMock
+    close = vi.fn().mockResolvedValue(undefined)
+    constructor(name: string, opts: Record<string, unknown>) {
+      this.name = name
+      this.opts = opts
+      queueInstances.push(this as unknown as FakeQueueInstance)
     }
-    return {
-      QueueMock,
-      queueInstances,
-      addMock,
-      getQueueConnectionMock: vi.fn(),
-    }
-  })
+  }
+  return {
+    QueueMock,
+    queueInstances,
+    addMock,
+    getJobMock,
+    getQueueConnectionMock: vi.fn(),
+  }
+})
 
 vi.mock('bullmq', () => ({ Queue: QueueMock }))
 vi.mock('../../src/config/redis-tcp', () => ({
@@ -58,6 +66,7 @@ import {
   closeProcessQueue,
   enqueueProcessJob,
   getProcessQueue,
+  getProcessJobState,
   isProcessQueueConfigured,
 } from '../../src/lib/queue/process-queue'
 /* eslint-enable import/first */
@@ -221,6 +230,32 @@ describe('enqueueProcessJob — enfileiramento idempotente', () => {
       { jobId: JOB_ID },
       expect.objectContaining({ jobId: JOB_ID, delay: 1_000 }),
     )
+  })
+})
+
+describe('getProcessJobState — inspeção pro sweeper #197 (Card 6.7)', () => {
+  it('null quando a fila não está configurada (sem Redis)', async () => {
+    getQueueConnectionMock.mockReturnValue(null)
+    await expect(getProcessJobState(JOB_ID)).resolves.toBeNull()
+  })
+
+  it('{present:false} quando o job NÃO está na fila (órfão/drenado)', async () => {
+    getQueueConnectionMock.mockReturnValue(FAKE_CONNECTION)
+    getJobMock.mockResolvedValue(undefined)
+    await expect(getProcessJobState(JOB_ID)).resolves.toEqual({
+      present: false,
+    })
+  })
+
+  it('{present:true,state} quando o job está na fila', async () => {
+    getQueueConnectionMock.mockReturnValue(FAKE_CONNECTION)
+    getJobMock.mockResolvedValue({
+      getState: vi.fn().mockResolvedValue('active'),
+    })
+    await expect(getProcessJobState(JOB_ID)).resolves.toEqual({
+      present: true,
+      state: 'active',
+    })
   })
 })
 

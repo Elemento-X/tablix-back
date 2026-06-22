@@ -134,6 +134,45 @@ export function isProcessQueueConfigured(): boolean {
 }
 
 /**
+ * Estado de um job na fila BullMQ (Card 6.7 — sweeper #197). Usado pelo cron
+ * de cleanup pra distinguir "PENDING ainda na fila (worker só não pegou ainda)"
+ * de "PENDING órfão (nunca entrou na fila — crash entre create e enqueue)".
+ *
+ * - `null` → fila não configurada (dev local sem Redis): o sweeper não consegue
+ *   inspecionar e deve tratar como inconclusivo (NÃO marcar órfão às cegas).
+ * - `{ present: false }` → o job NÃO está no BullMQ (órfão, ou já drenado).
+ * - `{ present: true, state }` → está na fila no estado dado.
+ *
+ * `state` espelha os estados do BullMQ (`waiting`, `active`, `delayed`,
+ * `completed`, `failed`, `waiting-children`, `prioritized`, `unknown`).
+ */
+export interface ProcessJobState {
+  present: boolean
+  state?: string
+}
+
+/**
+ * Inspeciona o estado de um job na fila pelo `Job.id` (que é o BullMQ jobId —
+ * idempotência do enqueue, Card 6.2). Retorna `null` se a fila não estiver
+ * configurada (sweeper trata como inconclusivo).
+ *
+ * O `getState()` do BullMQ faz round-trips ao Redis — o caller (cron) deve
+ * chamar em batch com sleep/heartbeat (padrão retention.job).
+ */
+export async function getProcessJobState(
+  jobId: string,
+): Promise<ProcessJobState | null> {
+  const q = getProcessQueue()
+  if (!q) return null
+
+  const job = await q.getJob(jobId)
+  if (!job) return { present: false }
+
+  const state = await job.getState()
+  return { present: true, state }
+}
+
+/**
  * Fecha a Queue e zera o singleton. Graceful shutdown + isolamento de testes.
  */
 export async function closeProcessQueue(): Promise<void> {

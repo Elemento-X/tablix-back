@@ -265,6 +265,11 @@ describe('scheduler/observability — emitSchedulerEvent', () => {
         'cron.purge.dead_letter',
         'cron.purge.pending_overdue',
         'cron.quota_alert.email_failed',
+        // Card 6.7 (+ #197): crons de cleanup async.
+        'cron.async_cleanup.stuck_failed',
+        'cron.async_cleanup.purge_pending_overdue',
+        'cron.async_cleanup.inputfiles_unparseable',
+        'cron.async_cleanup.orphan_failed_refunded',
       ])
 
       expect(__testing.ALERTABLE_EVENTS).toEqual(expected)
@@ -279,6 +284,7 @@ describe('scheduler/observability — emitSchedulerEvent', () => {
       const expected = new Set([
         'cron.purge.dry_run.start',
         'cron.quota_alert.dry_run.start',
+        'cron.async_cleanup.dry_run.start',
       ])
       expect(__testing.ALERTABLE_IN_PROD_ONLY).toEqual(expected)
     })
