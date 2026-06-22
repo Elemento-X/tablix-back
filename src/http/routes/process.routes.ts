@@ -4,8 +4,13 @@ import { authMiddleware, requireRole } from '../../middleware/auth.middleware'
 import { rateLimitMiddleware } from '../../middleware/rate-limit.middleware'
 import * as processController from '../controllers/process.controller'
 import { processAsync } from '../controllers/process-async.controller'
+import { processStatus } from '../controllers/process-status.controller'
 import { errorResponseSchema } from '../../modules/process/process.schema'
 import { processAsyncResponseSchema } from '../../modules/process/process-async.schema'
+import {
+  processStatusParamsSchema,
+  processStatusResponseSchema,
+} from '../../modules/process/process-status.schema'
 import { env } from '../../config/env'
 
 export async function processRoutes(app: FastifyInstance) {
@@ -118,6 +123,43 @@ depois baixe em \`GET /process/download/{jobId}\` (entrega única).
         },
       },
       handler: processAsync,
+    })
+
+    // GET /process/status/:jobId — polling do LRO (Card 6.5). Mesmo dark launch
+    // do POST /async. Ownership por userId do JWT → 404 (anti-enumeração) se
+    // o job não for do usuário ou não existir.
+    server.get('/status/:jobId', {
+      preHandler: [
+        rateLimitMiddleware.processStatus,
+        authMiddleware,
+        requireRole('PRO'),
+      ],
+      schema: {
+        tags: ['Process'],
+        summary: 'Status de um job assíncrono (polling do LRO)',
+        description: `
+Retorna o estado de um job criado em \`POST /process/async\`. Faça polling até
+\`status\` ser \`COMPLETED\` ou \`FAILED\`.
+
+- **COMPLETED:** \`downloadUrl\` (\`GET /process/download/{jobId}\`) e \`outputSize\`
+  (string, bytes) ficam preenchidos. O download é de entrega única.
+- **FAILED:** \`errorMessage\` (genérico) fica preenchido.
+- Campos condicionais vêm \`null\` quando não-aplicáveis (shape estável).
+
+Job de outro usuário ou inexistente → **404** (não 403, anti-enumeração).
+        `,
+        security: [{ bearerAuth: [] }],
+        params: processStatusParamsSchema,
+        response: {
+          200: processStatusResponseSchema,
+          400: errorResponseSchema,
+          401: errorResponseSchema,
+          403: errorResponseSchema,
+          404: errorResponseSchema,
+          429: errorResponseSchema,
+        },
+      },
+      handler: processStatus,
     })
   }
 }

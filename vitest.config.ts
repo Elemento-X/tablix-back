@@ -84,6 +84,15 @@ export default defineConfig({
         // instrumentador).
         'src/lib/queue/process-worker.ts',
         'src/lib/spreadsheet/parse-in-thread.ts',
+        // Card 6.5 — controller do polling do LRO (read path). 100% cobertura
+        // unit (stmts/branch/funcs/lines); o ownership real é provado no
+        // process-status.integration.test.ts contra Postgres. Gate de produção
+        // do endpoint que o front consome em loop.
+        'src/http/controllers/process-status.controller.ts',
+        // Card 6.3 — controller do POST /process/async (write path, cria Job +
+        // enfileira). Fecha o débito de gate apontado pelo @tester do 6.5: o
+        // read path (6.5) estava gateado mas o write path (mais crítico) não.
+        'src/http/controllers/process-async.controller.ts',
       ],
       exclude: [
         // Entrypoints — testados via smoke/integration, não unitários

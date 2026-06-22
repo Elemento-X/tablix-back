@@ -85,6 +85,10 @@ export const rateLimiters = {
   //   N IPs × 5 enfileiramentos viram N×5 jobs pagos/min. Identifier fixo.
   processAsync: createLimiter(5, '1m', 'process-async'),
   processAsyncGlobalCap: createLimiter(30, '1m', 'process-async-global-cap'),
+  // GET /process/status/:jobId (Card 6.5) — read barato (sem custo de worker/
+  // Storage), mas o front faz POLLING. 60/min por IP/user acompanha o padrão
+  // do authMe (polling-friendly) sem virar vetor de abuso.
+  processStatus: createLimiter(60, '1m', 'process-status'),
 } as const
 
 export type RateLimiterType = keyof typeof rateLimiters

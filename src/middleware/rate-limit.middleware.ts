@@ -144,4 +144,6 @@ export const rateLimitMiddleware = {
   // (ordem explícita: cap global → per-IP), seguindo o padrão do checkout.
   processAsync: createRateLimitMiddleware('processAsync'),
   processAsyncGlobalCap: createGlobalCapMiddleware('processAsyncGlobalCap'),
+  // GET /process/status/:jobId (Card 6.5) — polling do front, 60/min por IP.
+  processStatus: createRateLimitMiddleware('processStatus'),
 }
