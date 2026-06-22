@@ -70,6 +70,20 @@ export default defineConfig({
         // Card #147 (5.2c) F3 — cron handler com testes unit 90%+
         'src/jobs/quota-alert.job.ts',
         'src/lib/sleep.ts',
+        // Card 6.4 — núcleo do worker async + parse isolado em thread.
+        // process-worker.ts: handler `processJob` coberto por unit (stmts/lines
+        // ~98%); o factory `createProcessWorker` é só fronteira BullMQ, exercido
+        // por integração (não instrumentável aqui). parse-in-thread.ts: runInThread/
+        // parseInWorkerThread/timeout/rebuildError cobertos; o ramo prod `.js`
+        // (resolveParseWorkerFile/WORKER_EXEC_ARGV) é inalcançável em runtime .ts.
+        // Esses 5 pontos não-unitáveis baixam o `functions` LOCAL destes 2 files
+        // (~66%/~81%), mas o gate é GLOBAL (90/85/90/90) e o pool absorve: com
+        // estes incluídos o agregado fica em ~96% funcs / ~96% lines. Por isso NÃO
+        // é preciso istanbul-ignore no código de produção nem override per-file.
+        // NÃO se inclui parse-worker.thread.ts (roda em worker_thread, fora do
+        // instrumentador).
+        'src/lib/queue/process-worker.ts',
+        'src/lib/spreadsheet/parse-in-thread.ts',
       ],
       exclude: [
         // Entrypoints — testados via smoke/integration, não unitários

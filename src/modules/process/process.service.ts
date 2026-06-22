@@ -71,9 +71,25 @@ export async function validateProLimits(
 }
 
 /**
- * Valida o limite total de linhas após o parse
+ * Valida a CARDINALIDADE de colunas selecionadas (limite do plano). Cheap
+ * (sem I/O). Exportado como SSOT — reusado pelo worker async (Card 6.4) como
+ * defesa em profundidade (o worker não confia no que o enqueue validou).
  */
-function validateRowLimits(spreadsheets: ParsedSpreadsheet[]): void {
+export function validateColumnCount(selectedColumns: string[]): void {
+  if (selectedColumns.length > PRO_LIMITS.maxColumns) {
+    throw Errors.limitExceeded(
+      `${PRO_LIMITS.maxColumns} colunas`,
+      `${selectedColumns.length} selecionadas`,
+    )
+  }
+}
+
+/**
+ * Valida o limite total de linhas após o parse. Exportado como SSOT —
+ * reusado pelo worker async (Card 6.4), que só consegue contar linhas DEPOIS
+ * do parse (diferente dos limites de tamanho, validados no enqueue/6.3).
+ */
+export function validateRowLimits(spreadsheets: ParsedSpreadsheet[]): void {
   // Verifica linhas por arquivo individual (D.1)
   for (const spreadsheet of spreadsheets) {
     if (spreadsheet.rowCount > PRO_LIMITS.maxRowsPerFile) {
@@ -126,12 +142,7 @@ export async function processSpreadsheets(
   await validateProLimits(userId, files)
 
   // Valida número de colunas (também cheap)
-  if (selectedColumns.length > PRO_LIMITS.maxColumns) {
-    throw Errors.limitExceeded(
-      `${PRO_LIMITS.maxColumns} colunas`,
-      `${selectedColumns.length} selecionadas`,
-    )
-  }
+  validateColumnCount(selectedColumns)
 
   // 2. Atomic quota check + increment (Card 4.2 — fecha WV-2026-002).
   // Plan='PRO' hardcoded — controller atualmente só chama esta função para
