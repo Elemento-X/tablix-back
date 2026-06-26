@@ -52,10 +52,11 @@ const WORKER_EXEC_ARGV = isTsRuntime ? ['--require', 'tsx/cjs'] : []
  * Teto de heap do worker_thread de parse (@security/@devops ALTO). O timeout é
  * guarda de TEMPO; isto é a guarda de MEMÓRIA. worker_threads COMPARTILHAM o RSS
  * do processo — sem limite, um xlsx crafted que descomprima pra GBs derrubaria o
- * PROCESSO worker inteiro (OOM kill no Fly 256MB) + crash-loop. Com o limite, o
- * OOM vira crash do THREAD (`ERR_WORKER_OUT_OF_MEMORY` no evento 'error'), que o
- * handler classifica como PERMANENTE (sem retry). Dimensionado < metade dos
- * 256MB pra deixar margem ao pai (BullMQ + Prisma pool).
+ * processo inteiro + crash-loop. Com o limite, o OOM vira crash do THREAD
+ * (`ERR_WORKER_OUT_OF_MEMORY` no evento 'error'), que o handler classifica como
+ * PERMANENTE (sem retry). O cap de 96+32MB é conservador (dimensionado pelo pior
+ * caso do caminho SYNC, que roda no process group `web`); ambos os process groups
+ * têm 512MB no fly.toml, deixando folga ampla ao pai (BullMQ + Prisma pool).
  */
 const WORKER_MAX_OLD_GEN_MB = 96
 const WORKER_MAX_YOUNG_GEN_MB = 32

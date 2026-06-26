@@ -1,0 +1,53 @@
+# Card 7.1 — contexto de build mínimo (imagem reprodutível + sem secret leak).
+# Tudo que NÃO é necessário pra `prisma generate` + `tsc` + runtime fica fora.
+
+# Dependências e artefatos de build (reinstalados/recompilados na imagem)
+node_modules
+dist
+coverage
+*.tsbuildinfo
+
+# Segredos e ambiente local — NUNCA entram na imagem (vêm de `fly secrets`).
+# Regra .env* ABSOLUTA: nenhum stage faz `COPY .`, e nada precisa do .env.example
+# no contexto — manter tudo fora é mais seguro por default (defesa contra um
+# `COPY . .` futuro reintroduzir o arquivo na imagem).
+.env
+.env.*
+
+# Git e CI
+.git
+.gitignore
+.github
+
+# Testes e fixtures (não rodam no runtime; mantêm a imagem enxuta e
+# evitam que `tsc` emita dist/tests — só `src` é copiado no builder)
+tests
+vitest.config.ts
+vitest.integration.config.ts
+**/*.test.ts
+**/*.spec.ts
+
+# Infra do Claude / docs / planos (irrelevantes pro runtime)
+.claude
+docs
+*.md
+!README.md
+
+# Scripts de dev e tooling
+scripts
+.eslintrc*
+.prettierrc*
+.editorconfig
+.vscode
+.idea
+
+# Logs e temporários
+logs
+*.log
+npm-debug.log*
+.DS_Store
+
+# O próprio Dockerfile e fly.toml não precisam entrar no contexto
+Dockerfile
+.dockerignore
+fly.toml

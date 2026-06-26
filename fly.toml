@@ -1,0 +1,132 @@
+# Card 7.1 — Fly.io (STAGING). Twin fiel de produção (D-STAGING-ENV = production).
+#
+# App multi-process: UMA imagem, DOIS process groups (web HTTP + worker async).
+# O `web` recebe tráfego HTTP; o `worker` consome a fila BullMQ (Redis TCP).
+#
+# ATENÇÃO — este arquivo é AUTHORING (Card 7.1). O deploy real é o Card 7.2/7.3,
+# depois que os secrets estiverem setados (NODE_ENV=production faz o env.ts exigir
+# todos: 6 price IDs, Upstash REST+TCP, Supabase, Sentry, Stripe — sem eles o boot
+# falha de propósito). Trocar `tablix-back-staging` ao criar o app de produção (7.6).
+#
+# MIGRATIONS (resolve @devops ALTO): NÃO há `release_command` aqui — a imagem de
+# runtime é intencionalmente SEM o `prisma` CLI (peso morto de ~180MB no worker).
+# O ponto de migração é EXPLÍCITO e gated no Card 7.3 ("Prisma migrate em staging"):
+# `prisma migrate deploy` rodado uma vez via DIRECT_URL (conexão direta, não pooler),
+# disciplina expand-contract (migration aditiva ANTES do deploy do código que a usa;
+# contract depois). Single-run controlado > release_command automático em todo deploy.
+
+app = "tablix-back-staging"
+primary_region = "gru" # São Paulo — menor latência pro público BR
+
+# Shutdown gracioso: o Fly manda SIGTERM e espera kill_timeout antes do SIGKILL.
+# 60s cobre o pior caso do `web` (SHUTDOWN_DRAIN_MS 15s + app.close + scheduler 30s)
+# e o do `worker` (drain do job ativo até SHUTDOWN_FORCE_MS 20s — binding #1).
+kill_signal = "SIGTERM"
+kill_timeout = "60s"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  NODE_ENV = "production"
+  PORT = "3333"
+  # Sentry: environment/release são literais NÃO-secretos — pertencem ao [env]
+  # (não a `fly secrets`), senão o staging tagueia eventos como "development"
+  # (default do env.ts) e quebra triagem/dashboards (@tester MÉDIO). Trocar para
+  # "production" no app de 7.6. SENTRY_RELEASE (sha do deploy) é setado pelo CI.
+  SENTRY_ENVIRONMENT = "staging"
+
+[deploy]
+  # Estratégia explícita (não default implícito). `rolling` substitui a instância.
+  # Zero-downtime real exige min_machines_running >= 2 OU strategy = "bluegreen" —
+  # decisão de custo adiada pro go-live (7.6); em staging single-instance, a janela
+  # curta de troca é aceitável. Rollback: `fly releases` → `fly deploy --image <prev>`.
+  strategy = "rolling"
+
+[processes]
+  web = "node dist/src/server.js"
+  worker = "node dist/src/worker.js"
+
+# ------------------------------------------------------------
+# web — servidor HTTP (auth, billing, webhooks, crons rodam AQUI via server.ts)
+# ------------------------------------------------------------
+[http_service]
+  internal_port = 3333
+  force_https = true
+  processes = ["web"]
+
+  # min_machines_running=1 + auto_stop=false: o `web` NUNCA dorme. Crons e o
+  # webhook do Stripe vivem no processo HTTP — scale-to-zero os mataria (R-7 do
+  # pre-mortem). Até migrar crons pra Fly scheduled machines (#149), web fica de pé.
+  auto_stop_machines = false
+  auto_start_machines = true
+  min_machines_running = 1
+
+  # Concurrency como backstop de MEMÓRIA, não de CPU (@devops ALTO): o multipart de
+  # upload bufferiza até 30MB (PRO maxTotalSize) por request em memória ANTES do
+  # parse. Em 512MB, ~16 uploads concorrentes já encostam — daí o cap conservador.
+  # O parse em si é síncrono (serializa no event loop), não worker_thread no web.
+  # A defesa fina (cap de concorrência POR-ROTA no /process/sync) é app-layer →
+  # card de follow-up. Aqui é só o teto grosso anti-burst.
+  [http_service.concurrency]
+    type = "requests"
+    soft_limit = 50
+    hard_limit = 80
+
+  # Liveness HTTP: /health/live é 200 puro (não toca DB/Redis, sem rate limit) —
+  # detecta processo travado/deadlock sem falso-negativo por dependência externa.
+  [[http_service.checks]]
+    method = "GET"
+    path = "/health/live"
+    interval = "15s"
+    timeout = "2s"
+    grace_period = "15s" # margem pro cold boot do Firecracker (engine Prisma + Sentry)
+
+  # Readiness HTTP: /health/ready checa DB+Redis (503 se degraded, cache SWR 2s).
+  # Gate de ROTEAMENTO — em rolling deploy, a máquina nova só recebe tráfego depois
+  # de pronta, evitando janela de 503 com pool frio (@devops MÉDIO). Intervalo maior
+  # pra não flapar a instância única por blip transiente de dependência.
+  [[http_service.checks]]
+    method = "GET"
+    path = "/health/ready"
+    interval = "30s"
+    timeout = "3s"
+    grace_period = "20s"
+
+# ------------------------------------------------------------
+# worker — processo async (BullMQ). Sem HTTP → sem http_service/health check HTTP;
+# a liveness é via heartbeat de profundidade de fila no log (worker.ts, binding #6).
+# ------------------------------------------------------------
+# DARK LAUNCH: o worker só faz trabalho com ASYNC_PROCESSING_ENABLED=true. Com a
+# flag OFF, worker.ts retorna e o processo encerra (exit 0) — por isso o process
+# group `worker` nasce escalado a 0 (`fly scale count worker=0`) e só vai a 1 quando
+# o async for ligado (junto com a flag). Quando ligado: `fly scale count worker=1`
+# (exatamente 1 — binding #1, sem dois workers concorrendo na mesma fila no free).
+#
+# restart on-failure: garante que o exit 0 do dark-launch NÃO entre em restart-loop
+# se a máquina worker subir com a flag off (defesa por construção, não só pelo
+# procedimento manual de scale 0 — @devops MÉDIO).
+[[restart]]
+  policy = "on-failure"
+  retries = 5
+  processes = ["worker"]
+
+# ------------------------------------------------------------
+# VM sizing por process group
+# ------------------------------------------------------------
+# worker com 512MB: o parse de xlsx descomprime na memória (worker_thread com heap
+# 96+32MB + base do processo). 256MB é apertado e arrisca OOM kill (pre-mortem #2).
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"
+  processes = ["worker"]
+
+# web com 512MB (subido de 256): Fastify + Prisma engine in-process + Sentry/OTel +
+# profiling já consomem ~150-200MB de baseline (@performance MÉDIO); somado ao buffer
+# de upload (até 30MB/request) e à serialização sob burst, 256MB arriscava OOM.
+# Tuning fino (voltar a 256?) depende de medir RSS p95 em staging sob carga (7.5) —
+# card de follow-up.
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"
+  processes = ["web"]
