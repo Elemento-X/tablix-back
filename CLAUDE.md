@@ -8,6 +8,18 @@
 - Test (específico): `npm test -- --testPathPattern=<pattern>`
 - Test coverage: `npm run test:coverage`
 
+### Webhook Stripe em dev (Card 7.9)
+
+Pra testar o fluxo checkout → webhook → criação de token localmente (test mode):
+
+1. Login (1× a cada 90 dias): `stripe login` — autoriza a conta `acct_1Q9u4QIucjosdX8K`.
+2. Num terminal SEPARADO, manter rodando durante os testes:
+   `stripe listen --forward-to localhost:3333/webhooks/stripe`
+3. O `whsec_` do listener já está no `.env` (`STRIPE_WEBHOOK_SECRET`). Capturar de novo (consistente por conta/device): `stripe listen --print-secret`.
+4. Disparar evento de teste: `stripe trigger checkout.session.completed`.
+
+Sem o `stripe listen` rodando, `/webhooks/stripe` rejeita por assinatura inválida — o backend sobe normal mesmo assim. **Prod é outro fluxo**: endpoint no Dashboard → Webhooks → `whsec_` de verdade do Stripe.
+
 ## Regras de código
 
 - Todo texto visível ao usuário DEVE usar sistema de i18n (se aplicável)
