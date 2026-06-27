@@ -91,10 +91,12 @@ CREATE POLICY "tablix_history_staging_delete_own_folder"
   );
 
 -- =============================================================================
--- ROLLBACK plan (manual, não automatizado)
+-- ROLLBACK — automatizado no Card 7.14 (NÃO copiar/colar à mão)
 -- =============================================================================
--- DROP POLICY tablix_history_staging_{select,insert,update,delete}_own_folder
---   ON storage.objects;
--- DELETE FROM storage.buckets WHERE id = 'tablix-history-staging';
--- (objetos deletados em cascade)
+-- Script executável (safe-by-default, dry-run): rollback/20260426000001_..._down.sql
+-- Runbook (Storage-API esvazia blobs ANTES + pré-flight + verificação):
+--   docs/runbooks/storage-rollback.md
+-- NOTA: a FK storage.objects.bucket_id → storage.buckets é NO ACTION (NÃO cascade)
+-- — os objetos saem ANTES do bucket. E `DELETE FROM storage.objects` apaga só a
+-- metadata; os binários saem pela Storage API (Passo 0 do runbook).
 -- =============================================================================

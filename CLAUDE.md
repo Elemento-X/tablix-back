@@ -42,6 +42,14 @@
 - Atalhos rejeitados conscientemente: `geoip-lite` (base desatualizada, VPN-bypass trivial), detecção via `Accept-Language` (não é sinal de país)
 - Cap global anti denial-of-wallet em `/billing/create-checkout` (30 req/min agregado) implementado em 2026-04-20 via `createGlobalCapMiddleware` — defesa em profundidade sobre o limiter per-IP (5/min) que sozinho permitia `N IPs × 5 = N×5` chamadas Stripe pagas/minuto
 
+### RLS — Row-Level Security (decisão fechada — Card 7.11, 2026-06-26)
+
+- **Todas as tabelas em `public` têm RLS ON com policy `deny-all` explícita** (`TO public USING(false) WITH CHECK(false)`) — padrão da migration `20260518200100` (quota_alerts_sent). Não são policies user-scoped: o frontend NUNCA toca o banco direto (arquitetura API-driven; acesso a dado é exclusivamente server-side via Fastify).
+- **Backend bypassa RLS por design**: conecta como role `postgres` (`rolbypassrls=true`, confirmado empiricamente). Por isso o deny-all não afeta nenhuma query do app — só fecha a porta do PostgREST/anon key (vetor real: a anon key é embarcada no frontend por design Supabase, e sem RLS qualquer um faria `SELECT * FROM tokens`).
+- **NÃO usar `FORCE ROW LEVEL SECURITY`**: FORCE aplica RLS até ao owner/`postgres` → quebraria o backend inteiro, sem fechar nenhum vetor adicional (anon nunca é owner). As tabelas usam `ENABLE` sem FORCE.
+- Defesa em profundidade adicional: `REVOKE ALL ... FROM anon, authenticated` nas tabelas sensíveis (2ª camada; não afeta `postgres`/`service_role`). Guard-rail recomendado pós-go-live: remover `public` dos Exposed schemas da Data API e/ou desabilitar a anon key (backend usa Prisma/conexão direta, não PostgREST).
+- Migration: `supabase/migrations/20260626130000_card_7_11_enable_rls_public_tables.sql`. Reversível (`DISABLE ROW LEVEL SECURITY` + `DROP POLICY`). Esta seção é SSOT — supersede comentários antigos de migration que descreviam `usage` como "user-scoped".
+
 ## Proibições
 
 - NÃO usar `any` em TypeScript
