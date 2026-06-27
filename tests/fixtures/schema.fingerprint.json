@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-06-21T19:19:23.075Z",
+  "generatedAt": "2026-06-27T03:15:18.671Z",
   "database": "container:postgres-17-alpine",
-  "fingerprint": "a948fc7cb7999a9ec2ce3f1d1a9093949914f2aa42dc7ec2ce0617acf57e3989",
+  "fingerprint": "b4933277deabf1fa01cce43ae440276ec04d9920d9f55645de25984281b84889",
   "model": {
     "extensions": [
       "pgcrypto"
@@ -498,6 +498,18 @@
             "default": null
           },
           {
+            "name": "output_format",
+            "type": "character varying(8)",
+            "nullable": true,
+            "default": null
+          },
+          {
+            "name": "output_size",
+            "type": "bigint",
+            "nullable": true,
+            "default": null
+          },
+          {
             "name": "error_message",
             "type": "text",
             "nullable": true,
@@ -517,6 +529,24 @@
           },
           {
             "name": "completed_at",
+            "type": "timestamp with time zone(3)",
+            "nullable": true,
+            "default": null
+          },
+          {
+            "name": "downloaded_at",
+            "type": "timestamp with time zone(3)",
+            "nullable": true,
+            "default": null
+          },
+          {
+            "name": "inputs_purged_at",
+            "type": "timestamp with time zone(3)",
+            "nullable": true,
+            "default": null
+          },
+          {
+            "name": "expires_at",
             "type": "timestamp with time zone(3)",
             "nullable": true,
             "default": null
@@ -838,8 +868,8 @@
       },
       {
         "table": "audit_log",
-        "name": "idx_audit_log_actor_created_at",
-        "definition": "CREATE INDEX idx_audit_log_actor_created_at ON public.audit_log USING btree (actor, created_at DESC)"
+        "name": "idx_audit_log_actor_created",
+        "definition": "CREATE INDEX idx_audit_log_actor_created ON public.audit_log USING btree (actor, created_at DESC) WHERE (actor IS NOT NULL)"
       },
       {
         "table": "audit_log",
@@ -955,6 +985,11 @@
         "table": "file_history_dead_letter",
         "name": "uq_fhdl_active_per_origin",
         "definition": "CREATE UNIQUE INDEX uq_fhdl_active_per_origin ON public.file_history_dead_letter USING btree (original_file_history_id) WHERE (resolved_at IS NULL)"
+      },
+      {
+        "table": "jobs",
+        "name": "idx_jobs_expires_at",
+        "definition": "CREATE INDEX idx_jobs_expires_at ON public.jobs USING btree (expires_at) WHERE (expires_at IS NOT NULL)"
       },
       {
         "table": "jobs",
@@ -1323,6 +1358,12 @@
         "name": "file_history_dead_letter_pkey",
         "type": "p",
         "definition": "PRIMARY KEY (id)"
+      },
+      {
+        "table": "jobs",
+        "name": "jobs_output_format_check",
+        "type": "c",
+        "definition": "CHECK (((output_format IS NULL) OR ((output_format)::text = ANY ((ARRAY['xlsx'::character varying, 'csv'::character varying])::text[]))))"
       },
       {
         "table": "jobs",

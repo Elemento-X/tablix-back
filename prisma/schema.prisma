@@ -204,13 +204,16 @@ model AuditLog {
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
 
   @@index([action], map: "idx_audit_log_action")
-  @@index([actor, createdAt(sort: Desc)], map: "idx_audit_log_actor_created_at")
   @@index([createdAt], map: "idx_audit_log_created_at")
-  // NOTA: `idx_audit_log_failures` é um PARTIAL INDEX (`WHERE success = false`)
-  // gerenciado via raw SQL em supabase/migrations/20260419230228_add_audit_log.sql.
-  // Prisma não suporta partial indexes declarativamente. Não usar
-  // `prisma migrate dev` (drop do índice); preferir `prisma db pull` ou
-  // migrations SQL quando editar esta model.
+  // NOTA: índices PARTIAL gerenciados via raw SQL (Prisma não suporta partial
+  // declarativamente). Não usar `prisma migrate dev` (drop do índice); preferir
+  // `prisma db pull` ou migrations SQL ao editar esta model:
+  //   - `idx_audit_log_actor_created` (actor, created_at DESC) WHERE actor IS NOT NULL
+  //     — forense por actor; substitui o antigo idx_audit_log_actor_created_at
+  //     (entries com actor NULL = webhook pré-resolução nunca são buscadas por actor).
+  //     Card 7.12, migration 20260627120000_card_7_12_audit_log_actor_partial_index.sql.
+  //   - `idx_audit_log_failures` (WHERE success = false)
+  //     — supabase/migrations/20260419230228_add_audit_log.sql.
   @@map("audit_log")
 }
 

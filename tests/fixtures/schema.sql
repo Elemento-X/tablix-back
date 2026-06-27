@@ -205,7 +205,7 @@ CREATE TABLE "audit_log" (
 );
 ALTER TABLE "audit_log" SET (toast_tuple_target = 4096);
 CREATE INDEX "idx_audit_log_action"            ON "audit_log" ("action");
-CREATE INDEX "idx_audit_log_actor_created_at"  ON "audit_log" ("actor", "created_at" DESC);
+CREATE INDEX "idx_audit_log_actor_created"     ON "audit_log" ("actor", "created_at" DESC) WHERE ("actor" IS NOT NULL);
 CREATE INDEX "idx_audit_log_created_at"        ON "audit_log" ("created_at");
 CREATE INDEX "idx_audit_log_failures"          ON "audit_log" ("created_at" DESC) WHERE (success = false);
 
