@@ -44,6 +44,11 @@ export const ErrorCodes = {
   // AWAIT obrigatório (D-1): caller (cron purge, DSAR) deve abortar em falha.
   LEGAL_AUDIT_PERSIST_FAILED: 'LEGAL_AUDIT_PERSIST_FAILED',
 
+  // Capacidade — cap de concorrência por-rota atingido (Card #219). 503 +
+  // Retry-After. Distinto de RATE_LIMITED (429, per-cliente) e QUEUE_UNAVAILABLE
+  // (503, fila async indisponível): aqui é backstop GLOBAL de memória do /sync.
+  SERVICE_BUSY: 'SERVICE_BUSY',
+
   // Geral
   VALIDATION_ERROR: 'VALIDATION_ERROR',
   // Erro de cliente genérico (4xx) tratado no error handler global — JSON
@@ -224,6 +229,14 @@ export const Errors = {
     details?: ErrorDetails,
   ) =>
     new AppError(ErrorCodes.LEGAL_AUDIT_PERSIST_FAILED, message, 500, details),
+
+  // Cap de concorrência por-rota atingido (Card #219). 503 — backstop de memória
+  // do /process/sync: cada request bufferiza até 30MB + parseia no event loop;
+  // sob burst, N×30MB estoura os 512MB da VM. Cliente PRO deve retentar (o
+  // Retry-After é setado pelo middleware, fora do AppError).
+  serviceBusy: (
+    message = 'Servidor temporariamente no limite de capacidade. Tente novamente em instantes.',
+  ) => new AppError(ErrorCodes.SERVICE_BUSY, message, 503),
 
   validationError: (message: string, details?: ErrorDetails) =>
     new AppError(ErrorCodes.VALIDATION_ERROR, message, 400, details),

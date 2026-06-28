@@ -33,6 +33,13 @@ export async function buildApp() {
     logger: buildLoggerOptions(),
     genReqId,
     trustProxy: resolveTrustProxy(),
+    // requestTimeout (api-routes.md + Card #219/F2 @security): teto pra RECEBER a
+    // request inteira. Sem ele (default 0 = desabilitado), um upload lento
+    // (slowloris) no /process/sync segura indefinidamente o slot de concorrência
+    // (#219) → DoS. 120s cobre uploads grandes legítimos (até 30MB) em conexões
+    // normais; o caminho async existe pra arquivos que excedam isso. Ao expirar,
+    // o Fastify encerra a request → dispara o 'close'/onResponse → libera o slot.
+    requestTimeout: 120_000,
   }).withTypeProvider<ZodTypeProvider>()
 
   // Expõe o reqId ao cliente pra correlação em debug/incident response.

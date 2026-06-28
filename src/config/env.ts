@@ -61,6 +61,19 @@ const envSchema = z
       .min(5_000)
       .max(600_000)
       .default(300_000),
+    // PROCESS_SYNC_MAX_CONCURRENCY: cap de requests /process/sync EM VOO por
+    // processo web (Card #219, backstop anti-OOM). Cada request bufferiza até 30MB
+    // + materializa o modelo de objeto da planilha (pico real ~120-180MB no pior
+    // caso); em 512MB de VM, N concorrentes estouram → OOM kill. Default 3
+    // (memória E event-loop single-thread favorecem cap baixo, @performance #219).
+    // Tunável sem rebuild via fly secrets — o valor final sai da medição de RSS p95
+    // em staging sob carga (7.5). Range 1..16.
+    PROCESS_SYNC_MAX_CONCURRENCY: z.coerce
+      .number()
+      .int()
+      .min(1)
+      .max(16)
+      .default(3),
     // Crons de cleanup async (Card 6.7 + sweeper #197). Kill-switch DEDICADO
     // (não acoplado a HISTORY_FEATURE_ENABLED como os crons LGPD): gate efetivo
     // = ASYNC_PROCESSING_ENABLED && CRON_JOBS_CLEANUP_ENABLED. Default false em

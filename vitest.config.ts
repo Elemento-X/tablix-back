@@ -42,6 +42,11 @@ export default defineConfig({
         'src/modules/auth/auth.service.ts',
         'src/middleware/auth.middleware.ts',
         'src/middleware/rate-limit.middleware.ts',
+        // Card #219 — cap de concorrência por-rota (backstop de memória do
+        // /process/sync). Gate de produção: sem ele, burst de uploads → OOM kill.
+        // 100% unit (counter+WeakSet são puros); o wiring preHandler/onResponse
+        // é provado por fastify.inject no mesmo arquivo de teste.
+        'src/middleware/concurrency-limit.middleware.ts',
         'src/errors/app-error.ts',
         'src/http/controllers/billing.controller.ts',
         'src/http/controllers/webhook.controller.ts',

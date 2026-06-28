@@ -218,8 +218,12 @@ export async function processSync(
     // Processa as planilhas
     const result = await processSpreadsheets(userId, files, validation.data)
 
-    // Memory logging
-    const heapAfter = process.memoryUsage().heapUsed
+    // Memory logging. RSS é o sinal que importa: o OOM kill (kernel/Fly) é por
+    // RSS, que inclui buffers nativos (Prisma engine, Buffers fora do heap V8,
+    // fragmentação) — heapUsed sozinho subestima (Card #219 / F-06 @performance).
+    // É o número que calibra PROCESS_SYNC_MAX_CONCURRENCY na medição do 7.5.
+    const mem = process.memoryUsage()
+    const heapAfter = mem.heapUsed
     const heapDeltaMB = ((heapAfter - heapBefore) / 1024 / 1024).toFixed(2)
     request.log.info(
       {
@@ -229,6 +233,7 @@ export async function processSync(
         heapBeforeMB: (heapBefore / 1024 / 1024).toFixed(2),
         heapAfterMB: (heapAfter / 1024 / 1024).toFixed(2),
         heapDeltaMB,
+        rssAfterMB: (mem.rss / 1024 / 1024).toFixed(2),
       },
       'process/sync heap usage',
     )

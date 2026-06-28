@@ -113,6 +113,7 @@
     "pii-retention-missing": { "description": "Dado pessoal sem política de retenção ou anonimização programada — armazenado eternamente por default", "default_severity": "high" },
     "consent-logging-missing": { "description": "Consentimento coletado sem registro de versão da política, timestamp, IP e user agent", "default_severity": "high" },
     "denial-of-wallet": { "description": "Endpoint que dispara chamada paga sem rate limit por custo, cap global ausente, ou falta de kill-switch em worker", "default_severity": "high" },
+    "resource-exhaustion": { "description": "Consumo descontrolado de recurso (memória/slot/conexão) — OOM por concorrência, slot leak sem release garantido, hold não-bounded por falta de timeout (slowloris), input sem cap dimensional", "default_severity": "high" },
     "prompt-injection": { "description": "Input do usuário concatenado no system prompt sem delimitadores estruturados ou instrução explícita anti-override", "default_severity": "high" },
     "llm-tool-use-unchecked": { "description": "LLM com acesso a ferramentas (DB, fetch, email) sem verificação de authz por ferramenta — permite exfiltração/escalada via function calling", "default_severity": "critical" },
     "llm-output-unsanitized": { "description": "Resposta do LLM renderizada no DOM ou persistida no DB sem sanitização — XSS/injection via LLM", "default_severity": "high" },

@@ -2,6 +2,7 @@ import { FastifyInstance } from 'fastify'
 import { ZodTypeProvider } from 'fastify-type-provider-zod'
 import { authMiddleware, requireRole } from '../../middleware/auth.middleware'
 import { rateLimitMiddleware } from '../../middleware/rate-limit.middleware'
+import { processSyncConcurrency } from '../../middleware/concurrency-limit.middleware'
 import * as processController from '../controllers/process.controller'
 import { processAsync } from '../controllers/process-async.controller'
 import { processStatus } from '../controllers/process-status.controller'
@@ -24,7 +25,13 @@ export async function processRoutes(app: FastifyInstance) {
       rateLimitMiddleware.process,
       authMiddleware,
       requireRole('PRO'),
+      // Card #219: cap de concorrência POR-ROTA (backstop de memória). ÚLTIMO
+      // preHandler — só request PRO autenticado consome um slot. Excedente → 503.
+      processSyncConcurrency.acquire,
     ],
+    // Libera o slot em QUALQUER desfecho (sucesso ou erro). onResponse roda
+    // depois do response enviado; o WeakSet garante decremento só de quem adquiriu.
+    onResponse: [processSyncConcurrency.release],
     schema: {
       tags: ['Process'],
       summary: 'Unificar planilhas',
@@ -70,6 +77,9 @@ curl -X POST /process/sync \\
         401: errorResponseSchema,
         403: errorResponseSchema,
         429: errorResponseSchema,
+        // Card #219: cap de concorrência por-rota atingido (backstop de memória).
+        // Header Retry-After (segundos) acompanha. Cliente PRO deve retentar.
+        503: errorResponseSchema,
       },
     },
     handler: processController.processSync,
