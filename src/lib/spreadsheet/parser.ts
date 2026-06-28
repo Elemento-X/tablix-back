@@ -301,8 +301,11 @@ function parseCsv(buffer: Buffer, fileName: string): ParsedSpreadsheet {
 
   if (result.errors.length > 0) {
     const firstError = result.errors[0]
+    // Card #224 (@security PII): NÃO interpolar `fileName` (controlado pelo usuário,
+    // pode conter PII) na mensagem — ela vai pro Sentry via captureException no 500.
+    // firstError.message do papaparse é texto estrutural da lib (sem dado do usuário).
     throw Errors.processingFailed(
-      `Erro ao processar CSV "${fileName}": ${firstError.message}`,
+      `Erro ao processar o arquivo CSV: ${firstError.message}`,
     )
   }
 
@@ -352,16 +355,14 @@ function parseExcel(
   // Pega a primeira planilha
   const sheetName = workbook.SheetNames[0]
   if (!sheetName) {
-    throw Errors.processingFailed(
-      `Arquivo Excel "${fileName}" nao contem planilhas`,
-    )
+    // Card #224 (@security PII): sem fileName na mensagem (vai pro Sentry no 500).
+    throw Errors.processingFailed('O arquivo Excel não contém planilhas')
   }
 
   const worksheet = workbook.Sheets[sheetName]
   if (!worksheet) {
-    throw Errors.processingFailed(
-      `Erro ao ler planilha "${sheetName}" de "${fileName}"`,
-    )
+    // Card #224 (@security PII): sem fileName/sheetName na mensagem (Sentry).
+    throw Errors.processingFailed('Erro ao ler a planilha do arquivo Excel')
   }
 
   // Converte para JSON com headers (header: 1 retorna array de arrays)

@@ -68,9 +68,8 @@ export async function stripeWebhook(
     // forgery dispara a forensics anti-abuso (circuit breaker + audit A09): contabilizar
     // uma falha de configuração nossa contra o IP do Stripe legítimo poluiria o circuit
     // breaker e registraria um "ataque" que não existe. Misconfig = 500 propaga limpo
-    // pro handler global, SEM a forensics anti-forgery. NOTA: AppError 500 hoje NÃO
-    // dispara Sentry (o handler curto-circuita o branch AppError antes do captureException)
-    // — observabilidade de misconfig 5xx é débito separado (card #224). Em prod o secret é
+    // pro handler global, SEM a forensics anti-forgery — e AGORA dispara Sentry (Card
+    // #224: AppError statusCode>=500 alerta no handler global). Em prod o secret é
     // exigido no boot (env.ts superRefine), então este ramo é praticamente inalcançável lá.
     const isSignatureFailure =
       error instanceof AppError &&

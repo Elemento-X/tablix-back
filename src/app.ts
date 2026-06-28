@@ -176,6 +176,31 @@ export async function buildApp() {
   app.setErrorHandler(
     (error: FastifyError | AppError | Error, request, reply) => {
       if (error instanceof AppError) {
+        // Card #224: AppError de SERVIDOR (5xx) é falha NOSSA e DEVE alertar no Sentry —
+        // webhookFailed/checkoutFailed/portalFailed/processingFailed/legalAuditPersistFailed/
+        // internal eram devolvidos sem captureException (o branch retornava antes do Sentry
+        // no fim do handler) → falha de servidor invisível no monitoramento. 4xx
+        // (cliente/forgery) continua FORA do Sentry (gate 7.5 / #215).
+        //
+        // EXCEÇÃO 503 (@security/@tester #224): serviceBusy (#219, backpressure do cap) e
+        // queueUnavailable (Redis down) são DEGRADAÇÃO ESPERADA, não exceção de código —
+        // capturá-las por-evento afoga os 500 reais no SLI e queima quota do Sentry sob
+        // burst legítimo (o mesmo risco que motivou tirar 4xx no #215). O sinal de
+        // capacidade/infra vem por TAXA: metric `concurrency.rejected` (middleware) e
+        // /health/ready (checa Redis). 503 fica no log (trilha), fora do Sentry.
+        if (error.statusCode >= 500 && error.statusCode !== 503) {
+          request.log.error(error)
+          captureException(error, {
+            reqId: request.id,
+            route: request.routeOptions?.url ?? 'unknown',
+          })
+        } else if (error.statusCode === 503) {
+          // Trilha em log (sem Sentry) — alerta por taxa cobre o sinal.
+          request.log.warn(
+            { code: error.code, statusCode: error.statusCode },
+            'AppError 503 (backpressure/infra) — log-only, alerta por taxa',
+          )
+        }
         return reply.status(error.statusCode).send(error.toJSON())
       }
 

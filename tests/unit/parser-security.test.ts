@@ -553,16 +553,31 @@ describe('parseSpreadsheet CSV — malformed CSV error path', () => {
     // PapaParse detects trailing quote malformation and reports it as error.
     // This exercises the error path at line 218-222 of parser.ts.
     const malformed = Buffer.from('"Name","Age\n"Alice",30\n')
+    // Card #224 (@security PII): mensagem genericizada — "Erro ao processar o
+    // arquivo CSV: <texto estrutural do papaparse>", sem o fileName.
     expect(() => parseSpreadsheet(malformed, 'bad.csv')).toThrow(
-      'Erro ao processar CSV',
+      'Erro ao processar o arquivo CSV',
     )
   })
 
-  it('error message includes the file name', () => {
+  it('error message does NOT leak the file name (Card #224 PII)', () => {
+    // Card #224: o fileName NÃO pode entrar na mensagem do erro — ela é enviada
+    // ao Sentry via captureException no 500 (processingFailed). Nome de arquivo
+    // do usuário é PII potencial (ex: "folha_pagamento_joao_cpf.csv"). Este teste
+    // inverte o assert antigo (que exigia o fileName presente) e vira guard de
+    // regressão: se alguém reintroduzir o nome na mensagem, quebra aqui.
     const malformed = Buffer.from('"Name","Age\n"Alice",30\n')
-    expect(() => parseSpreadsheet(malformed, 'report.csv')).toThrow(
-      'report.csv',
-    )
+    let captured: Error | undefined
+    try {
+      parseSpreadsheet(malformed, 'folha_pagamento_joao.csv')
+    } catch (err) {
+      captured = err as Error
+    }
+    expect(captured).toBeInstanceOf(Error)
+    expect(captured?.message).not.toContain('folha_pagamento_joao.csv')
+    expect(captured?.message).not.toContain('folha_pagamento_joao')
+    // Sanidade: ainda é a mensagem genérica esperada.
+    expect(captured?.message).toContain('Erro ao processar o arquivo CSV')
   })
 })
 
