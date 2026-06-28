@@ -80,6 +80,13 @@ const {
   COLUMN_LIMITS,
 } = __testing
 
+// Card #223 (decisão #218 / WV-2026-010): `prepareMetadata` carimba a origem do
+// ambiente (`env`) em TODO metadata, vindo de `env.SENTRY_ENVIRONMENT`. Aqui o
+// `vi.mock('../../src/config/env')` acima fixa `SENTRY_ENVIRONMENT: 'test'`,
+// então o valor carimbado é determinístico e igual a 'test'. Centralizado pra
+// evitar hardcode espalhado — se o mock mudar, muda só aqui.
+const ENV_TAG = 'test'
+
 beforeEach(() => {
   addBreadcrumbMock.mockReset()
   auditLogCreateMock.mockReset()
@@ -190,13 +197,15 @@ describe('sanitizeIp', () => {
 })
 
 describe('prepareMetadata', () => {
-  it('retorna undefined quando input é undefined', () => {
-    expect(prepareMetadata(undefined)).toBeUndefined()
+  it('retorna objeto só com env quando input é undefined (#223)', () => {
+    // Antes do #223 retornava undefined. Agora SEMPRE retorna objeto carimbado
+    // com a origem do ambiente — base da identificação/purga de dados staging.
+    expect(prepareMetadata(undefined)).toEqual({ env: ENV_TAG })
   })
 
-  it('passa objeto pequeno inalterado semanticamente', () => {
+  it('passa objeto pequeno inalterado + carimba env (#223)', () => {
     const out = prepareMetadata({ foo: 'bar', count: 42 })
-    expect(out).toEqual({ foo: 'bar', count: 42 })
+    expect(out).toEqual({ foo: 'bar', count: 42, env: ENV_TAG })
   })
 
   it('aplica scrubObject — redacta campo sensível', () => {
@@ -230,12 +239,66 @@ describe('prepareMetadata', () => {
   })
 
   it('boundary: exatamente no limite passa sem placeholder', () => {
-    // JSON.stringify de {"k":"...."} — calcula pra caber no limite
-    const overhead = '{"k":""}'.length
+    // #223: o objeto serializado agora inclui o env tag, então o overhead é o de
+    // {"k":"","env":"<valor>"}. Calcula o payload que deixa o total no limite.
+    const overhead = JSON.stringify({ k: '', env: ENV_TAG }).length
     const payload = 'a'.repeat(METADATA_MAX_BYTES - overhead)
     const out = prepareMetadata({ k: payload }) as Record<string, unknown>
+    expect(JSON.stringify(out).length).toBe(METADATA_MAX_BYTES)
     expect(out._truncated).toBeUndefined()
     expect(out.k).toBe(payload)
+    expect(out.env).toBe(ENV_TAG)
+  })
+})
+
+describe('prepareMetadata — Card #223 env stamp', () => {
+  it('carimba env mesmo sem metadata do caller', () => {
+    expect(prepareMetadata(undefined)).toEqual({ env: ENV_TAG })
+  })
+
+  it('env é autoritativo — caller não sobrescreve (anti-forja)', () => {
+    // Atacante/caller bugado tenta forjar a origem passando env próprio.
+    // O tag autoritativo é aplicado POR ÚLTIMO no spread → vence sempre.
+    const out = prepareMetadata({
+      env: 'forjado-pelo-caller',
+      foo: 'bar',
+    }) as Record<string, unknown>
+    expect(out.env).toBe(ENV_TAG)
+    expect(out.foo).toBe('bar')
+  })
+
+  it('scrub do caller + carimbo de env coexistem', () => {
+    // PII/secret do caller continua redactado (defesa em profundidade) e o env
+    // é carimbado no mesmo objeto.
+    const out = prepareMetadata({
+      password: 'hunter2',
+      user: 'bob',
+    }) as Record<string, unknown>
+    expect(out.password).toBe('[REDACTED]')
+    expect(out.user).toBe('bob')
+    expect(out.env).toBe(ENV_TAG)
+  })
+
+  it('truncamento preserva env — evento permanece purgável', () => {
+    // O placeholder de truncamento é o caminho mais crítico pro #223: sem env
+    // aqui, dados grandes de origem staging ficariam órfãos e não-purgáveis.
+    const big = 'x'.repeat(METADATA_MAX_BYTES + 500)
+    const out = prepareMetadata({ blob: big }) as Record<string, unknown>
+    expect(out._truncated).toBe(true)
+    expect(out.env).toBe(ENV_TAG)
+    expect(out.blob).toBeUndefined()
+  })
+
+  it('truncamento ignora env forjado pelo caller', () => {
+    // Mesmo no caminho de truncamento, o env é hardcoded da fonte autoritativa,
+    // não derivado do metadata do caller.
+    const big = 'x'.repeat(METADATA_MAX_BYTES + 500)
+    const out = prepareMetadata({ blob: big, env: 'forjado' }) as Record<
+      string,
+      unknown
+    >
+    expect(out._truncated).toBe(true)
+    expect(out.env).toBe(ENV_TAG)
   })
 })
 
@@ -300,7 +363,8 @@ describe('emitAuditEvent — camada Prisma', () => {
     expect(call.data.ip).toBe('10.0.0.1')
     expect(call.data.userAgent).toBe('Mozilla/5.0')
     expect(call.data.success).toBe(true)
-    expect(call.data.metadata).toEqual({ tokenId: 'tok-xyz' })
+    // #223: metadata do caller + env carimbado.
+    expect(call.data.metadata).toEqual({ tokenId: 'tok-xyz', env: ENV_TAG })
   })
 
   it('persiste null em actor/ip/userAgent quando ausentes', async () => {
@@ -318,7 +382,9 @@ describe('emitAuditEvent — camada Prisma', () => {
     expect(call.data.userAgent).toBe(null)
   })
 
-  it('omite metadata (undefined) quando não fornecido', async () => {
+  it('persiste metadata só com env quando caller não fornece (#223)', async () => {
+    // Antes do #223 persistia undefined. Agora SEMPRE persiste o env tag — é o
+    // que torna o evento identificável/purgável no audit_log compartilhado.
     emitAuditEvent({
       action: AuditAction.LOGOUT,
       actor: 'user-1',
@@ -328,7 +394,7 @@ describe('emitAuditEvent — camada Prisma', () => {
     const call = auditLogCreateMock.mock.calls[0][0] as {
       data: Record<string, unknown>
     }
-    expect(call.data.metadata).toBeUndefined()
+    expect(call.data.metadata).toEqual({ env: ENV_TAG })
   })
 
   it('trunca actor > 255 chars (COLUMN_LIMITS.actor)', async () => {
@@ -473,10 +539,12 @@ describe('emitAuditEvent — camada Sentry breadcrumb', () => {
     const crumb = addBreadcrumbMock.mock.calls[0][0] as {
       data: Record<string, unknown>
     }
-    expect(crumb.data.metadata).toEqual({ invoiceId: 'inv_123' })
+    expect(crumb.data.metadata).toEqual({ invoiceId: 'inv_123', env: ENV_TAG })
   })
 
-  it('não adiciona chave metadata no data quando ausente', () => {
+  it('inclui metadata só com env no breadcrumb quando caller não passa (#223)', () => {
+    // Antes do #223 a chave metadata era omitida do breadcrumb. Agora sempre
+    // presente carregando o env tag — origem rastreável na timeline do Sentry.
     emitAuditEvent({
       action: AuditAction.LOGOUT,
       actor: 'user-1',
@@ -485,7 +553,7 @@ describe('emitAuditEvent — camada Sentry breadcrumb', () => {
     const crumb = addBreadcrumbMock.mock.calls[0][0] as {
       data: Record<string, unknown>
     }
-    expect('metadata' in crumb.data).toBe(false)
+    expect(crumb.data.metadata).toEqual({ env: ENV_TAG })
   })
 })
 
@@ -507,17 +575,21 @@ describe('emitAuditEvent — camada pino log', () => {
     expect(obj.action).toBe('FINGERPRINT_BOUND')
     expect(obj.actor).toBe('user-1')
     expect(obj.success).toBe(true)
-    expect(obj.metadata).toEqual({ tokenId: 't1' })
+    expect(obj.metadata).toEqual({ tokenId: 't1', env: ENV_TAG })
   })
 
-  it('omite metadata do log quando ausente', () => {
+  it('inclui metadata só com env no log quando caller não passa (#223)', () => {
+    // Antes do #223 a chave metadata era omitida do log. Agora sempre presente
+    // com o env tag — origem rastreável no log aggregator (Logtail/Datadog).
     emitAuditEvent({
       action: AuditAction.LOGOUT,
       actor: 'user-1',
       success: true,
     })
     const [payload] = loggerInfoMock.mock.calls[0]
-    expect('metadata' in (payload as Record<string, unknown>)).toBe(false)
+    expect((payload as Record<string, unknown>).metadata).toEqual({
+      env: ENV_TAG,
+    })
   })
 
   it('log reflete success=false em evento de falha', () => {
@@ -531,6 +603,75 @@ describe('emitAuditEvent — camada pino log', () => {
     const obj = payload as Record<string, unknown>
     expect(obj.success).toBe(false)
     expect(obj.action).toBe('WEBHOOK_SIGNATURE_FAILED')
+  })
+})
+
+describe('emitAuditEvent — Card #223 env stamp end-to-end', () => {
+  it('as 3 camadas carregam env mesmo sem metadata do caller', async () => {
+    // Garante consistência do tag nas três cópias forenses (Prisma, breadcrumb,
+    // pino) — sem isso, uma camada poderia perder a origem e quebrar a purga.
+    emitAuditEvent({
+      action: AuditAction.LOGOUT,
+      actor: 'user-1',
+      success: true,
+    })
+    // breadcrumb + pino são síncronos
+    const crumb = addBreadcrumbMock.mock.calls[0][0] as {
+      data: Record<string, unknown>
+    }
+    expect(crumb.data.metadata).toEqual({ env: ENV_TAG })
+    const [logPayload] = loggerInfoMock.mock.calls[0]
+    expect((logPayload as Record<string, unknown>).metadata).toEqual({
+      env: ENV_TAG,
+    })
+    // Prisma persist é fire-and-forget
+    await waitForPersist()
+    const call = auditLogCreateMock.mock.calls[0][0] as {
+      data: { metadata: unknown }
+    }
+    expect(call.data.metadata).toEqual({ env: ENV_TAG })
+  })
+
+  it('caller forjando env não vence em nenhuma camada', async () => {
+    emitAuditEvent({
+      action: AuditAction.LOGOUT,
+      actor: 'user-1',
+      success: true,
+      metadata: { env: 'forjado', k: 'v' },
+    })
+    const crumb = addBreadcrumbMock.mock.calls[0][0] as {
+      data: { metadata: Record<string, unknown> }
+    }
+    expect(crumb.data.metadata.env).toBe(ENV_TAG)
+    expect(crumb.data.metadata.k).toBe('v')
+    const [logPayload] = loggerInfoMock.mock.calls[0]
+    const logMeta = (logPayload as Record<string, unknown>).metadata as Record<
+      string,
+      unknown
+    >
+    expect(logMeta.env).toBe(ENV_TAG)
+    await waitForPersist()
+    const call = auditLogCreateMock.mock.calls[0][0] as {
+      data: { metadata: Record<string, unknown> }
+    }
+    expect(call.data.metadata.env).toBe(ENV_TAG)
+    expect(call.data.metadata.k).toBe('v')
+  })
+
+  it('secret do caller redactado e env carimbado na mesma persistência', async () => {
+    emitAuditEvent({
+      action: AuditAction.TOKEN_VALIDATE_FAILURE,
+      actor: null,
+      success: false,
+      metadata: { token: 'secret-leak', reason: 'invalidToken' },
+    })
+    await waitForPersist()
+    const call = auditLogCreateMock.mock.calls[0][0] as {
+      data: { metadata: Record<string, unknown> }
+    }
+    expect(call.data.metadata.token).toBe('[REDACTED]')
+    expect(call.data.metadata.reason).toBe('invalidToken')
+    expect(call.data.metadata.env).toBe(ENV_TAG)
   })
 })
 

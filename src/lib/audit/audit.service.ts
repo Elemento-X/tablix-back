@@ -37,6 +37,7 @@
  */
 import { Prisma } from '@prisma/client'
 import { isIP } from 'net'
+import { env } from '../../config/env'
 import { Sentry, scrubObject } from '../../config/sentry'
 import { logger } from '../logger'
 import { prisma } from '../prisma'
@@ -127,17 +128,29 @@ function sanitizeIp(value: string | null | undefined): string | null {
  */
 function prepareMetadata(
   raw: Record<string, unknown> | undefined,
-): Prisma.InputJsonValue | undefined {
-  if (raw == null) return undefined
-  const scrubbed = scrubObject(raw) as Record<string, unknown>
-  const serialized = JSON.stringify(scrubbed)
-  if (serialized.length <= METADATA_MAX_BYTES) {
-    return scrubbed as Prisma.InputJsonValue
+): Prisma.InputJsonValue {
+  // Card #223 (decisão #218 / WV-2026-010): carimba a ORIGEM do ambiente em TODO
+  // evento auditável. Com staging compartilhando o store dev/test (#218), `env`
+  // torna dados de origem staging identificáveis e purgáveis no audit_log
+  // (query: `metadata->>'env' = 'staging'`). Fonte única: SENTRY_ENVIRONMENT, que
+  // já discrimina staging/prod no fly.toml — sem env var nova. `env` é aplicado
+  // POR ÚLTIMO (autoritativo): um caller não consegue forjar/sobrescrever a origem.
+  const envTag = { env: env.SENTRY_ENVIRONMENT }
+  if (raw == null) {
+    return envTag as Prisma.InputJsonValue
   }
+  const scrubbed = scrubObject(raw) as Record<string, unknown>
+  const withEnv = { ...scrubbed, ...envTag }
+  const serialized = JSON.stringify(withEnv)
+  if (serialized.length <= METADATA_MAX_BYTES) {
+    return withEnv as Prisma.InputJsonValue
+  }
+  // Mesmo truncado, preserva o tag de origem — é o que torna o evento purgável.
   return {
     _truncated: true,
     _originalBytes: serialized.length,
     _limitBytes: METADATA_MAX_BYTES,
+    env: env.SENTRY_ENVIRONMENT,
   }
 }
 
@@ -197,7 +210,7 @@ export function emitAuditEvent(input: AuditEventInput): void {
       data: {
         actor,
         success,
-        ...(metadata != null ? { metadata } : {}),
+        metadata,
       },
     })
   } catch {
@@ -214,7 +227,7 @@ export function emitAuditEvent(input: AuditEventInput): void {
       action,
       actor,
       success,
-      ...(metadata != null ? { metadata } : {}),
+      metadata,
     },
     'audit_event',
   )
