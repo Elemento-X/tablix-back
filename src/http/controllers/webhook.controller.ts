@@ -2,7 +2,7 @@ import { FastifyRequest, FastifyReply } from 'fastify'
 import Stripe from 'stripe'
 import { constructWebhookEvent } from '../../modules/billing/stripe.service'
 import { processStripeEvent } from '../../modules/billing/webhook-idempotency'
-import { Errors } from '../../errors/app-error'
+import { Errors, AppError, ErrorCodes } from '../../errors/app-error'
 import { emitAuditEvent } from '../../lib/audit/audit.service'
 import { AuditAction } from '../../lib/audit/audit.types'
 import {
@@ -63,13 +63,34 @@ export async function stripeWebhook(
   try {
     event = constructWebhookEvent(payload, signature)
   } catch (error) {
-    request.log.error(
-      { err: error },
-      '[Webhook] Erro de validacao de assinatura',
+    // Card #221: distinguir FORGERY (assinatura inválida → 400, erro de CLIENTE) de
+    // MISCONFIG do servidor (STRIPE_WEBHOOK_SECRET ausente → 500, falha NOSSA). Só a
+    // forgery dispara a forensics anti-abuso (circuit breaker + audit A09): contabilizar
+    // uma falha de configuração nossa contra o IP do Stripe legítimo poluiria o circuit
+    // breaker e registraria um "ataque" que não existe. Misconfig = 500 propaga limpo
+    // pro handler global, SEM a forensics anti-forgery. NOTA: AppError 500 hoje NÃO
+    // dispara Sentry (o handler curto-circuita o branch AppError antes do captureException)
+    // — observabilidade de misconfig 5xx é débito separado (card #224). Em prod o secret é
+    // exigido no boot (env.ts superRefine), então este ramo é praticamente inalcançável lá.
+    const isSignatureFailure =
+      error instanceof AppError &&
+      error.code === ErrorCodes.WEBHOOK_SIGNATURE_INVALID
+
+    if (!isSignatureFailure) {
+      throw error
+    }
+
+    // Card #222: assinatura inválida é um 400 ESPERADO (forgery/probe) — loga em WARN,
+    // não error, e sem stack. A trilha forense real é o audit_log A09 + circuit breaker
+    // abaixo; um log.error com stack a cada forjada infla dashboard/alerta de erro (ruído
+    // controlável pelo atacante = DoS-on-observability leve).
+    request.log.warn(
+      { ip: request.ip, code: error.code },
+      '[Webhook] Assinatura inválida (forgery/probe)',
     )
     // Registra falha no circuit breaker (fire-and-forget, nunca lança).
     recordWebhookSignatureFailure(request.ip).catch(() => {})
-    // Auditoria forense: tentativa de forgery (OWASP A07). Sem event.id
+    // Auditoria forense: tentativa de forgery (OWASP A07/A09). Sem event.id
     // (não foi parseado) — metadata registra apenas a presença da assinatura.
     emitAuditEvent({
       action: AuditAction.WEBHOOK_SIGNATURE_FAILED,
@@ -79,10 +100,7 @@ export async function stripeWebhook(
       success: false,
       metadata: { signaturePresent: true },
     })
-    // Re-lança o erro de constructWebhookEvent — agora Errors.webhookSignatureInvalid
-    // (400) para falha de assinatura (Card #215 / gate 7.5), preservando um eventual
-    // 500 real (ex: secret não configurado) sem mascarar. A forensics (audit_log +
-    // circuit breaker) já foi registrada acima. AppError 400 não dispara Sentry.
+    // Re-lança o 400 (AppError não dispara Sentry). A forensics já foi registrada.
     throw error
   }
 

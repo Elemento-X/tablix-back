@@ -42,6 +42,10 @@ import {
   sendPaymentFailedEmail,
 } from '../../src/lib/email'
 import { AuditAction } from '../../src/lib/audit/audit.types'
+// Errors REAIS (app-error NÃO é mockado): geram AppError fiéis ao que o
+// stripe.service lança — webhookSignatureInvalid (400, forgery) vs
+// webhookFailed (500, misconfig). É o discriminador do Card #221.
+import { Errors } from '../../src/errors/app-error'
 
 // --- vi.hoisted: shared mock state ---
 const { prismaMock } = vi.hoisted(() => {
@@ -318,9 +322,12 @@ describe('Webhook (Card #189)', () => {
       expect(constructWebhookEvent).not.toHaveBeenCalled()
     })
 
-    it('assinatura inválida: emite WEBHOOK_SIGNATURE_FAILED, registra no circuit breaker e propaga', async () => {
-      const sigError = new Error(
-        'No signatures found matching the expected signature for payload',
+    it('FORGERY (sig inválida #221/#222): 400 WEBHOOK_SIGNATURE_INVALID + log WARN sem stack + circuit breaker + audit signaturePresent:true', async () => {
+      // #221: constructWebhookEvent lança AppError WEBHOOK_SIGNATURE_INVALID —
+      // exatamente o que o stripe.service produz pra StripeSignatureVerificationError.
+      // É o ramo FORGERY: 400 (erro de cliente) + forensics anti-abuso.
+      const sigError = Errors.webhookSignatureInvalid(
+        'Assinatura do webhook inválida',
       )
       vi.mocked(constructWebhookEvent).mockImplementation(() => {
         throw sigError
@@ -329,21 +336,113 @@ describe('Webhook (Card #189)', () => {
       const request = makeFastifyRequest()
       const reply = makeFastifyReply()
 
-      await expect(stripeWebhook(request, reply)).rejects.toThrow(
-        'No signatures found',
+      // Re-lança o MESMO AppError 400. Asserta TIPO (status+code), não só
+      // "rejeitou" — mutação trocando 400→500 ou o code morre aqui.
+      await expect(stripeWebhook(request, reply)).rejects.toMatchObject({
+        statusCode: 400,
+        code: 'WEBHOOK_SIGNATURE_INVALID',
+      })
+
+      // #222: log em WARN com { ip, code } e SEM stack/err — nunca mais error.
+      // O shape exato ({ ip, code }) é o discriminator do log: uma mutação que
+      // volte a logar { err } ou troque o level/mensagem é pega aqui.
+      expect(request.log.warn).toHaveBeenCalledWith(
+        { ip: '203.0.113.7', code: 'WEBHOOK_SIGNATURE_INVALID' },
+        '[Webhook] Assinatura inválida (forgery/probe)',
       )
-      expect(request.log.error).toHaveBeenCalledWith(
-        expect.objectContaining({ err: sigError }),
-        '[Webhook] Erro de validacao de assinatura',
-      )
+      // Mutation guard #222: o log.error antigo (com stack) NÃO roda mais.
+      expect(request.log.error).not.toHaveBeenCalled()
+
+      // Forensics anti-abuso roda SÓ no ramo forgery.
       expect(recordWebhookSignatureFailureMock).toHaveBeenCalledWith(
         '203.0.113.7',
       )
-      const emitted = emitAuditEventMock.mock.calls.map(
-        (c) => (c[0] as { action: string }).action,
-      )
-      expect(emitted).toContain(AuditAction.WEBHOOK_SIGNATURE_FAILED)
+      const sigFailed = emitAuditEventMock.mock.calls
+        .map(
+          (c) =>
+            c[0] as {
+              action: string
+              metadata?: { signaturePresent?: boolean }
+            },
+        )
+        .find((a) => a.action === AuditAction.WEBHOOK_SIGNATURE_FAILED)
+      expect(sigFailed).toBeDefined()
+      // signaturePresent:true distingue do ramo header-ausente (false). Sem o
+      // assert do valor, uma mutação que troque o flag passaria verde.
+      expect(sigFailed?.metadata?.signaturePresent).toBe(true)
+
       // Nunca processa um evento com assinatura inválida.
+      expect(processStripeEventMock).not.toHaveBeenCalled()
+    })
+
+    it('FORGERY sem user-agent (#221): audit WEBHOOK_SIGNATURE_FAILED com userAgent null (fallback)', async () => {
+      // Cobre o `?? null` do user-agent no emitAuditEvent do ramo forgery
+      // (linha do diff #221): sem header user-agent, metadata.userAgent é null,
+      // nunca undefined. Mantém o shape estável do audit_log A09.
+      vi.mocked(constructWebhookEvent).mockImplementation(() => {
+        throw Errors.webhookSignatureInvalid('Assinatura do webhook inválida')
+      })
+      const request = {
+        ip: '203.0.113.7',
+        headers: { 'stripe-signature': 'sig_test' }, // sem user-agent
+        body: Buffer.from('{}'),
+        log: { info: vi.fn(), error: vi.fn(), warn: vi.fn(), debug: vi.fn() },
+      } as unknown as Parameters<typeof stripeWebhook>[0]
+
+      await expect(
+        stripeWebhook(request, makeFastifyReply()),
+      ).rejects.toMatchObject({ code: 'WEBHOOK_SIGNATURE_INVALID' })
+
+      const sigFailed = emitAuditEventMock.mock.calls
+        .map((c) => c[0] as { action: string; userAgent?: unknown })
+        .find((a) => a.action === AuditAction.WEBHOOK_SIGNATURE_FAILED)
+      expect(sigFailed?.userAgent).toBeNull()
+    })
+
+    it('MISCONFIG (#221 — WEBHOOK_FAILED 500): propaga limpo SEM forensics (circuit breaker e audit ausentes, sem WARN)', async () => {
+      // #221: secret ausente → constructWebhookEvent lança Errors.webhookFailed()
+      // (AppError WEBHOOK_FAILED 500). NÃO é forgery → o catch faz `throw error`
+      // ANTES de qualquer forensics. Contabilizar uma falha NOSSA de config
+      // contra o IP do Stripe legítimo poluiria o circuit breaker e registraria
+      // um "ataque" inexistente no audit A09. 500 propaga pro handler (Sentry).
+      const misconfigError = Errors.webhookFailed()
+      vi.mocked(constructWebhookEvent).mockImplementation(() => {
+        throw misconfigError
+      })
+
+      const request = makeFastifyRequest()
+      const reply = makeFastifyReply()
+
+      await expect(stripeWebhook(request, reply)).rejects.toMatchObject({
+        statusCode: 500,
+        code: 'WEBHOOK_FAILED',
+      })
+
+      // Coração do #221: NENHUMA forensics no ramo misconfig.
+      expect(recordWebhookSignatureFailureMock).not.toHaveBeenCalled()
+      expect(emitAuditEventMock).not.toHaveBeenCalled()
+      // Sem log de borda — misconfig não é forgery; o handler global/Sentry loga.
+      expect(request.log.warn).not.toHaveBeenCalled()
+      expect(request.log.error).not.toHaveBeenCalled()
+      // Não processa evento.
+      expect(processStripeEventMock).not.toHaveBeenCalled()
+    })
+
+    it('MISCONFIG (#221 — erro NÃO-AppError): também propaga sem forensics (cobre o ramo `instanceof AppError`)', async () => {
+      // Discriminador exige instanceof AppError && code===WEBHOOK_SIGNATURE_INVALID.
+      // Um erro inesperado (não-AppError, ex: bug interno) cai no ramo `!isSignatureFailure`
+      // → throw limpo. Mata a mutação que remova a checagem `instanceof AppError`.
+      const unexpected = new Error('boom inesperado no parse')
+      vi.mocked(constructWebhookEvent).mockImplementation(() => {
+        throw unexpected
+      })
+
+      await expect(
+        stripeWebhook(makeFastifyRequest(), makeFastifyReply()),
+      ).rejects.toThrow('boom inesperado no parse')
+
+      expect(recordWebhookSignatureFailureMock).not.toHaveBeenCalled()
+      expect(emitAuditEventMock).not.toHaveBeenCalled()
       expect(processStripeEventMock).not.toHaveBeenCalled()
     })
 
@@ -376,12 +475,14 @@ describe('Webhook (Card #189)', () => {
       expect(ctx).toMatchObject({ userAgent: null })
     })
 
-    it('assinatura inválida: falha do circuit breaker é fire-and-forget (catch não vaza)', async () => {
-      // Cobre o `.catch(() => {})` do recordWebhookSignatureFailure: mesmo que
-      // o registro de falha rejeite, o handler propaga o erro de assinatura
-      // original — nunca o erro do circuit breaker.
+    it('FORGERY: falha do circuit breaker é fire-and-forget (catch não vaza) (#221)', async () => {
+      // Cobre o `.catch(() => {})` do recordWebhookSignatureFailure NO RAMO
+      // FORGERY: mesmo que o registro de falha rejeite (redis down), o handler
+      // propaga o AppError 400 original — nunca o erro do circuit breaker.
+      // Precisa do AppError WEBHOOK_SIGNATURE_INVALID pra entrar no ramo que
+      // chama recordWebhookSignatureFailure (#221).
       vi.mocked(constructWebhookEvent).mockImplementation(() => {
-        throw new Error('Invalid signature')
+        throw Errors.webhookSignatureInvalid('Assinatura do webhook inválida')
       })
       recordWebhookSignatureFailureMock.mockRejectedValue(
         new Error('redis down'),
@@ -389,9 +490,9 @@ describe('Webhook (Card #189)', () => {
 
       const request = makeFastifyRequest()
 
-      await expect(stripeWebhook(request, makeFastifyReply())).rejects.toThrow(
-        'Invalid signature',
-      )
+      await expect(
+        stripeWebhook(request, makeFastifyReply()),
+      ).rejects.toMatchObject({ code: 'WEBHOOK_SIGNATURE_INVALID' })
       // Deixa o microtask do .catch(() => {}) drenar.
       await new Promise((resolve) => setImmediate(resolve))
       expect(recordWebhookSignatureFailureMock).toHaveBeenCalledTimes(1)

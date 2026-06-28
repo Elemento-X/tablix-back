@@ -198,6 +198,29 @@ describe('POST /webhooks/stripe — signature verification (integration)', () =>
     expect(constructEventMock).toHaveBeenCalledTimes(1)
   })
 
+  it('500 quando constructEvent lança erro NÃO-assinatura (misconfig/server) — não é mascarado de 400 (#221)', async () => {
+    // #221: a borda discrimina FORGERY (StripeSignatureVerificationError → 400)
+    // de MISCONFIG/erro de servidor (qualquer outro → 500 limpo pro handler
+    // global). Aqui constructEvent lança um Error genérico: o stripe.service
+    // re-lança cru (não é StripeSignatureVerificationError), o controller faz
+    // `throw error` ANTES da forensics e o handler global devolve 500. O ponto:
+    // NUNCA vira 400/WEBHOOK_SIGNATURE_INVALID — senão um erro de servidor seria
+    // silenciado como "assinatura inválida".
+    constructEventMock.mockImplementationOnce(() => {
+      throw new Error('kaboom interno (não é signature error)')
+    })
+
+    const res = await request(app.server)
+      .post('/webhooks/stripe')
+      .set('content-type', 'application/json')
+      .set('stripe-signature', 'some-sig')
+      .send(VALID_PAYLOAD.toString())
+
+    expect(res.status).toBe(500)
+    expect(res.body.error?.code).not.toBe('WEBHOOK_SIGNATURE_INVALID')
+    expect(constructEventMock).toHaveBeenCalledTimes(1)
+  })
+
   it('200 com signature válida — constructEvent chamado com payload + signature + secret', async () => {
     const event = makeCheckoutSessionEvent({ id: 'evt_sig_ok_1' })
     constructEventMock.mockReturnValueOnce(event)
