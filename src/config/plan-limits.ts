@@ -26,6 +26,22 @@ export interface PlanLimits {
   maxTotalRows: number
   /** Máximo de colunas selecionáveis no merge */
   maxColumns: number
+  /**
+   * Máximo de colunas que o ARQUIVO de input pode ter (Card #225). Distinto de
+   * `maxColumns` (selecionáveis): o parser materializa TODAS as colunas do arquivo,
+   * então um xlsx pequeno em bytes mas com milhares de colunas (grid esparso/crafted)
+   * amplifica a memória (colunas × linhas = células). Backstop dimensional do input.
+   */
+  maxInputColumns: number
+  /**
+   * Máximo de CÉLULAS de entrada agregadas = Σ(linhas × colunas) de todos os
+   * arquivos (Card #225 / @performance F1). É a grandeza que REALMENTE governa
+   * memória: `parsedSpreadsheets[]` retém todo o grid de todos os arquivos
+   * simultaneamente. Capar só linhas (maxTotalRows) OU só colunas (maxInputColumns)
+   * NÃO bounda o produto — um input dentro de ambos (75k linhas × 100 colunas =
+   * 7,5M células) reteria ~500MB. Checado incrementalmente, aborta antes de empilhar.
+   */
+  maxInputCells: number
   /** Tamanho máximo de arquivo individual (bytes) */
   maxFileSize: number
   /** Tamanho máximo total somando todos os arquivos da unificação (bytes) */
@@ -51,6 +67,8 @@ export const FREE_LIMITS: PlanLimits = {
   maxRows: 500,
   maxTotalRows: 500,
   maxColumns: 3,
+  maxInputColumns: 20, // FREE: arquivos <1MB; cap conservador do input
+  maxInputCells: 100_000, // FREE: 500 linhas × 20 col = 10k; folga p/ o teto pequeno
   maxFileSize: 1 * 1024 * 1024, // 1 MB
   maxTotalSize: 1 * 1024 * 1024, // 1 MB (soma total dos 3 arquivos)
 }
@@ -67,6 +85,15 @@ export const PRO_LIMITS: PlanLimits = {
   maxRows: 5_000,
   maxTotalRows: 75_000,
   maxColumns: 10,
+  // Card #225: input até 100 colunas (10× as selecionáveis) — cobre exports largos
+  // legítimos e rejeita o caso patológico (milhares de colunas) que ampliaria a
+  // memória (colunas × maxRows). Calibrável no load test 7.5 se preciso.
+  maxInputColumns: 100,
+  // Card #225 (@performance F1): teto do PRODUTO células = Σ(linhas × colunas).
+  // 1,5M células × ~80 bytes ≈ 120MB de retenção/request — dentro do pico estimado
+  // do #219 (~120-180MB), restaurando a premissa do cap de concorrência. Calibrar
+  // junto do PROCESS_SYNC_MAX_CONCURRENCY no load test 7.5.
+  maxInputCells: 1_500_000,
   maxFileSize: 2 * 1024 * 1024, // 2 MB
   maxTotalSize: 30 * 1024 * 1024, // 30 MB (soma total)
 }

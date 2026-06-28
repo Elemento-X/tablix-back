@@ -543,3 +543,178 @@ describe('processSpreadsheets — column limit (10) at service level', () => {
     })
   })
 })
+
+// ===========================================
+// processSpreadsheets — aggregated input-cells cap (#225 @performance F1)
+// ===========================================
+// O cap acumula Σ(rowCount × headers.length) INCREMENTALMENTE no loop de parse
+// e aborta ANTES de empilhar o próximo arquivo — bounding o pico de retenção em
+// memória (parsedSpreadsheets[] segura o grid de TODOS os arquivos ao mesmo
+// tempo). maxInputColumns (por arquivo) NÃO bounda o produto sob N arquivos;
+// maxInputCells (agregado) é a camada que fecha esse gap.
+describe('processSpreadsheets — input-cells cap (maxInputCells)', () => {
+  const mockParseSpreadsheet = vi.mocked(parseSpreadsheet)
+  const mockValidateColumns = vi.mocked(validateColumns)
+  const MAX_CELLS = PRO_LIMITS.maxInputCells // 1.500.000 (PRO)
+
+  beforeEach(() => {
+    mockValidateColumns.mockReturnValue(undefined)
+    prismaMock.usage.findUnique.mockResolvedValue(null)
+    prismaMock.usage.upsert.mockResolvedValue({})
+  })
+
+  /** Programa parseSpreadsheet pra devolver, por chamada, um grid cols×rows. */
+  function mockFilesParsed(
+    specs: Array<{ fileName: string; cols: number; rows: number }>,
+  ): void {
+    let i = 0
+    mockParseSpreadsheet.mockImplementation(() => {
+      const s = specs[i++]
+      return {
+        fileName: s.fileName,
+        format: 'csv',
+        headers: Array.from({ length: s.cols }, (_, k) => `h${k}`),
+        rows: [],
+        rowCount: s.rows,
+        fileSize: 1024,
+      }
+    })
+  }
+
+  it('rejeita conjunto cujo Σ(linhas×colunas) > maxInputCells → 400 LIMIT_EXCEEDED', async () => {
+    // 4 arquivos de 100 col × 5.000 linhas = 500k células cada → Σ = 2.000.000 > 1,5M.
+    // (cada arquivo isolado respeita maxInputColumns=100 e maxRowsPerFile=5.000:
+    // só a SOMA estoura — exatamente o gap que o cap agregado fecha.)
+    const files = Array.from({ length: 4 }, (_, i) =>
+      makeFile(`f${i}.csv`, 1024),
+    )
+    mockFilesParsed(
+      files.map((f) => ({ fileName: f.fileName, cols: 100, rows: 5_000 })),
+    )
+
+    let captured: AppError | undefined
+    try {
+      await processSpreadsheets('user-123', files, {
+        selectedColumns: ['h0'],
+        outputFormat: 'csv',
+      })
+    } catch (err) {
+      captured = err as AppError
+    }
+
+    expect(captured).toBeInstanceOf(AppError)
+    expect(captured?.code).toBe('LIMIT_EXCEEDED')
+    expect(captured?.statusCode).toBe(400)
+    expect(captured?.details?.limit).toContain(
+      'células de entrada (linhas × colunas somadas)',
+    )
+    // Mutation-resilient: `actual` reflete o Σ real (2.000.000), não um literal.
+    // Extrai só dígitos pra ser robusto à locale do toLocaleString.
+    const actualDigits = String(captured?.details?.actual).replace(/\D/g, '')
+    expect(actualDigits).toBe('2000000')
+  })
+
+  it('aceita conjunto exatamente no limite (Σ = maxInputCells) — o cap é `>`, não `>=`', async () => {
+    // 3 arquivos de 100 col × 5.000 linhas = 500k cada → Σ = 1.500.000 == limite.
+    // Guard explícito contra mutação `>` → `>=` (que rejeitaria o exato).
+    const files = Array.from({ length: 3 }, (_, i) =>
+      makeFile(`f${i}.csv`, 1024),
+    )
+    mockFilesParsed(
+      files.map((f) => ({ fileName: f.fileName, cols: 100, rows: 5_000 })),
+    )
+
+    await expect(
+      processSpreadsheets('user-123', files, {
+        selectedColumns: ['h0'],
+        outputFormat: 'csv',
+      }),
+    ).resolves.toBeDefined()
+
+    // Sanidade: o Σ testado é de fato o limite (não um número arbitrário).
+    expect(3 * 100 * 5_000).toBe(MAX_CELLS)
+  })
+
+  it('PROVA (incrementalidade): aborta no arquivo que estoura — NÃO parseia os seguintes', async () => {
+    // 6 arquivos de 500k células. Σ cruza 1,5M no 4º (após o 3º Σ=1,5M, ainda
+    // passa; o 4º leva a 2,0M e dispara). Se o cap fosse pós-loop, os 6 já teriam
+    // sido materializados. Provar que parseSpreadsheet parou no 4º = bound de memória.
+    const files = Array.from({ length: 6 }, (_, i) =>
+      makeFile(`f${i}.csv`, 1024),
+    )
+    mockFilesParsed(
+      files.map((f) => ({ fileName: f.fileName, cols: 100, rows: 5_000 })),
+    )
+
+    await expect(
+      processSpreadsheets('user-123', files, {
+        selectedColumns: ['h0'],
+        outputFormat: 'csv',
+      }),
+    ).rejects.toMatchObject({ code: 'LIMIT_EXCEEDED' })
+
+    // O 4º arquivo dispara o throw → arquivos 5 e 6 NUNCA são parseados.
+    expect(mockParseSpreadsheet).toHaveBeenCalledTimes(4)
+    // validateColumns roda antes do cap, no mesmo loop → também 4×.
+    expect(mockValidateColumns).toHaveBeenCalledTimes(4)
+  })
+
+  it('LIMIT_EXCEEDED não vaza fileName/PII nos details nem no envelope (#224/#225)', async () => {
+    const piiName = 'folha_pagamento_joao_cpf_12345678900'
+    const files = Array.from({ length: 4 }, (_, i) =>
+      makeFile(`${piiName}_${i}.csv`, 1024),
+    )
+    mockFilesParsed(
+      files.map((f) => ({ fileName: f.fileName, cols: 100, rows: 5_000 })),
+    )
+
+    let captured: AppError | undefined
+    try {
+      await processSpreadsheets('user-123', files, {
+        selectedColumns: ['h0'],
+        outputFormat: 'csv',
+      })
+    } catch (err) {
+      captured = err as AppError
+    }
+
+    expect(captured?.code).toBe('LIMIT_EXCEEDED')
+    // limitExceeded chamado SEM o 3º arg (file) → chave `file` ausente.
+    expect(captured?.details).not.toHaveProperty('file')
+    expect(JSON.stringify(captured?.details)).not.toContain(piiName)
+    expect(captured?.message).not.toContain(piiName)
+    expect(JSON.stringify(captured?.toJSON())).not.toContain(piiName)
+  })
+
+  it('regressão: conjunto normal (poucas células) passa sem disparar o cap', async () => {
+    // 2 arquivos de 10 col × 100 linhas = 1.000 células cada → Σ = 2.000, << 1,5M.
+    const files = [makeFile('a.csv', 1024), makeFile('b.csv', 1024)]
+    mockFilesParsed([
+      { fileName: 'a.csv', cols: 10, rows: 100 },
+      { fileName: 'b.csv', cols: 10, rows: 100 },
+    ])
+
+    await expect(
+      processSpreadsheets('user-123', files, {
+        selectedColumns: ['h0'],
+        outputFormat: 'csv',
+      }),
+    ).resolves.toBeDefined()
+
+    // Ambos os arquivos foram parseados (nenhum abortado).
+    expect(mockParseSpreadsheet).toHaveBeenCalledTimes(2)
+  })
+
+  it('single file dentro do limite não dispara o cap (boundary inferior)', async () => {
+    // 1 arquivo de 100 col × 5.000 linhas = 500k células < 1,5M.
+    const files = [makeFile('solo.csv', 1024)]
+    mockFilesParsed([{ fileName: 'solo.csv', cols: 100, rows: 5_000 }])
+
+    await expect(
+      processSpreadsheets('user-123', files, {
+        selectedColumns: ['h0'],
+        outputFormat: 'csv',
+      }),
+    ).resolves.toBeDefined()
+  })
+})

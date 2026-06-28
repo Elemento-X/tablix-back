@@ -311,6 +311,15 @@ function parseCsv(buffer: Buffer, fileName: string): ParsedSpreadsheet {
 
   const headers = result.meta.fields || []
 
+  // Card #225: capa o nº de COLUNAS do input. CSV já é bounded em memória pelo
+  // maxFileSize (2MB), mas guarda contra um arquivo largo (muitas colunas) crafted.
+  if (headers.length > PRO_LIMITS.maxInputColumns) {
+    throw Errors.limitExceeded(
+      `${PRO_LIMITS.maxInputColumns} colunas no arquivo`,
+      `${headers.length} colunas`,
+    )
+  }
+
   // Object.create(null) previne prototype pollution (defesa em profundidade)
   const rows: SpreadsheetRow[] = result.data.map((row) => {
     const normalizedRow: SpreadsheetRow = Object.create(null)
@@ -363,6 +372,22 @@ function parseExcel(
   if (!worksheet) {
     // Card #224 (@security PII): sem fileName/sheetName na mensagem (Sentry).
     throw Errors.processingFailed('Erro ao ler a planilha do arquivo Excel')
+  }
+
+  // Card #225: capa o nº de COLUNAS ANTES do sheet_to_json (que materializa TODAS as
+  // células). Um xlsx pequeno em bytes mas com milhares de colunas (grid esparso/
+  // crafted) ampliaria a memória (colunas × linhas). O range !ref dá o nº de colunas
+  // SEM materializar — rejeita o arquivo largo antes de alocar o grid inteiro.
+  const ref = worksheet['!ref']
+  if (ref) {
+    const range = XLSX.utils.decode_range(ref)
+    const colCount = range.e.c - range.s.c + 1
+    if (colCount > PRO_LIMITS.maxInputColumns) {
+      throw Errors.limitExceeded(
+        `${PRO_LIMITS.maxInputColumns} colunas no arquivo`,
+        `${colCount} colunas`,
+      )
+    }
   }
 
   // Converte para JSON com headers (header: 1 retorna array de arrays)

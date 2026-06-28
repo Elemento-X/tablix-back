@@ -48,6 +48,14 @@ describe('plan-limits — FREE_LIMITS canonical values', () => {
     expect(FREE_LIMITS.maxColumns).toBe(3)
   })
 
+  it('maxInputColumns = 20 (Card #225 — cap de colunas do input)', () => {
+    expect(FREE_LIMITS.maxInputColumns).toBe(20)
+  })
+
+  it('maxInputCells = 100.000 (Card #225 — cap do produto células)', () => {
+    expect(FREE_LIMITS.maxInputCells).toBe(100_000)
+  })
+
   it('maxFileSize = 1 MB', () => {
     expect(FREE_LIMITS.maxFileSize).toBe(1 * 1024 * 1024)
   })
@@ -63,6 +71,8 @@ describe('plan-limits — FREE_LIMITS canonical values', () => {
       'maxRows',
       'maxTotalRows',
       'maxColumns',
+      'maxInputColumns',
+      'maxInputCells',
       'maxFileSize',
       'maxTotalSize',
     ]
@@ -96,6 +106,14 @@ describe('plan-limits — PRO_LIMITS canonical values (D.1)', () => {
 
   it('maxColumns = 10', () => {
     expect(PRO_LIMITS.maxColumns).toBe(10)
+  })
+
+  it('maxInputColumns = 100 (Card #225 — cap de colunas do input)', () => {
+    expect(PRO_LIMITS.maxInputColumns).toBe(100)
+  })
+
+  it('maxInputCells = 1.500.000 (Card #225 — cap do produto células)', () => {
+    expect(PRO_LIMITS.maxInputCells).toBe(1_500_000)
   })
 
   it('maxFileSize = 2 MB', () => {
@@ -141,6 +159,8 @@ describe('plan-limits — invariantes estruturais', () => {
     expect(FREE_LIMITS.maxRows).toBeLessThan(PRO_LIMITS.maxRows)
     expect(FREE_LIMITS.maxTotalRows).toBeLessThan(PRO_LIMITS.maxTotalRows)
     expect(FREE_LIMITS.maxColumns).toBeLessThan(PRO_LIMITS.maxColumns)
+    expect(FREE_LIMITS.maxInputColumns).toBeLessThan(PRO_LIMITS.maxInputColumns)
+    expect(FREE_LIMITS.maxInputCells).toBeLessThan(PRO_LIMITS.maxInputCells)
     expect(FREE_LIMITS.maxFileSize).toBeLessThan(PRO_LIMITS.maxFileSize)
     expect(FREE_LIMITS.maxTotalSize).toBeLessThan(PRO_LIMITS.maxTotalSize)
   })

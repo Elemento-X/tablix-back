@@ -21,6 +21,8 @@ export const PRO_LIMITS = {
   maxRowsPerFile: PLAN_PRO_LIMITS.maxRows,
   maxTotalRows: PLAN_PRO_LIMITS.maxTotalRows,
   maxColumns: PLAN_PRO_LIMITS.maxColumns,
+  maxInputColumns: PLAN_PRO_LIMITS.maxInputColumns,
+  maxInputCells: PLAN_PRO_LIMITS.maxInputCells,
 } as const
 
 /**

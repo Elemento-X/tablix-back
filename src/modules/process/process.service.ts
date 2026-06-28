@@ -153,11 +153,26 @@ export async function processSpreadsheets(
   // 3. Parse + merge + generate (operações pesadas)
   const parsedSpreadsheets: ParsedSpreadsheet[] = []
 
+  // Card #225 (@performance F1): acumulador do PRODUTO células = Σ(linhas × colunas).
+  // É a grandeza que governa memória — parsedSpreadsheets[] retém o grid de TODOS os
+  // arquivos ao mesmo tempo. Checado INCREMENTALMENTE: aborta ANTES de parsear o
+  // próximo arquivo, bounding o pico de retenção (vs validar só no fim, com tudo já
+  // materializado). maxInputColumns (por arquivo) + maxInputCells (agregado) são
+  // camadas complementares; nenhuma sozinha bounda o produto sob N arquivos.
+  let inputCells = 0
   for (const file of files) {
     const parsed = parseSpreadsheet(file.buffer, file.fileName)
 
     // Valida se as colunas existem no arquivo
     validateColumns(parsed.headers, selectedColumns, file.fileName)
+
+    inputCells += parsed.rowCount * parsed.headers.length
+    if (inputCells > PRO_LIMITS.maxInputCells) {
+      throw Errors.limitExceeded(
+        `${PRO_LIMITS.maxInputCells.toLocaleString()} células de entrada (linhas × colunas somadas)`,
+        `${inputCells.toLocaleString()} células`,
+      )
+    }
 
     parsedSpreadsheets.push(parsed)
   }
