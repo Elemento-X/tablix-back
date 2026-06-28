@@ -103,6 +103,9 @@ vi.mock('resend', () => ({
   })),
 }))
 
+// Resolve para o mock de `vi.mock('stripe')` acima — usado pra lançar a CLASSE
+// real StripeSignatureVerificationError nos testes (instanceof fiel ao prod).
+import Stripe from 'stripe'
 import { buildTestApp, closeTestApp, type TestApp } from '../helpers/app'
 import {
   getTestPrisma,
@@ -153,28 +156,35 @@ function makeCheckoutSessionEvent(
 }
 
 describe('POST /webhooks/stripe — signature verification (integration)', () => {
-  it('500 sem header stripe-signature (finding @security: deveria ser 400)', async () => {
+  it('400 sem header stripe-signature (Card #215: erro de cliente, não 500)', async () => {
     const res = await request(app.server)
       .post('/webhooks/stripe')
       .set('content-type', 'application/json')
       .send(VALID_PAYLOAD.toString())
 
-    // FINDING: Errors.webhookFailed() retorna 500, mas ausência de header é
-    // erro de cliente — api-contract.md diz que validação = 400.
-    expect(res.status).toBe(500)
-    expect(res.body.error?.code).toBe('WEBHOOK_FAILED')
+    // Card #215 (gate 7.5): ausência de header é erro de CLIENTE → 400 (era 500).
+    // api-contract.md: validação = 400. NÃO dispara Sentry (AppError 400).
+    expect(res.status).toBe(400)
+    expect(res.body.error?.code).toBe('WEBHOOK_SIGNATURE_INVALID')
     expect(constructEventMock).not.toHaveBeenCalled()
   })
 
-  it('500 com signature inválida e registra falha no circuit breaker', async () => {
-    // Simula erro de verificação. O controller usa `error instanceof
-    // Stripe.errors.StripeSignatureVerificationError`, mas o mock não
-    // preserva a identidade da classe entre imports. Erro genérico cai
-    // no catch externo e propaga com status 500 — comportamento equivalente.
+  it('400 com signature inválida e registra falha no circuit breaker', async () => {
+    // Simula erro de verificação. O controller captura QUALQUER erro de
+    // constructWebhookEvent e re-lança como Errors.webhookSignatureInvalid()
+    // (400) — Card #215: forgery numa rota pública é erro de cliente, não 500,
+    // e não deve disparar Sentry (o branch AppError do handler não captura).
     constructEventMock.mockImplementationOnce(() => {
-      const err = new Error('Invalid stripe signature')
-      err.name = 'StripeSignatureVerificationError'
-      throw err
+      // Lança a CLASSE mockada (instanceof fiel ao prod) → constructWebhookEvent
+      // mapeia pra webhookSignatureInvalid (400). Um Error genérico cairia no
+      // re-throw de "erro inesperado" → 500, não refletindo o path de assinatura.
+      throw new (
+        Stripe as unknown as {
+          errors: {
+            StripeSignatureVerificationError: new (msg: string) => Error
+          }
+        }
+      ).errors.StripeSignatureVerificationError('Invalid stripe signature')
     })
 
     const res = await request(app.server)
@@ -183,7 +193,8 @@ describe('POST /webhooks/stripe — signature verification (integration)', () =>
       .set('stripe-signature', 'invalid-signature')
       .send(VALID_PAYLOAD.toString())
 
-    expect(res.status).toBe(500)
+    expect(res.status).toBe(400)
+    expect(res.body.error?.code).toBe('WEBHOOK_SIGNATURE_INVALID')
     expect(constructEventMock).toHaveBeenCalledTimes(1)
   })
 

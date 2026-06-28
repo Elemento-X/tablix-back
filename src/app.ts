@@ -168,6 +168,27 @@ export async function buildApp() {
         })
       }
 
+      // Erro de CLIENTE do Fastify (statusCode 4xx) — JSON malformado
+      // (FST_ERR_CTP_INVALID_JSON 400), Content-Type não suportado (415), body
+      // grande demais (413), etc. NÃO é erro de servidor → devolve o status do
+      // cliente SEM disparar Sentry. Card #215 (gate 7.5): sem este branch,
+      // qualquer 4xx caía no genérico abaixo → 500 + captureException, o que
+      // numa rota pública (ex: /webhooks/stripe) vira flood de Sentry /
+      // denial-of-wallet + poluição do SLI de erro.
+      const clientStatus = (error as FastifyError).statusCode
+      if (
+        typeof clientStatus === 'number' &&
+        clientStatus >= 400 &&
+        clientStatus < 500
+      ) {
+        return reply.status(clientStatus).send({
+          error: {
+            code: 'BAD_REQUEST',
+            message: 'Requisição inválida',
+          },
+        })
+      }
+
       // Log de erros não tratados
       request.log.error(error)
 

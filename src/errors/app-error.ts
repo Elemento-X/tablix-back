@@ -29,6 +29,10 @@ export const ErrorCodes = {
   // Billing
   CHECKOUT_FAILED: 'CHECKOUT_FAILED',
   WEBHOOK_FAILED: 'WEBHOOK_FAILED',
+  // Webhook com assinatura inválida/ausente = erro de CLIENTE (400), não de
+  // servidor (Card #215, gate 7.5): rota pública sem-auth; classificar como 5xx
+  // disparava Sentry por chamada forjada (denial-of-wallet) + poluía o SLI.
+  WEBHOOK_SIGNATURE_INVALID: 'WEBHOOK_SIGNATURE_INVALID',
   PORTAL_FAILED: 'PORTAL_FAILED',
   CURRENCY_UNAVAILABLE: 'CURRENCY_UNAVAILABLE',
 
@@ -42,6 +46,9 @@ export const ErrorCodes = {
 
   // Geral
   VALIDATION_ERROR: 'VALIDATION_ERROR',
+  // Erro de cliente genérico (4xx) tratado no error handler global — JSON
+  // malformado, Content-Type não suportado, etc (Card #215 / gate 7.5).
+  BAD_REQUEST: 'BAD_REQUEST',
   NOT_FOUND: 'NOT_FOUND',
   INTERNAL_ERROR: 'INTERNAL_ERROR',
 } as const
@@ -173,6 +180,14 @@ export const Errors = {
 
   webhookFailed: (message = 'Erro ao processar webhook') =>
     new AppError(ErrorCodes.WEBHOOK_FAILED, message, 500),
+
+  // Assinatura do webhook ausente/inválida → 400 (erro de cliente, Card #215).
+  // NÃO usar webhookFailed (500): forgery numa rota pública não é erro de
+  // servidor e não deve disparar Sentry (o branch AppError do handler não
+  // chama captureException). A forensics fica no audit_log + circuit breaker.
+  webhookSignatureInvalid: (
+    message = 'Assinatura do webhook inválida ou ausente',
+  ) => new AppError(ErrorCodes.WEBHOOK_SIGNATURE_INVALID, message, 400),
 
   portalFailed: (message = 'Erro ao gerar portal') =>
     new AppError(ErrorCodes.PORTAL_FAILED, message, 500),

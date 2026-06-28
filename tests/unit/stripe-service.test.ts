@@ -293,7 +293,7 @@ describe('stripe.service.ts — error sanitization (Card 1.10)', () => {
   // constructWebhookEvent: safe error messages
   // =============================================
   describe('constructWebhookEvent', () => {
-    it('deve lançar webhookFailed com mensagem segura para assinatura invalida', () => {
+    it('deve lançar webhookSignatureInvalid (400) com mensagem segura para assinatura invalida', () => {
       const sigError = new (
         Stripe as unknown as {
           errors: {
@@ -319,7 +319,9 @@ describe('stripe.service.ts — error sanitization (Card 1.10)', () => {
         expect(appErr.message).not.toContain('whsec_xxx')
         expect(appErr.message).not.toContain('whsec_yyy')
         expect(appErr.message).toBe('Assinatura do webhook inválida')
-        expect(appErr.code).toBe('WEBHOOK_FAILED')
+        // Card #215 (gate 7.5): assinatura inválida = erro de cliente → 400.
+        expect(appErr.code).toBe('WEBHOOK_SIGNATURE_INVALID')
+        expect(appErr.statusCode).toBe(400)
       }
     })
   })

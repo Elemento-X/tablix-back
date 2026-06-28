@@ -98,14 +98,17 @@ kill_timeout = "60s"
 # a liveness é via heartbeat de profundidade de fila no log (worker.ts, binding #6).
 # ------------------------------------------------------------
 # DARK LAUNCH: o worker só faz trabalho com ASYNC_PROCESSING_ENABLED=true. Com a
-# flag OFF, worker.ts retorna e o processo encerra (exit 0) — por isso o process
-# group `worker` nasce escalado a 0 (`fly scale count worker=0`) e só vai a 1 quando
-# o async for ligado (junto com a flag). Quando ligado: `fly scale count worker=1`
-# (exatamente 1 — binding #1, sem dois workers concorrendo na mesma fila no free).
+# flag OFF, worker.ts fica IDLE (setInterval keepalive + heartbeat 5min) — NÃO sai
+# (Card #216 / gate 7.5): sair 0 fazia o `fly deploy` expirar esperando a máquina
+# "started". Em operação normal o process group `worker` fica em count=0 (`fly scale
+# count worker=0`) e só vai a 1 quando o async for ligado (junto com a flag):
+# `fly scale count worker=1` (exatamente 1 — binding #1, sem dois workers na mesma
+# fila no free). O idle só existe na janela de 1º deploy de prod/DR, tornando o
+# deploy robusto. SIGTERM encerra o idle limpo (exit 0).
 #
-# restart on-failure: garante que o exit 0 do dark-launch NÃO entre em restart-loop
-# se a máquina worker subir com a flag off (defesa por construção, não só pelo
-# procedimento manual de scale 0 — @devops MÉDIO).
+# restart on-failure: cobre apenas o exit 1 do catch fatal do worker (falha real ao
+# iniciar quando async ligado). O dark-launch NÃO sai mais com exit 0, então não há
+# restart-loop a evitar — a política fica como rede de segurança do caminho fatal.
 [[restart]]
   policy = "on-failure"
   retries = 5

@@ -35,12 +35,40 @@ const METRICS_INTERVAL_MS = 30_000
 const SHUTDOWN_FORCE_MS = 20_000
 
 async function start(): Promise<void> {
-  // Dark launch: sem a flag, o worker nem sobe (simétrico à rota do 6.3).
+  // Dark launch (Card #216 / gate 7.5): sem a flag, o worker NÃO processa —
+  // mas também NÃO sai. Sair 0 fazia o `fly deploy` dar timeout esperando a
+  // máquina do process group worker atingir "started" → release marcado failed.
+  // Em vez disso fica IDLE (processo vivo, sem consumir a fila) e responde a
+  // SIGTERM/SIGINT pra encerrar limpo em deploy/scale. Em operação normal o
+  // worker fica em count=0 (sem máquina) — o idle só importa quando uma máquina
+  // existe com a flag off (1º deploy de prod, DR), tornando o deploy robusto.
   if (!env.ASYNC_PROCESSING_ENABLED) {
     logger.warn(
-      { metric: 'worker.disabled' },
-      '[worker] ASYNC_PROCESSING_ENABLED=false — worker não inicia',
+      { metric: 'worker.idle' },
+      '[worker] ASYNC_PROCESSING_ENABLED=false — worker IDLE (não processa a fila)',
     )
+    // setInterval (sem unref) mantém o event loop vivo → máquina "started" no Fly.
+    // Heartbeat a cada 5min (@devops gate 7.5): torna "worker existe mas IDLE" um
+    // estado OBSERVÁVEL contínuo (não só no boot) — habilita alerta "idle +
+    // fila waiting>0 por >N min" = flag off com backlog acumulando.
+    const IDLE_HEARTBEAT_MS = 5 * 60_000
+    const idleTimer = setInterval(() => {
+      logger.info(
+        { metric: 'worker.idle.heartbeat' },
+        '[worker] idle (ASYNC_PROCESSING_ENABLED=false) — não consome a fila',
+      )
+    }, IDLE_HEARTBEAT_MS)
+    let idleShuttingDown = false
+    const idleShutdown = (signal: NodeJS.Signals): void => {
+      if (idleShuttingDown) return
+      idleShuttingDown = true
+      clearInterval(idleTimer)
+      logger.info({ signal }, '[worker] idle — sinal recebido, encerrando')
+      process.exit(0)
+    }
+    for (const signal of ['SIGTERM', 'SIGINT'] as NodeJS.Signals[]) {
+      process.on(signal, () => idleShutdown(signal))
+    }
     return
   }
 

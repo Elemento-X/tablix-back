@@ -274,7 +274,7 @@ describe('Webhook (Card #189)', () => {
       ).rejects.toThrow('DB down')
     })
 
-    it('lança quando header stripe-signature está ausente (sem chamar orquestrador)', async () => {
+    it('header ausente: 400 WEBHOOK_SIGNATURE_INVALID + simetria forense F1 (record failure + audit signaturePresent:false), sem orquestrador', async () => {
       const request = {
         ip: '203.0.113.7',
         headers: { 'user-agent': 'Stripe/1.0' },
@@ -283,7 +283,37 @@ describe('Webhook (Card #189)', () => {
       } as unknown as Parameters<typeof stripeWebhook>[0]
       const reply = makeFastifyReply()
 
-      await expect(stripeWebhook(request, reply)).rejects.toThrow()
+      // Card #215: header ausente é erro de CLIENTE → AppError 400 (não 500),
+      // code estável WEBHOOK_SIGNATURE_INVALID (o branch AppError do handler
+      // global serializa e NÃO dispara Sentry). Asserta o TIPO do erro, não só
+      // "rejeitou" — uma mutação trocando 400→500 ou o code seria pega aqui.
+      await expect(stripeWebhook(request, reply)).rejects.toMatchObject({
+        statusCode: 400,
+        code: 'WEBHOOK_SIGNATURE_INVALID',
+      })
+
+      // @security F1 (gate 7.5): simetria com o caminho de sig inválida — header
+      // ausente também é probe/forgery e DEVE alimentar o circuit breaker +
+      // audit_log A09. Sem estes asserts, apagar o record/audit do branch de
+      // header ausente passaria verde (mutation-survivable). signaturePresent:false
+      // é o discriminator que distingue dos dois caminhos forenses.
+      expect(recordWebhookSignatureFailureMock).toHaveBeenCalledWith(
+        '203.0.113.7',
+      )
+      const audited = emitAuditEventMock.mock.calls.map(
+        (c) =>
+          c[0] as {
+            action: string
+            metadata?: { signaturePresent?: boolean }
+          },
+      )
+      const sigFailed = audited.find(
+        (a) => a.action === AuditAction.WEBHOOK_SIGNATURE_FAILED,
+      )
+      expect(sigFailed).toBeDefined()
+      expect(sigFailed?.metadata?.signaturePresent).toBe(false)
+
+      // constructWebhookEvent nunca é chamado sem header; orquestrador idem.
       expect(processStripeEventMock).not.toHaveBeenCalled()
       expect(constructWebhookEvent).not.toHaveBeenCalled()
     })

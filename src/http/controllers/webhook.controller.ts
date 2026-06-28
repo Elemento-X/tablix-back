@@ -40,7 +40,20 @@ export async function stripeWebhook(
   const signature = request.headers['stripe-signature']
 
   if (!signature) {
-    throw Errors.webhookFailed('Assinatura do webhook nao fornecida')
+    // @security F1 (gate 7.5): forensics SIMÉTRICO ao caminho de sig inválida —
+    // header ausente também é probe/forgery. Sem isto, atacante omite o header
+    // pra probar invisível (sem registrar no circuit breaker nem no audit_log A09).
+    recordWebhookSignatureFailure(request.ip).catch(() => {})
+    emitAuditEvent({
+      action: AuditAction.WEBHOOK_SIGNATURE_FAILED,
+      actor: 'stripe',
+      ip: request.ip,
+      userAgent: request.headers['user-agent'] ?? null,
+      success: false,
+      metadata: { signaturePresent: false },
+    })
+    // Card #215 (gate 7.5): header ausente é erro de CLIENTE → 400, não 500.
+    throw Errors.webhookSignatureInvalid('Assinatura do webhook não fornecida')
   }
 
   const payload = request.body as Buffer
@@ -66,6 +79,10 @@ export async function stripeWebhook(
       success: false,
       metadata: { signaturePresent: true },
     })
+    // Re-lança o erro de constructWebhookEvent — agora Errors.webhookSignatureInvalid
+    // (400) para falha de assinatura (Card #215 / gate 7.5), preservando um eventual
+    // 500 real (ex: secret não configurado) sem mascarar. A forensics (audit_log +
+    // circuit breaker) já foi registrada acima. AppError 400 não dispara Sentry.
     throw error
   }
 

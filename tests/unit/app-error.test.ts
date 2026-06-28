@@ -204,6 +204,33 @@ describe('app-error.ts', () => {
       expect(err.statusCode).toBe(500)
     })
 
+    // Card #215 (gate 7.5): assinatura de webhook ausente/inválida é erro de
+    // CLIENTE → 400 (não webhookFailed=500). Forgery numa rota pública não pode
+    // disparar Sentry nem poluir o SLI de erro. Factory testada diretamente
+    // (antes só coberta indiretamente via constructWebhookEvent).
+    it('webhookSignatureInvalid deve retornar 400 com WEBHOOK_SIGNATURE_INVALID', () => {
+      const err = Errors.webhookSignatureInvalid()
+
+      expect(err.code).toBe('WEBHOOK_SIGNATURE_INVALID')
+      expect(err.statusCode).toBe(400)
+      expect(err.message).toBeTruthy()
+    })
+
+    it('webhookSignatureInvalid deve aceitar mensagem customizada', () => {
+      const err = Errors.webhookSignatureInvalid('Assinatura não fornecida')
+
+      expect(err.message).toBe('Assinatura não fornecida')
+      // Continua 400 mesmo com mensagem custom (mutation guard no statusCode).
+      expect(err.statusCode).toBe(400)
+    })
+
+    it('webhookSignatureInvalid NÃO é 500 (regressão do gate #215)', () => {
+      // Guarda contra reverter o fix pra webhookFailed (500). Se alguém trocar
+      // a factory de volta, este teste falha antes de chegar em produção.
+      const err = Errors.webhookSignatureInvalid()
+      expect(err.statusCode).not.toBe(500)
+    })
+
     it('portalFailed deve retornar 500', () => {
       const err = Errors.portalFailed()
 
@@ -255,9 +282,11 @@ describe('app-error.ts', () => {
         'JOB_NOT_FOUND',
         'CHECKOUT_FAILED',
         'WEBHOOK_FAILED',
+        'WEBHOOK_SIGNATURE_INVALID',
         'PORTAL_FAILED',
         'CURRENCY_UNAVAILABLE',
         'VALIDATION_ERROR',
+        'BAD_REQUEST',
         'NOT_FOUND',
         'INTERNAL_ERROR',
       ]

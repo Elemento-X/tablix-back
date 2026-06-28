@@ -2,14 +2,11 @@ import { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import { ZodTypeProvider } from 'fastify-type-provider-zod'
 import * as webhookController from '../controllers/webhook.controller'
+import { errorResponseSchema } from '../../schemas/common.schema'
 
 // Schema apenas para documentação (webhook usa raw body)
 const webhookResponseSchema = z.object({
   received: z.boolean(),
-})
-
-const webhookErrorSchema = z.object({
-  error: z.string(),
 })
 
 export async function webhookRoutes(app: FastifyInstance) {
@@ -39,7 +36,14 @@ export async function webhookRoutes(app: FastifyInstance) {
 - \`invoice.payment_failed\` - Notifica falha de pagamento`,
       response: {
         200: webhookResponseSchema,
-        400: webhookErrorSchema,
+        // Card #215 (gate 7.5): envelope canônico { error: { code, message } }.
+        // O webhookErrorSchema antigo (error: string) divergia do AppError.toJSON
+        // → o serializer Zod falhava na 400 e devolvia 500 (mesma classe #105-107).
+        // 400 = assinatura inválida/ausente; 429 = circuit breaker ban; 500 = falha
+        // de processamento / secret não configurado.
+        400: errorResponseSchema,
+        429: errorResponseSchema,
+        500: errorResponseSchema,
       },
     },
     handler: webhookController.stripeWebhook,

@@ -129,7 +129,10 @@ export function constructWebhookEvent(
     )
   } catch (error) {
     if (error instanceof Stripe.errors.StripeSignatureVerificationError) {
-      throw Errors.webhookFailed('Assinatura do webhook inválida')
+      // Card #215 (gate 7.5): assinatura inválida é erro de CLIENTE → 400
+      // (era webhookFailed=500). Rota pública sem-auth: 5xx por forgery inflava
+      // SLI de erro. O code 500 fica só pro secret não configurado (acima).
+      throw Errors.webhookSignatureInvalid('Assinatura do webhook inválida')
     }
     throw error
   }
