@@ -49,7 +49,7 @@ Processa e unifica múltiplas planilhas CSV/Excel em um único arquivo.
 - X-Tablix-File-Name: nome do arquivo
 
 **Limites do Plano Pro:**
-- 40 unificações por mês
+- 30 unificações por mês
 - Até 15 arquivos por unificação
 - Até 2MB por arquivo
 - Até 75.000 linhas totais
