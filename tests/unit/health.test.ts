@@ -479,6 +479,191 @@ describe('orchestrator (getReadinessSnapshot)', () => {
 })
 
 // =============================================================================
+// orchestrator — single-flight no cold-boot (Card #226)
+// =============================================================================
+/**
+ * Deferred controlável: separa "invocar o check" de "resolver o check".
+ *
+ * Por que deferred em vez de fake timers aqui: a prova do single-flight é
+ * sobre QUANTAS vezes `checkDb`/`checkRedis` são invocados enquanto a
+ * revalidação está EM VOO. Com deferred eu mantenho a revalidação pendente
+ * de forma 100% determinística (não dependo de relógio nem de ordem de
+ * microtask), faço as N chamadas concorrentes, e só então resolvo. Sem
+ * sleep real, sem flakiness possível.
+ */
+function createDeferred<T>() {
+  let resolveFn!: (value: T) => void
+  let rejectFn!: (reason?: unknown) => void
+  const promise = new Promise<T>((resolve, reject) => {
+    resolveFn = resolve
+    rejectFn = reject
+  })
+  return { promise, resolve: resolveFn, reject: rejectFn }
+}
+
+describe('orchestrator — single-flight cold-boot (Card #226)', () => {
+  beforeEach(() => {
+    // Cache vazio (top-level beforeEach já chama _resetHealthCache).
+    // NODE_ENV='test' mantém o caminho de cache ATIVO (só 'development' bypassa).
+    envMock.NODE_ENV = 'test'
+  })
+
+  it('cold-boot: N probes concorrentes compartilham UMA revalidação (checkDb/checkRedis 1×)', async () => {
+    // Mecanismo do bug original: cache vazio fazia `return revalidate()` direto,
+    // então N probes no boot disparavam N×(checkDb+checkRedis) paralelos,
+    // martelando o pool justo no momento mais frágil. Single-flight: a primeira
+    // chamada cria `inFlightRevalidation` (já tendo invocado os checks 1× síncrono
+    // dentro de revalidate) ANTES de devolver a promise; as demais pegam a flag
+    // já populada e retornam a MESMA promise.
+    const dbDeferred = createDeferred<unknown>()
+    const redisDeferred = createDeferred<unknown>()
+    prismaMock.$queryRaw.mockReturnValue(dbDeferred.promise)
+    const pingFn = vi.fn().mockReturnValue(redisDeferred.promise)
+    redisRefHolder.current = { ping: pingFn }
+
+    const N = 10
+    // Dispara N concorrentes. A construção do array é síncrona: a 1ª chamada
+    // seta inFlightRevalidation antes da 2ª rodar → as 9 seguintes deduplicam.
+    const calls = Array.from({ length: N }, () => getReadinessSnapshot())
+
+    // EM VOO (nada resolvido ainda): os checks foram tocados EXATAMENTE 1×.
+    // Esta é a prova central do single-flight — N=10 probes, 1 checkDb, 1 ping.
+    expect(prismaMock.$queryRaw).toHaveBeenCalledTimes(1)
+    expect(pingFn).toHaveBeenCalledTimes(1)
+
+    // Resolve a única revalidação compartilhada.
+    dbDeferred.resolve([{ '?column?': 1 }])
+    redisDeferred.resolve('PONG')
+
+    const snaps = await Promise.all(calls)
+
+    // Todos os N recebem o MESMO snapshot (mesma referência — mesma promise).
+    expect(snaps).toHaveLength(N)
+    for (const s of snaps) {
+      expect(s).toBe(snaps[0])
+    }
+    expect(snaps[0].status).toBe('ok')
+    expect(snaps[0].checks.db.status).toBe('up')
+    expect(snaps[0].checks.redis.status).toBe('up')
+
+    // E continua 1× após resolução — nenhuma revalidação extra vazou.
+    expect(prismaMock.$queryRaw).toHaveBeenCalledTimes(1)
+    expect(pingFn).toHaveBeenCalledTimes(1)
+  })
+
+  it('pós-resolução: inFlightRevalidation volta a null → cache popula, novo probe serve do cache', async () => {
+    prismaMock.$queryRaw.mockResolvedValue([{ '?column?': 1 }])
+    redisRefHolder.current = { ping: vi.fn().mockResolvedValue('PONG') }
+
+    // Cold-boot resolve: popula cache E zera inFlightRevalidation (.finally).
+    const first = await getReadinessSnapshot()
+    expect(first.cached).toBe(false)
+    expect(prismaMock.$queryRaw).toHaveBeenCalledTimes(1)
+
+    // Próximo probe (cache populado) serve do cache — NÃO revalida.
+    // Prova indireta de que inFlightRevalidation foi limpo: se tivesse ficado
+    // "preso", o caminho cold-boot teria devolvido a promise antiga; em vez disso
+    // o fluxo seguiu para o ramo fresh.
+    prismaMock.$queryRaw.mockClear()
+    const cached = await getReadinessSnapshot()
+    expect(cached.cached).toBe(true)
+    expect(prismaMock.$queryRaw).not.toHaveBeenCalled()
+
+    // Cache limpo → um novo probe revalida DE NOVO, exatamente 1× (novo inFlight).
+    _resetHealthCache()
+    prismaMock.$queryRaw.mockResolvedValue([{ '?column?': 1 }])
+    redisRefHolder.current = { ping: vi.fn().mockResolvedValue('PONG') }
+    const reboot = await getReadinessSnapshot()
+    expect(reboot.cached).toBe(false)
+    expect(prismaMock.$queryRaw).toHaveBeenCalledTimes(1)
+  })
+
+  it('mutual exclusion: cold-boot popula janela fresh — não cai em stale nem re-revalida dentro do TTL', async () => {
+    // Garante que o ramo cold-boot e o ramo stale são mutuamente exclusivos:
+    // o cold-boot grava expiresAt correto, então dentro do TTL o probe seguinte
+    // serve do cache SEM disparar revalidação de stale.
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    prismaMock.$queryRaw.mockResolvedValue([{ '?column?': 1 }])
+    redisRefHolder.current = { ping: vi.fn().mockResolvedValue('PONG') }
+
+    await getReadinessSnapshot() // cold-boot
+    prismaMock.$queryRaw.mockClear()
+
+    // Avança MENOS que o TTL → ainda fresh.
+    vi.advanceTimersByTime(CACHE_TTL_MS - 100)
+    const snap = await getReadinessSnapshot()
+    expect(snap.cached).toBe(true)
+
+    await vi.runAllTimersAsync()
+    // Nenhuma revalidação: nem cold (cache existe) nem stale (ainda fresh).
+    expect(prismaMock.$queryRaw).not.toHaveBeenCalled()
+  })
+
+  it('STALE inalterado: cold-boot resolve → stale concorrente serve cached + UMA revalidação background', async () => {
+    // Regressão Card #226: o single-flight (cache vazio) NÃO pode interferir no
+    // dedup do caminho stale (flag `revalidating`, mecanismo separado). Após o
+    // cold-boot, inFlightRevalidation está null; o stale usa exclusivamente a
+    // flag `revalidating` e deve disparar 1 background mesmo com N concorrentes.
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    prismaMock.$queryRaw.mockResolvedValue([{ '?column?': 1 }])
+    redisRefHolder.current = { ping: vi.fn().mockResolvedValue('PONG') }
+
+    const first = await getReadinessSnapshot() // cold-boot popula cache
+    expect(first.cached).toBe(false)
+    prismaMock.$queryRaw.mockClear()
+
+    // Expira o cache → stale.
+    vi.advanceTimersByTime(CACHE_TTL_MS + 100)
+
+    const [a, b, c] = await Promise.all([
+      getReadinessSnapshot(),
+      getReadinessSnapshot(),
+      getReadinessSnapshot(),
+    ])
+    // Todos servem o stale imediato (cached=true) — não esperam revalidação.
+    expect(a.cached).toBe(true)
+    expect(b.cached).toBe(true)
+    expect(c.cached).toBe(true)
+
+    await vi.runAllTimersAsync()
+    // Exatamente 1 revalidação background — dedup do stale intacto (sem regressão).
+    expect(prismaMock.$queryRaw).toHaveBeenCalledTimes(1)
+  })
+
+  it('_resetHealthCache zera inFlightRevalidation pendente (sem vazar estado entre testes)', async () => {
+    // Cold-boot 1 fica EM VOO (deferred não resolvido) → inFlightRevalidation setado.
+    const db1 = createDeferred<unknown>()
+    const redis1 = createDeferred<unknown>()
+    prismaMock.$queryRaw.mockReturnValue(db1.promise)
+    redisRefHolder.current = { ping: vi.fn().mockReturnValue(redis1.promise) }
+
+    const p1 = getReadinessSnapshot()
+    expect(prismaMock.$queryRaw).toHaveBeenCalledTimes(1)
+
+    // Reset zera a flag MESMO com revalidação pendente.
+    _resetHealthCache()
+
+    // Novo cold-boot precisa criar uma NOVA revalidação (flag foi zerada).
+    // Se o reset não tivesse limpado inFlightRevalidation, esta 2ª chamada
+    // reusaria a promise pendente e checkDb NÃO seria chamado de novo.
+    const db2 = createDeferred<unknown>()
+    const redis2 = createDeferred<unknown>()
+    prismaMock.$queryRaw.mockReturnValue(db2.promise)
+    redisRefHolder.current = { ping: vi.fn().mockReturnValue(redis2.promise) }
+
+    const p2 = getReadinessSnapshot()
+    expect(prismaMock.$queryRaw).toHaveBeenCalledTimes(2)
+
+    // Settle ambas as revalidações para não vazar promises/timers entre testes.
+    db1.resolve([{ '?column?': 1 }])
+    redis1.resolve('PONG')
+    db2.resolve([{ '?column?': 1 }])
+    redis2.resolve('PONG')
+    await Promise.all([p1, p2])
+  })
+})
+
+// =============================================================================
 // routes (source-based — evita buildApp completo)
 // =============================================================================
 describe('health.routes.ts (source-based wiring)', () => {

@@ -59,6 +59,13 @@ interface CacheEntry {
 
 let cache: CacheEntry | null = null
 let revalidating = false
+// Card #226: single-flight da revalidação no cold-boot (cache vazio). Sem isto, N
+// probes concorrentes no boot (Fly bate /ready a cada ~30s + qualquer tráfego) caíam
+// todos em `revalidate()` paralelos → N×(checkDb+checkRedis) simultâneos pressionando o
+// pool justo no boot. A promise compartilhada faz os concorrentes aguardarem UMA
+// revalidação. O caminho `stale` já é dedup'd pela flag `revalidating` (mecanismo
+// separado; cache vazio vs não-vazio são mutuamente exclusivos, sem duplo-revalidate).
+let inFlightRevalidation: Promise<HealthSnapshot> | null = null
 let shutdownRequested = false
 
 /** Throttle: logar erro de revalidação no máximo 1× a cada 30s. */
@@ -134,9 +141,21 @@ export async function getReadinessSnapshot(): Promise<HealthSnapshot> {
 
   const now = Date.now()
 
-  // Empty cache → primeiro probe absorve latência cheia.
+  // Empty cache → primeiro probe absorve latência cheia. Card #226: single-flight —
+  // concorrentes no cold-boot compartilham a MESMA revalidação em vez de cada um
+  // disparar `checkDb()+checkRedis()` paralelos (pressão no pool no boot).
   if (!cache) {
-    return revalidate()
+    if (inFlightRevalidation) {
+      return inFlightRevalidation
+    }
+    // INVARIANTE (@security #226): `revalidate()` NUNCA rejeita — checkDb/checkRedis
+    // encapsulam try/catch e sempre resolvem CheckResult (race com timeout-sentinel
+    // garante terminação). Por isso o caller do cold-boot recebe sempre um snapshot
+    // (degraded no pior caso), não um throw; e o `.finally` basta (sem `.catch`).
+    inFlightRevalidation = revalidate().finally(() => {
+      inFlightRevalidation = null
+    })
+    return inFlightRevalidation
   }
 
   // Fresh → serve direto do cache.
@@ -174,6 +193,7 @@ export async function getReadinessSnapshot(): Promise<HealthSnapshot> {
 export function _resetHealthCache(): void {
   cache = null
   revalidating = false
+  inFlightRevalidation = null
   shutdownRequested = false
   lastRevalidateErrorAt = 0
 }
