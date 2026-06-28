@@ -1,4 +1,6 @@
 import fastify, { FastifyError } from 'fastify'
+import { constants as zlibConstants } from 'node:zlib'
+import compress from '@fastify/compress'
 import cors from '@fastify/cors'
 import helmet from '@fastify/helmet'
 import multipart from '@fastify/multipart'
@@ -45,6 +47,13 @@ export async function buildApp() {
   // Expõe o reqId ao cliente pra correlação em debug/incident response.
   app.addHook('onRequest', async (request, reply) => {
     reply.header('x-request-id', request.id)
+    // Card #220: Permissions-Policy restritivo. A API não usa nenhuma feature de
+    // browser — desliga todas as principais (defesa caso uma resposta seja
+    // renderizada em contexto de navegador). Helmet 8 não seta este header por default.
+    reply.header(
+      'Permissions-Policy',
+      'camera=(), microphone=(), geolocation=(), payment=(), usb=(), browsing-topics=()',
+    )
   })
 
   // Configura Zod como validador/serializador
@@ -55,6 +64,9 @@ export async function buildApp() {
   await app.register(cors, {
     origin: env.FRONTEND_URL,
     credentials: true,
+    // Card #220: cacheia o preflight OPTIONS por 24h no browser → corta o flood
+    // de preflight em cada request cross-origin (1 OPTIONS/dia/rota em vez de 1/request).
+    maxAge: 86400,
     exposedHeaders: [
       'Content-Disposition',
       'X-Tablix-Rows',
@@ -67,6 +79,29 @@ export async function buildApp() {
 
   await app.register(helmet, {
     contentSecurityPolicy: env.NODE_ENV === 'production',
+    // Card #220: DENY (não SAMEORIGIN). A API nunca é embedada em iframe — clickjacking
+    // defense estrito. Frontend é app separado (CORS), não consome via frame.
+    frameguard: { action: 'deny' },
+  })
+
+  // Card #220: compressão de resposta (brotli quality 4 — CPU-consciente p/
+  // shared-cpu-1x —, gzip fallback). O @fastify/compress decide o que comprimir por
+  // regex de content-type (text/*, *+json, octet-stream) com fallback no mime-db:
+  // JSON/texto/CSV entram; binários já-comprimidos (xlsx/zip do /process/sync, marcados
+  // compressible:false no mime-db) são pulados, sem desperdiçar CPU em re-compressão.
+  // threshold 1KB isenta payloads minúsculos. Roda no threadpool do libuv (não bloqueia
+  // o event loop) e não bufferiza o payload inteiro além do que o handler já alocou.
+  await app.register(compress, {
+    encodings: ['br', 'gzip'],
+    threshold: 1024,
+    // @reviewer F-220-01 (least-privilege): desliga a decompressão de body de
+    // REQUEST. Nenhum cliente Tablix envia body comprimido; manter o request-side
+    // ligado abriria superfície de decompression-bomb (1KB → N MB inflados) sem
+    // necessidade. A compressão de RESPONSE segue global (globalCompression default).
+    globalDecompression: false,
+    // Pin explícito do brotli quality 4 (não herdar o default da lib silenciosamente):
+    // sweet-spot CPU/ratio p/ shared-cpu-1x; q11 teria custo de CPU proibitivo.
+    brotliOptions: { params: { [zlibConstants.BROTLI_PARAM_QUALITY]: 4 } },
   })
 
   // Multipart para upload de arquivos (limites alinhados com PRO_LIMITS — D.1)

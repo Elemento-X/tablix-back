@@ -64,46 +64,17 @@ export const readyResponseSchema = z.object({
 })
 
 /**
- * Card #146 fix-pack ciclo 1 (@devops ALTO #1): scheduler watchdog.
- *
- * `lastCronRun` é snapshot de "quando cada cron rodou pela última vez".
- * Permite operador detectar via dashboard que cron está silenciado há > N horas
- * SEM precisar de external healthcheck. Combina com `cron.purge.pending_overdue`
- * (alerta Sentry quando gauge cresce) pra defesa em camadas.
- *
- * NÃO é alerta automático em si — é dado pro dashboard / external watchdog
- * decidir. Sentry Cron Monitoring é roadmap (Card #174 já no Backlog).
- *
- * `null` = nunca rodou (boot recente ou job nunca registrado).
- */
-const lastCronRunSchema = z.object({
-  jobName: z.string().min(1).max(80),
-  /** ISO 8601 UTC OU null se nunca rodou desde boot atual. */
-  lastRunStartedAt: z.string().datetime({ offset: true }).nullable(),
-  /** Status terminal do último run; null durante run em andamento. */
-  lastRunStatus: z
-    .enum(['running', 'success', 'failure', 'skipped', 'expired'])
-    .nullable(),
-})
-
-/**
  * `GET /health` — verbose para debug humano e dashboard.
- * Estende readiness com metadata: uptime do processo + scheduler watchdog.
+ * Estende readiness com uptime do processo.
  * `version` removido por segurança (reconnaissance — @security finding a7f3c2e1b9d4).
- * NÃO é probe — não usar em Fly.io health check config.
+ * Card #220 (@security reconnaissance): o bloco `scheduler` (nomes dos crons +
+ * jobsRegistered) FOI REMOVIDO — expor a estrutura interna de jobs num endpoint
+ * público é reconhecimento. O watchdog detalhado fica AUTENTICADO em
+ * GET /admin/jobs/list (Card #145). NÃO é probe — não usar em Fly.io health check.
  */
 export const healthVerboseResponseSchema = z.object({
   data: snapshotSchema.extend({
     uptimeSeconds: z.number().int().nonnegative(),
-    /**
-     * Card #146 fix-pack ciclo 1: watchdog scheduler in-memory.
-     * Array vazio = nenhum cron registrado (cenário test ou bootstrap falhou).
-     * Reflete histórico in-memory (não cron_runs DB) — mais rápido que query.
-     */
-    scheduler: z.object({
-      jobsRegistered: z.number().int().nonnegative(),
-      lastRuns: z.array(lastCronRunSchema),
-    }),
   }),
 })
 

@@ -24,8 +24,10 @@
  *   per-route (não global), então basta omitir aqui.
  *
  * **Rate limit:**
- *   - `/live` sem rate limit (precisa responder mesmo sob ataque)
- *   - `/ready` e `/health` com limiter `health` (60/min por IP)
+ *   - `/live` e `/ready` SEM rate limit (probes do orquestrador — Card #220):
+ *     o Fly bate a cada ~30s; um 429 marcaria a instância unhealthy. `/ready`
+ *     já é protegido por cache SWR 2s (rajada não chega a DB/Redis).
+ *   - `/health` verbose (debug, NÃO-probe) com limiter `health` (60/min por IP).
  *
  * @owner: @devops + @reviewer (api-routes + api-contract)
  */
@@ -39,7 +41,6 @@ import {
   healthVerboseResponseSchema,
   errorResponseSchema,
 } from '../../modules/health/health.schema'
-import { getSchedulerHealth } from '../../scheduler/cron'
 
 /**
  * Timestamp do boot do processo. Capturado uma vez no module load —
@@ -69,9 +70,10 @@ export async function healthRoutes(app: FastifyInstance) {
     },
   })
 
-  // GET /health/ready — readiness probe
+  // GET /health/ready — readiness probe. SEM rate limit (Card #220): probe do
+  // orquestrador (a cada ~30s) não pode tomar 429 (marcaria a instância unhealthy);
+  // o cache SWR 2s já protege DB/Redis de rajada.
   server.get('/ready', {
-    preHandler: rateLimitMiddleware.health,
     schema: {
       tags: ['Health'],
       summary: 'Readiness probe',
@@ -83,7 +85,6 @@ export async function healthRoutes(app: FastifyInstance) {
       response: {
         200: readyResponseSchema,
         503: readyResponseSchema,
-        429: errorResponseSchema,
       },
     },
     handler: async (request, reply) => {
@@ -130,24 +131,16 @@ export async function healthRoutes(app: FastifyInstance) {
       const snapshot = await getReadinessSnapshot()
       reply.header('Cache-Control', 'no-store')
 
-      // Card #146 fix-pack ciclo 1 (@devops ALTO #1): scheduler watchdog
-      // in-memory pra dashboard. NÃO é alerta automático — é dado pra
-      // operador detectar cron silenciado (lastRunStartedAt antigo).
-      // Sentry Cron Monitoring é roadmap (Card #174 no Backlog).
-      const schedulerHealth = getSchedulerHealth()
+      // Card #220 (@security reconnaissance): o bloco `scheduler` (nomes dos crons +
+      // jobsRegistered) FOI REMOVIDO da resposta pública — expor a estrutura interna
+      // de jobs num endpoint sem auth é reconhecimento. O watchdog detalhado continua
+      // disponível AUTENTICADO em GET /admin/jobs/list (Card #145). Aqui fica só o
+      // snapshot de saúde (DB/Redis) + uptime, suficiente pra dashboard público.
       const httpStatus = snapshot.status === 'ok' ? 200 : 503
       return reply.status(httpStatus).send({
         data: {
           ...snapshot,
           uptimeSeconds: Math.floor((Date.now() - BOOT_AT) / 1000),
-          scheduler: {
-            jobsRegistered: schedulerHealth.jobs.length,
-            lastRuns: schedulerHealth.jobs.map((j) => ({
-              jobName: j.jobName,
-              lastRunStartedAt: j.lastRun?.startedAt.toISOString() ?? null,
-              lastRunStatus: j.lastRun?.status ?? null,
-            })),
-          },
         },
       })
     },

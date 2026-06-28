@@ -30,7 +30,10 @@
  *   - routes (source-based, sem buildApp):
  *       - 3 rotas registradas com prefix /health
  *       - /live sem rate limit
- *       - /ready e / com rateLimitMiddleware.health
+ *       - /ready SEM rate limit (Card #220 — probe não pode tomar 429)
+ *       - /health verbose com rateLimitMiddleware.health
+ *       - /ready sem 429 no response schema (Card #220)
+ *       - /health verbose body sem bloco `scheduler` (Card #220 reconnaissance)
  *       - Cache-Control: no-store em todas
  *       - 503 quando degraded
  *
@@ -502,12 +505,26 @@ describe('health.routes.ts (source-based wiring)', () => {
     expect(liveBlock![0]).not.toContain('rateLimitMiddleware')
   })
 
-  it('/ready usa rateLimitMiddleware.health no preHandler', () => {
+  it('/ready NÃO declara rate limit (Card #220 — probe não pode tomar 429)', () => {
+    // Card #220: o limiter foi REMOVIDO do /ready. O Fly bate o probe a cada
+    // ~30s; um 429 marcaria a instância unhealthy e tiraria de rotação. O cache
+    // SWR 2s do orchestrator já protege DB/Redis de rajada. Regressão aqui
+    // (re-adicionar o limiter) reintroduz o risco de flap.
     const readyBlock = routesSource.match(
-      /server\.get\(['"]\/ready['"][\s\S]*?server\.get/,
+      /server\.get\(['"]\/ready['"][\s\S]*?server\.get\(['"]\/['"]/,
     )
     expect(readyBlock).not.toBeNull()
-    expect(readyBlock![0]).toContain('rateLimitMiddleware.health')
+    expect(readyBlock![0]).not.toContain('rateLimitMiddleware')
+    expect(readyBlock![0]).not.toContain('preHandler')
+  })
+
+  it('/ready NÃO declara 429 no response schema (Card #220 — sem limiter)', () => {
+    // Sem rate limit, o contrato do /ready não pode anunciar 429: só 200/503.
+    const readyBlock = routesSource.match(
+      /server\.get\(['"]\/ready['"][\s\S]*?server\.get\(['"]\/['"]/,
+    )
+    expect(readyBlock).not.toBeNull()
+    expect(readyBlock![0]).not.toMatch(/429:/)
   })
 
   it('todas as rotas seteiam Cache-Control: no-store', () => {
@@ -557,6 +574,22 @@ describe('health.routes.ts (source-based wiring)', () => {
   it('NÃO expõe version na resposta (reconnaissance — @security finding)', () => {
     // version foi removido do handler verbose por segurança
     expect(routesSource).not.toMatch(/version:\s*SERVICE_VERSION/)
+  })
+
+  it('NÃO referencia bloco scheduler (Card #220 reconnaissance — removido)', () => {
+    // Card #220: o bloco `scheduler` (jobsRegistered + lastRuns) FOI REMOVIDO da
+    // resposta pública — expor a estrutura interna de crons num endpoint sem auth
+    // é reconhecimento. O watchdog detalhado fica AUTENTICADO em /admin/jobs/list.
+    // Comentários explicativos podem citar "scheduler"; o que NÃO pode voltar é a
+    // montagem do payload. Guarda contra re-adição de getSchedulerHealth/jobsRegistered.
+    // Anchors code-shaped (call `(` / object-key `:`) — comentários explicativos
+    // que citam os nomes em prosa não contam como regressão.
+    expect(routesSource).not.toMatch(/getSchedulerHealth\(/)
+    expect(routesSource).not.toMatch(/jobsRegistered:/)
+    expect(routesSource).not.toMatch(/lastRuns:/)
+    expect(routesSource).not.toMatch(/scheduler:/)
+    // O handler verbose monta `data` só com `...snapshot` + `uptimeSeconds`.
+    expect(routesSource).toMatch(/uptimeSeconds: Math\.floor/)
   })
 })
 
@@ -791,6 +824,49 @@ describe('health.routes.ts (fastify.inject — execução real dos handlers)', (
       expect(body.data.generatedAt).toBeDefined()
       expect(typeof body.data.cached).toBe('boolean')
       expect(body.data.uptimeSeconds).toBeDefined()
+    })
+
+    it('body NÃO contém bloco scheduler nem jobsRegistered (Card #220 reconnaissance)', async () => {
+      const res = await app.inject({ method: 'GET', url: '/health/' })
+      const body = res.json<{ data: Record<string, unknown> }>()
+      // Reconnaissance hardening: estrutura interna de crons não vaza no endpoint público.
+      expect(body.data).not.toHaveProperty('scheduler')
+      expect(body.data).not.toHaveProperty('jobsRegistered')
+      // Defesa em profundidade: nenhuma chave do payload serializado carrega "scheduler".
+      expect(JSON.stringify(body)).not.toContain('scheduler')
+      // Mantém o contrato pós-remoção: snapshot + uptimeSeconds.
+      expect(body.data).toHaveProperty('uptimeSeconds')
+      expect(body.data).toHaveProperty('checks')
+    })
+
+    it('degraded também não vaza scheduler (regressão em ambos status codes)', async () => {
+      snapshotMock.getReadinessSnapshot.mockResolvedValue(degradedSnapshot)
+      const res = await app.inject({ method: 'GET', url: '/health/' })
+      expect(res.statusCode).toBe(503)
+      const body = res.json<{ data: Record<string, unknown> }>()
+      expect(body.data).not.toHaveProperty('scheduler')
+      expect(JSON.stringify(body)).not.toContain('scheduler')
+    })
+  })
+
+  // ---------------------------------------------------------------------------
+  // GET /health/ready — sem rate limit (Card #220)
+  // ---------------------------------------------------------------------------
+  describe('GET /health/ready (sem rate limit — Card #220)', () => {
+    it('N requests sequenciais NUNCA retornam 429 (todos 200/503 conforme deps)', async () => {
+      // O limiter foi removido do /ready (probe do Fly a cada ~30s não pode tomar
+      // 429 — marcaria a instância unhealthy). Aqui o middleware está mockado como
+      // no-op, mas o teste fixa o invariante de contrato: o /ready só responde
+      // 200 (ok) ou 503 (degraded), nunca 429, sob qualquer volume de requests.
+      snapshotMock.getReadinessSnapshot.mockResolvedValue(okSnapshot)
+      const statuses: number[] = []
+      for (let i = 0; i < 20; i++) {
+        const res = await app.inject({ method: 'GET', url: '/health/ready' })
+        statuses.push(res.statusCode)
+      }
+      expect(statuses).toHaveLength(20)
+      expect(statuses.every((s) => s === 200 || s === 503)).toBe(true)
+      expect(statuses).not.toContain(429)
     })
   })
 })
