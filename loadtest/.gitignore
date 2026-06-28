@@ -1,0 +1,6 @@
+# Artefatos locais do load test (Fase 7.5 / Card #229) — NÃO versionar.
+bin/
+fixtures/
+results/
+.jwts.json
+*.log
