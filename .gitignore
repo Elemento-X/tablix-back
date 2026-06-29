@@ -12,3 +12,7 @@ coverage/
 
 # Test fixtures — stamp de regeneração do schema snapshot
 tests/fixtures/*.stamp
+
+# Load test (Card #229) — JWTs efêmeros do pool, nunca versionar (defesa em
+# profundidade sobre loadtest/.gitignore, cobre qualquer CWD).
+**/.jwts.json

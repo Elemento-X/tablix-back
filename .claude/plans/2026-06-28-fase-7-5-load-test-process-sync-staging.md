@@ -52,7 +52,7 @@ Store dev/test COMPARTILHADO → load test **NÃO-DESTRUTIVO**: volume capado, d
 ## Cleanup não-destrutivo (Task 6.4)
 1. Dry-run `SELECT COUNT` (revisado @dba) ANTES de qualquer DELETE.
 2. `usage`: só `user_id IN (<pool>)`.
-3. `audit_log`: só `metadata->>'env'='staging'` da janela. **NUNCA tocar `audit_log_legal`** (5 anos, #150).
+3. `audit_log`: só `actor IN (<pool user ids>)` — **NÃO** por `metadata env` (apagaria audit de outro dev no store compartilhado; @security F4). **NUNCA tocar `audit_log_legal`** (5 anos, #150).
 4. Storage (defensivo): /sync não persiste; remover só env-tagged se houver.
 5. Redis: `tablix:concurrency:<pool>` (TTL 120s auto-expira).
 6. Pool: remover os 8 usuários+tokens sintéticos.

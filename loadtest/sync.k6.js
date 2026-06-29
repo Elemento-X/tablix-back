@@ -11,11 +11,11 @@
  *
  * Exemplos:
  *   # smoke 1 req (Fase 2 / gate S-1)
- *   bin/k6 run -e SCENARIO=smoke -e FIXTURE=fixtures/legit-max.xlsx \
- *     -e FIXTURE_NAME=legit-max.xlsx -e FIXTURE_TYPE=xlsx loadtest/sync.k6.js
+ *   bin/k6 run -e SCENARIO=smoke -e FIXTURE=fixtures/dense.xlsx \
+ *     -e FIXTURE_NAME=dense.xlsx -e FIXTURE_TYPE=xlsx loadtest/sync.k6.js
  *   # ramp 0→8 VUs (Fase 3)
  *   bin/k6 run -e SCENARIO=ramp ... loadtest/sync.k6.js
- *   # sustained (Fase 3) / burst (Fase 4) / adversarial (Fase 5, FIXTURE=adversarial-wide.xlsx)
+ *   # sustained (Fase 3) / burst (Fase 4) / adversarial (Fase 5, FIXTURE=fixtures/wide.xlsx)
  */
 import http from 'k6/http'
 import { check } from 'k6'

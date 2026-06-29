@@ -16,7 +16,18 @@ import { prisma } from '../src/lib/prisma'
 
 const APPLY = process.argv.includes('--apply')
 
+// @dba: logar o host do DB que ESTE script apaga — confirme na janela que é o mesmo
+// do app staging e do seed (senão o --apply roda no DB errado).
+function dbHost(): string {
+  try {
+    return new URL(process.env.DATABASE_URL ?? '').host || '(desconhecido)'
+  } catch {
+    return '(DATABASE_URL não parseável)'
+  }
+}
+
 async function main(): Promise<void> {
+  console.log(`[cleanup] db=${dbHost()} (confirme == app staging)`)
   const users = await prisma.user.findMany({
     // @dba/@security: ancorar nos DOIS lados (prefixo + domínio reservado .invalid,
     // RFC 2606/6761, nunca um email real) pra NUNCA colidir com dado de outro dev no
