@@ -37,6 +37,10 @@ export const testEnv = {
   ASYNC_PROCESSING_ENABLED: false,
   ASYNC_JOB_TTL_HOURS: 24,
   PROCESS_WORKER_TIMEOUT_MS: 300_000,
+  // Teto per-IP do limiter `process` (Card 7.5 / R-8). Default 10 = produção;
+  // espelha env.ts pra consumidores (ex: rate-limit.ts) não receberem undefined
+  // sob `mockEnvModule()`. Tunável em staging via fly secrets na janela do 7.5.
+  PROCESS_RATE_LIMIT_PER_MIN: 10,
 
   // Stripe core
   STRIPE_SECRET_KEY: undefined,

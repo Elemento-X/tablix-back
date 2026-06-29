@@ -1,5 +1,6 @@
 import { Ratelimit, Duration } from '@upstash/ratelimit'
 import { redis } from './redis'
+import { env } from './env'
 
 /**
  * Configuração dos rate limiters por tipo de endpoint
@@ -28,7 +29,9 @@ const createLimiter = (requests: number, window: Duration, prefix: string) => {
  *                     identifier fixo 'global:all'; soma todos os IPs/usuários.
  *                     Sem esse cap, N IPs × 5 req vira N×5 chamadas à Stripe/minuto.
  * - billing: /billing/* exceto checkout (20 req/min)
- * - process: /process/* (10 req/min) - futuro
+ * - process: POST /process/sync e GET /process/download (PRO). Default 10/min, mas
+ *            tunável via env PROCESS_RATE_LIMIT_PER_MIN — afrouxado SÓ em staging na
+ *            janela do load test (Card 7.5/R-8); travado em 10 em prod (guard env.ts).
  * - health: /health e /health/ready (60/min) - Card 2.3, anti-abuse de probes externos
  *           /health/live é exclusão total (sem rate limit, ver health.routes.ts)
  * - usage: GET /usage (60/min) - Card 4.1, polling do front (use-usage hook)
@@ -61,7 +64,9 @@ export const rateLimiters = {
   checkout: createLimiter(5, '1m', 'checkout'),
   checkoutGlobalCap: createLimiter(30, '1m', 'checkout-global-cap'),
   billing: createLimiter(20, '1m', 'billing'),
-  process: createLimiter(10, '1m', 'process'),
+  // Tunável via env (Card 7.5 / R-8): default 10/min = produção. Afrouxa só em
+  // staging na janela do load test pra saturar o cap #219; restaura no teardown.
+  process: createLimiter(env.PROCESS_RATE_LIMIT_PER_MIN, '1m', 'process'),
   health: createLimiter(60, '1m', 'health'),
   usage: createLimiter(60, '1m', 'usage'),
   limits: createLimiter(100, '1m', 'limits'),

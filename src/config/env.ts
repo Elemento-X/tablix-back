@@ -74,6 +74,18 @@ const envSchema = z
       .min(1)
       .max(16)
       .default(3),
+    // PROCESS_RATE_LIMIT_PER_MIN: teto per-IP (sliding window) do limiter `process`,
+    // que protege POST /process/sync e GET /process/download (rate-limit.ts). Default
+    // 10/min = valor de PRODUÇÃO (inalterado). Tornado tunável (Card 7.5, decisão R-8):
+    // o load test precisa afrouxar SÓ em staging na janela pra saturar o cap de
+    // concorrência #219 (3 simultâneos ≈ 60 req/min), que 10/min estrangularia antes.
+    // Restaurar a 10 no teardown. Range 1..1000.
+    PROCESS_RATE_LIMIT_PER_MIN: z.coerce
+      .number()
+      .int()
+      .min(1)
+      .max(1000)
+      .default(10),
     // Crons de cleanup async (Card 6.7 + sweeper #197). Kill-switch DEDICADO
     // (não acoplado a HISTORY_FEATURE_ENABLED como os crons LGPD): gate efetivo
     // = ASYNC_PROCESSING_ENABLED && CRON_JOBS_CLEANUP_ENABLED. Default false em
@@ -431,6 +443,25 @@ const envSchema = z
           path: ['FRONTEND_URL'],
           message:
             'FRONTEND_URL deve ser HTTPS em produção (não pode ser localhost)',
+        })
+      }
+
+      // PROCESS_RATE_LIMIT_PER_MIN: teto FIXO em 10 em produção REAL. O app de
+      // STAGING também roda NODE_ENV=production (fly.toml), então o discriminador é
+      // SENTRY_ENVIRONMENT (não NODE_ENV): só a tag explícita 'staging' libera o knob
+      // (1..1000) pro load test saturar o cap #219 (Card 7.5 / R-8). Deny-by-default:
+      // SENTRY_ENVIRONMENT default='development' → prod com a tag esquecida AINDA trava
+      // em 10. Fecha inflar-prod (anti-DoS) e reduzir-<10 (breaking de contrato, exposto
+      // via X-RateLimit-Limit). @security 7b1e9c4a2f30 + a9f4012c7e58.
+      if (
+        data.SENTRY_ENVIRONMENT !== 'staging' &&
+        data.PROCESS_RATE_LIMIT_PER_MIN !== 10
+      ) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['PROCESS_RATE_LIMIT_PER_MIN'],
+          message:
+            'PROCESS_RATE_LIMIT_PER_MIN deve ser 10 em produção (knob afrouxa só em staging — Card 7.5/R-8)',
         })
       }
 
